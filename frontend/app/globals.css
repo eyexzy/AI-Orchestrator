@@ -1,0 +1,420 @@
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Syne:wght@400;500;600;700&family=Inter:wght@300;400;500&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* ── Surfaces ── */
+    --bg:        17 17 24;
+    --surface:   24 24 31;
+    --surface-2: 31 31 40;
+    --surface-3: 38 38 47;
+
+    /* ── Text ── */
+    --text-1:    238 238 245;
+    --text-2:    168 168 188;
+    --text-3:    110 110 133;
+
+    /* ── Accents ── */
+    --accent-blue:   123 147 255;
+    --accent-green:   52 211 153;
+    --accent-amber:  251 191  36;
+    --accent-red:    248  97  97;
+
+    /* ── shadcn/ui compat (HSL) ── */
+    --background:              234 17%  8%;
+    --foreground:              240  9% 93%;
+    --card:                    234 14% 11%;
+    --card-foreground:         240  9% 93%;
+    --popover:                 234 14% 10%;
+    --popover-foreground:      240  9% 93%;
+    --primary:                 229 100% 74%;
+    --primary-foreground:        0   0% 100%;
+    --secondary:               234 14% 15%;
+    --secondary-foreground:    240   6% 75%;
+    --muted:                   234 14% 14%;
+    --muted-foreground:        234   8% 55%;
+    --accent:                  234 14% 16%;
+    --accent-foreground:       240   9% 90%;
+    --destructive:               0  80% 65%;
+    --destructive-foreground:    0   0%  98%;
+    --border:                  234 14% 16%;
+    --input:                   234 14% 15%;
+    --ring:                    229 100% 74%;
+    --radius:                  0.5rem;
+  }
+}
+
+@layer base {
+  * { @apply border-border; box-sizing: border-box; }
+
+  html {
+    font-family: 'Inter', system-ui, sans-serif;
+    height: 100%;
+  }
+
+  body {
+    background: rgb(var(--bg));
+    color: rgb(var(--text-1));
+    @apply antialiased;
+    font-feature-settings: "rlig" 1, "calt" 1;
+    font-size: 14px;
+    line-height: 1.6;
+    height: 100%;
+    overflow: hidden;
+  }
+
+  ::-webkit-scrollbar { width: 4px; height: 4px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb {
+    background: rgba(255,255,255,0.13);
+    border-radius: 999px;
+  }
+  ::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.22); }
+
+  ::selection {
+    background: rgba(123,147,255,0.25);
+    color: rgb(var(--text-1));
+  }
+
+  textarea, input, select { color-scheme: dark; }
+}
+
+/* ── Typography ─────────────────────────────────── */
+.font-display { font-family: 'Syne', sans-serif; }
+.font-mono    { font-family: 'IBM Plex Mono', monospace; }
+
+/* ── Surfaces ────────────────────────────────────── */
+.surface      { background: rgb(var(--surface)); }
+.surface-2    { background: rgb(var(--surface-2)); }
+.surface-3    { background: rgb(var(--surface-3)); }
+
+/* ── Level badges ────────────────────────────────── */
+.badge-l1 {
+  background: rgba(123,147,255,0.14);
+  border: 1px solid rgba(123,147,255,0.32);
+  color: rgb(163,178,255);
+}
+.badge-l2 {
+  background: rgba(52,211,153,0.12);
+  border: 1px solid rgba(52,211,153,0.32);
+  color: rgb(74,222,168);
+}
+.badge-l3 {
+  background: rgba(251,191,36,0.12);
+  border: 1px solid rgba(251,191,36,0.32);
+  color: rgb(251,197,68);
+}
+
+/* ── Input fields ────────────────────────────────── */
+.input-field {
+  background: rgb(var(--surface-2));
+  border: 1px solid rgba(255,255,255,0.07);
+  color: rgb(var(--text-1));
+  border-radius: 10px;
+  outline: none;
+  transition: border-color 0.15s, background 0.15s;
+}
+.input-field:focus {
+  border-color: rgba(123,147,255,0.4);
+  background: rgb(var(--surface-3));
+}
+.input-field::placeholder { color: rgb(var(--text-3)); }
+
+/* ── Buttons ─────────────────────────────────────── */
+.btn-primary {
+  background: rgb(var(--accent-blue));
+  color: white;
+  border-radius: 8px;
+  font-weight: 500;
+  transition: opacity 0.15s, transform 0.1s;
+}
+.btn-primary:hover:not(:disabled) { opacity: 0.88; }
+.btn-primary:active:not(:disabled) { transform: scale(0.98); }
+.btn-primary:disabled { opacity: 0.3; cursor: not-allowed; }
+
+.btn-ghost {
+  background: transparent;
+  color: rgb(var(--text-2));
+  border-radius: 8px;
+  transition: background 0.15s, color 0.15s;
+}
+.btn-ghost:hover { background: rgba(255,255,255,0.05); color: rgb(var(--text-1)); }
+
+/* ── Cards ───────────────────────────────────────── */
+.card {
+  background: rgb(var(--surface));
+  border: 1px solid rgba(255,255,255,0.07);
+  border-radius: 12px;
+}
+
+/* ── Dividers ────────────────────────────────────── */
+.divider { height: 1px; background: rgba(255,255,255,0.06); }
+
+/* ── Chat messages ───────────────────────────────── */
+.msg-user {
+  background: rgb(var(--surface-3));
+  border: 1px solid rgba(255,255,255,0.07);
+  border-radius: 16px 16px 4px 16px;
+  max-width: 78%;
+}
+.msg-assistant {
+  max-width: 84%;
+}
+
+/* ── Sidebar item ────────────────────────────────── */
+.sidebar-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 10px;
+  border-radius: 8px;
+  color: rgb(var(--text-2));
+  cursor: pointer;
+  transition: background 0.1s, color 0.1s;
+  font-size: 13px;
+}
+.sidebar-item:hover { background: rgba(255,255,255,0.04); color: rgb(var(--text-1)); }
+.sidebar-item.active { background: rgba(123,147,255,0.1); color: rgb(var(--text-1)); }
+
+/* ── Config sidebar label ────────────────────────── */
+.config-label {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgb(var(--text-3));
+  font-family: 'IBM Plex Mono', monospace;
+}
+
+/* ── Slider ──────────────────────────────────────── */
+.slider-input {
+  appearance: none;
+  -webkit-appearance: none;
+  outline: none;
+  height: 3px;
+  border-radius: 999px;
+  cursor: pointer;
+  width: 100%;
+  display: block;
+}
+.slider-input::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 13px; height: 13px;
+  border-radius: 50%;
+  background: rgb(var(--text-1));
+  border: 2px solid rgb(var(--surface));
+  box-shadow: 0 0 0 1px rgba(255,255,255,0.15);
+  cursor: pointer;
+  transition: box-shadow 0.15s;
+}
+.slider-input::-webkit-slider-thumb:hover {
+  box-shadow: 0 0 0 1px rgba(255,255,255,0.25), 0 0 0 4px rgba(123,147,255,0.18);
+}
+.slider-input::-moz-range-thumb {
+  width: 13px; height: 13px;
+  border-radius: 50%;
+  background: rgb(var(--text-1));
+  border: 2px solid rgb(var(--surface));
+  cursor: pointer;
+}
+
+/* ── Animations ──────────────────────────────────── */
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+@keyframes slideRight {
+  from { transform: translateX(100%); }
+  to   { transform: translateX(0); }
+}
+@keyframes slideLeft {
+  from { transform: translateX(-100%); }
+  to   { transform: translateX(0); }
+}
+@keyframes levelIn {
+  from { opacity: 0; transform: translateY(10px) scale(0.98); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+@keyframes toastUp {
+  from { opacity: 0; transform: translate(-50%, 12px); }
+  to   { opacity: 1; transform: translate(-50%, 0); }
+}
+@keyframes pulse-dot {
+  0%, 80%, 100% { transform: scale(0.7); opacity: 0.4; }
+  40%           { transform: scale(1); opacity: 1; }
+}
+
+.animate-in          { animation: fadeUp 0.28s cubic-bezier(0.16,1,0.3,1) both; }
+.animate-fade-in     { animation: fadeIn 0.2s ease both; }
+.animate-slide-right { animation: slideRight 0.3s cubic-bezier(0.16,1,0.3,1) both; }
+.animate-slide-left  { animation: slideLeft  0.3s cubic-bezier(0.16,1,0.3,1) both; }
+.animate-level       { animation: levelIn 0.4s cubic-bezier(0.16,1,0.3,1) both; }
+.animate-toast       { animation: toastUp 0.35s cubic-bezier(0.16,1,0.3,1) both; }
+
+.animate-slide-in-right   { animation: slideRight 0.3s cubic-bezier(0.16,1,0.3,1) both; }
+.animate-slide-in-left    { animation: slideLeft  0.3s cubic-bezier(0.16,1,0.3,1) both; }
+.animate-slide-up         { animation: toastUp  0.35s cubic-bezier(0.16,1,0.3,1) both; }
+.animate-level-transition { animation: levelIn 0.45s cubic-bezier(0.16,1,0.3,1) both; }
+
+/* ── ChatLayout — scroll + floating input ────────────────────────── */
+.message-scroll {
+  flex: 1 1 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  min-height: 0;
+}
+
+.chat-body {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 0;
+  overflow: hidden;
+  min-height: 0;
+  position: relative;
+}
+
+.chat-main {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 0;
+  overflow: hidden;
+  min-width: 0;
+  min-height: 0;
+}
+
+.floating-input-wrapper {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  width: 100%;
+  z-index: 20;
+  padding: 0 0 16px;
+}
+
+.fade-out-gradient {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  width: 100%;
+  height: 160px;
+  pointer-events: none;
+  z-index: 10;
+  background: linear-gradient(
+    to bottom,
+    transparent 0%,
+    rgb(var(--bg)) 72%
+  );
+}
+
+/* Config sidebar inner scroll */
+.config-scroll {
+  height: 100%;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+/* ── Markdown renderer ───────────────────────────── */
+.md {
+  color: rgb(var(--text-1));
+  line-height: 1.75;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+.md p { margin: 0.6em 0; }
+.md p:first-child { margin-top: 0; }
+.md p:last-child  { margin-bottom: 0; }
+.md h1 { font-size: 1.2em; font-weight: 700; margin: 1.2em 0 0.5em; font-family: 'Syne', sans-serif; letter-spacing: -0.01em; }
+.md h2 { font-size: 1.07em; font-weight: 700; margin: 1em 0 0.4em; font-family: 'Syne', sans-serif; }
+.md h3 { font-size: 0.97em; font-weight: 600; margin: 0.9em 0 0.35em; }
+.md ul, .md ol { padding-left: 1.5em; margin: 0.55em 0; }
+.md li { margin: 0.3em 0; line-height: 1.65; }
+.md ul li::marker { color: rgba(123,147,255,0.5); }
+.md strong { font-weight: 600; color: rgb(var(--text-1)); }
+.md em     { color: rgb(var(--text-2)); font-style: italic; }
+.md code {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 0.85em;
+  background: rgba(123,147,255,0.10);
+  border: 1px solid rgba(123,147,255,0.15);
+  border-radius: 4px;
+  padding: 0.12em 0.38em;
+  color: rgb(186, 196, 255);
+}
+.md pre { margin: 0.75em 0; overflow-x: auto; }
+.md pre code { background: none; border: none; padding: 0; color: inherit; }
+.md table { width: 100%; border-collapse: collapse; margin: 0.7em 0; font-size: 13px; }
+.md th, .md td { border: 1px solid rgba(255,255,255,0.07); padding: 7px 11px; text-align: left; }
+.md th { background: rgba(255,255,255,0.03); font-weight: 600; color: rgb(var(--text-2)); }
+.md blockquote {
+  border-left: 2px solid rgba(123,147,255,0.35);
+  margin: 0.7em 0;
+  padding: 4px 14px;
+  color: rgb(var(--text-2));
+}
+.md a {
+  color: rgb(163,178,255);
+  text-decoration: underline;
+  text-decoration-color: transparent;
+  transition: text-decoration-color 0.15s;
+}
+.md a:hover { text-decoration-color: currentColor; }
+.md hr {
+  border: none;
+  height: 1px;
+  background: rgba(255,255,255,0.07);
+  margin: 1em 0;
+}
+
+/* ── ReAct Trace Highlighting ────────────────────── */
+/*
+ * Thought: lines → soft green tint (reasoning / internal monologue)
+ * Action:  lines → blue tint (external calls / tool use)
+ * Observation: lines → muted gray tint (results / environment feedback)
+ */
+.md p.react-thought {
+  border-left: 2px solid rgba(52, 211, 153, 0.45);
+  background: rgba(52, 211, 153, 0.06);
+  padding: 6px 12px;
+  border-radius: 0 8px 8px 0;
+  color: rgb(134, 239, 172);
+  font-style: italic;
+  margin: 0.5em 0;
+}
+
+.md p.react-action {
+  border-left: 2px solid rgba(123, 147, 255, 0.5);
+  background: rgba(123, 147, 255, 0.07);
+  padding: 6px 12px;
+  border-radius: 0 8px 8px 0;
+  color: rgb(163, 178, 255);
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 0.88em;
+  margin: 0.5em 0;
+}
+
+.md p.react-observation {
+  border-left: 2px solid rgba(110, 110, 133, 0.45);
+  background: rgba(110, 110, 133, 0.06);
+  padding: 6px 12px;
+  border-radius: 0 8px 8px 0;
+  color: rgb(var(--text-2));
+  margin: 0.5em 0;
+}
+
+/* ── ChatInputBox textarea ───────────────────────── */
+.chat-input-textarea::placeholder {
+  color: rgb(var(--text-3));
+  opacity: 1;
+}
+.chat-input-textarea::-webkit-scrollbar { width: 4px; }
+.chat-input-textarea::-webkit-scrollbar-thumb {
+  background: rgba(255,255,255,0.13);
+  border-radius: 4px;
+}
