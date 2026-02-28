@@ -6,7 +6,7 @@ import { resolveVariables } from "@/lib/api";
 import { MessageList } from "@/components/chat/MessageList";
 import { MainInput } from "@/components/chat/MainInput";
 import {
-  ConfigSidebar, DEFAULT_SYSTEM, MODELS, type SidebarConfig,
+  ConfigSidebar, DEFAULT_SYSTEM, MODELS, type SidebarConfig, type FewShotExample,
 } from "@/components/chat/ConfigSidebar";
 
 /* ── Variable autoparse regex ────────────────────────────────── */
@@ -21,11 +21,6 @@ function extractVarNames(text: string): string[] {
     if (name) seen.add(name);
   }
   return Array.from(seen);
-}
-
-export interface FewShotExample {
-  input: string;
-  output: string;
 }
 
 /* ── ChatLayout ───────────────────────────────────────────────── */
