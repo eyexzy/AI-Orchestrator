@@ -2,11 +2,12 @@
 
 import { useState, useEffect } from "react";
 import { useUserLevelStore } from "@/lib/store/userLevelStore";
+import { useModelsStore } from "@/lib/store/modelsStore";
 import { resolveVariables } from "@/lib/api";
 import { MessageList } from "@/components/chat/MessageList";
 import { MainInput } from "@/components/chat/MainInput";
 import {
-  ConfigSidebar, DEFAULT_SYSTEM, MODELS, type SidebarConfig, type FewShotExample,
+  ConfigSidebar, DEFAULT_SYSTEM, type SidebarConfig, type FewShotExample,
 } from "@/components/chat/ConfigSidebar";
 
 /* ── Variable autoparse regex ────────────────────────────────── */
@@ -26,6 +27,7 @@ function extractVarNames(text: string): string[] {
 /* ── ChatLayout ───────────────────────────────────────────────── */
 export function ChatLayout() {
   const level = useUserLevelStore((s) => s.level);
+  const models = useModelsStore((s) => s.models);
 
   /* Core config */
   const [model,       setModel]       = useState("llama-3.3-70b");
@@ -146,12 +148,12 @@ export function ChatLayout() {
     variables,
     ...(isCompareMode && {
       compareModel:      compareModelB,
-      modelLabel:        MODELS.find((o) => o.value === compareModelA)?.label ?? compareModelA,
-      compareModelLabel: MODELS.find((o) => o.value === compareModelB)?.label ?? compareModelB,
+      modelLabel:        models.find((o) => o.value === compareModelA)?.label ?? compareModelA,
+      compareModelLabel: models.find((o) => o.value === compareModelB)?.label ?? compareModelB,
     }),
     ...(isSelfConsistency && {
       selfConsistencyEnabled: true,
-      modelLabel: MODELS.find((o) => o.value === model)?.label ?? model,
+      modelLabel: models.find((o) => o.value === model)?.label ?? model,
     }),
   };
 
@@ -161,18 +163,18 @@ export function ChatLayout() {
     <div className="flex flex-wrap items-center gap-2 px-1 font-mono text-[11px]" style={{ color: "rgb(var(--text-3))" }}>
       {isCompareMode ? (
         <>
-          <span style={{ color: "rgb(123,147,255)" }}>{MODELS.find((o) => o.value === compareModelA)?.label ?? compareModelA}</span>
+          <span style={{ color: "rgb(123,147,255)" }}>{models.find((o) => o.value === compareModelA)?.label ?? compareModelA}</span>
           <span style={{ opacity: 0.4 }}>vs</span>
-          <span style={{ color: "rgb(52,211,153)" }}>{MODELS.find((o) => o.value === compareModelB)?.label ?? compareModelB}</span>
+          <span style={{ color: "rgb(52,211,153)" }}>{models.find((o) => o.value === compareModelB)?.label ?? compareModelB}</span>
           <span className="rounded px-1.5 py-0.5 text-[10px] font-bold" style={{ background: "rgba(123,147,255,0.15)", color: "rgb(163,178,255)" }}>Compare</span>
         </>
       ) : isSelfConsistency ? (
         <>
-          <span>{MODELS.find((o) => o.value === model)?.label ?? model}</span>
+          <span>{models.find((o) => o.value === model)?.label ?? model}</span>
           <span className="rounded px-1.5 py-0.5 text-[10px] font-bold" style={{ background: "rgba(251,191,36,0.15)", color: "rgb(251,197,68)" }}>Self-Consistency ×3</span>
         </>
       ) : (
-        <span>{MODELS.find((o) => o.value === model)?.label ?? model}</span>
+        <span>{models.find((o) => o.value === model)?.label ?? model}</span>
       )}
       <span>·</span>
       <span>t={temperature.toFixed(2)}</span>

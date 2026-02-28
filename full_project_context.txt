@@ -140,6 +140,35 @@ class ChatMessage(Base):
     session = relationship("ChatSession", back_populates="messages")
 
 
+# ── ML feedback (replaces ml_feedback.csv) ─────────────────────────
+
+class MLFeedback(Base):
+    __tablename__ = "ml_feedback"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    prompt_length = Column(Float, default=0.0)
+    word_count = Column(Float, default=0.0)
+    tech_term_count = Column(Float, default=0.0)
+    has_structure = Column(Float, default=0.0)
+    chars_per_second = Column(Float, default=0.0)
+    session_message_count = Column(Float, default=0.0)
+    avg_prompt_length = Column(Float, default=0.0)
+    used_advanced_features_count = Column(Float, default=0.0)
+    tooltip_click_count = Column(Float, default=0.0)
+    actual_level = Column(Integer, nullable=False)
+    created_at = Column(DateTime, default=_now)
+
+
+# ── ML model cache (replaces ml_model.json) ────────────────────────
+
+class MLModelCache(Base):
+    __tablename__ = "ml_model_cache"
+
+    id = Column(Integer, primary_key=True, default=1)
+    weights_json = Column(Text, nullable=False)
+    updated_at = Column(DateTime, default=_now, onupdate=_now)
+
+
 # ── DB helpers ──────────────────────────────────────────────────────
 
 async def init_db():
@@ -206,6 +235,7 @@ def check_admin_key(x_api_key: str = Header(default="")):
 ================================================================
 File: backend/main.py
 ================================================================
+import json
 import os
 import sys
 import logging
@@ -216,9 +246,11 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
+from sqlalchemy import select
 
-from database import init_db
+from database import init_db, AsyncSessionLocal, MLModelCache
 from dependencies import limiter
+import ml_classifier
 
 load_dotenv()
 
@@ -271,6 +303,21 @@ _validate_env()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()
+
+    # Load or initialize ML model from DB
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(select(MLModelCache).where(MLModelCache.id == 1))
+        cache_row = result.scalar_one_or_none()
+        if cache_row:
+            ml_classifier.get_classifier().from_dict(json.loads(cache_row.weights_json))
+            logger.info("[ml] Model loaded from database")
+        else:
+            ml_classifier._train_fresh()
+            weights_json = json.dumps(ml_classifier.get_classifier().to_dict())
+            db.add(MLModelCache(id=1, weights_json=weights_json))
+            await db.commit()
+            logger.info("[ml] Synthetic model trained and saved to database")
+
     yield
 
 
@@ -323,17 +370,14 @@ Uses LogisticRegression trained on synthetic + accumulated data.
 Complements the rule-based scoring system.
 """
 import numpy as np
-import json
-import os
 import logging
-from pathlib import Path
 
 logger = logging.getLogger("ml-classifier")
 
 # Feature names (must match extract_features output)
 FEATURE_NAMES = [
     "prompt_length",
-    "word_count", 
+    "word_count",
     "tech_term_count",
     "has_structure",
     "chars_per_second",
@@ -343,13 +387,11 @@ FEATURE_NAMES = [
     "tooltip_click_count",
 ]
 
-MODEL_PATH = Path(__file__).parent / "ml_model.json"
-
 
 def extract_features(prompt_text: str, metrics: dict, count_tech_fn=None, has_structure_fn=None) -> np.ndarray:
     """Extract feature vector from prompt and behavioral metrics."""
     text = prompt_text.strip()
-    
+
     # Import here to avoid circular imports, or use passed functions
     if count_tech_fn is None or has_structure_fn is None:
         try:
@@ -366,7 +408,7 @@ def extract_features(prompt_text: str, metrics: dict, count_tech_fn=None, has_st
             def _count_technical_terms(text: str) -> int:
                 lower = text.lower()
                 return sum(1 for term in TECHNICAL_TERMS if term in lower)
-            
+
             def _has_structured_patterns(text: str) -> bool:
                 import re
                 patterns = [
@@ -379,10 +421,10 @@ def extract_features(prompt_text: str, metrics: dict, count_tech_fn=None, has_st
                     r"\brole\s*:",
                 ]
                 return any(re.search(p, text, re.IGNORECASE) for p in patterns)
-            
+
             count_tech_fn = _count_technical_terms
             has_structure_fn = _has_structured_patterns
-    
+
     features = [
         len(text),                                        # prompt_length
         len(text.split()),                                # word_count
@@ -423,7 +465,7 @@ def _create_synthetic_training_data():
         ([400, 80, 8, 1, 10.0, 18, 380, 6, 0], 3),
         ([310, 62, 6, 1, 8.8, 14, 290, 4, 0], 3),
     ]
-    
+
     X = np.array([s[0] for s in l1_samples + l2_samples + l3_samples], dtype=float)
     y = np.array([s[1] for s in l1_samples + l2_samples + l3_samples])
     return X, y
@@ -432,7 +474,7 @@ def _create_synthetic_training_data():
 class SimpleLogisticClassifier:
     """Hand-implemented logistic regression for 3-class classification.
     Avoids scikit-learn dependency — pure numpy."""
-    
+
     def __init__(self):
         self.weights = None
         self.bias = None
@@ -440,60 +482,58 @@ class SimpleLogisticClassifier:
         self.feature_std = None
         self.classes = [1, 2, 3]
         self.is_trained = False
-    
+
     def _normalize(self, X: np.ndarray) -> np.ndarray:
         return (X - self.feature_mean) / (self.feature_std + 1e-8)
-    
+
     def _softmax(self, z: np.ndarray) -> np.ndarray:
         e = np.exp(z - z.max(axis=1, keepdims=True))
         return e / e.sum(axis=1, keepdims=True)
-    
+
     def fit(self, X: np.ndarray, y: np.ndarray, lr=0.01, epochs=500):
         self.feature_mean = X.mean(axis=0)
         self.feature_std = X.std(axis=0)
         X_norm = self._normalize(X)
-        
+
         n_samples, n_features = X_norm.shape
         n_classes = 3
         self.weights = np.zeros((n_features, n_classes))
         self.bias = np.zeros(n_classes)
-        
+
         # One-hot encode y (1,2,3 → 0,1,2)
         Y = np.zeros((n_samples, n_classes))
         for i, label in enumerate(y):
             Y[i, label - 1] = 1
-        
+
         for _ in range(epochs):
             z = X_norm @ self.weights + self.bias
             probs = self._softmax(z)
             error = probs - Y
             self.weights -= lr * (X_norm.T @ error) / n_samples
             self.bias -= lr * error.mean(axis=0)
-        
+
         self.is_trained = True
-    
+
     def predict_proba(self, X: np.ndarray) -> np.ndarray:
         X_norm = self._normalize(X)
         z = X_norm @ self.weights + self.bias
         return self._softmax(z)
-    
+
     def predict(self, X: np.ndarray) -> int:
         proba = self.predict_proba(X)
         return int(proba.argmax()) + 1  # +1 because classes are 1,2,3
-    
-    def save(self, path: Path):
-        data = {
+
+    def to_dict(self) -> dict:
+        """Serialize model state to a JSON-compatible dict."""
+        return {
             "weights": self.weights.tolist(),
             "bias": self.bias.tolist(),
             "feature_mean": self.feature_mean.tolist(),
             "feature_std": self.feature_std.tolist(),
         }
-        with open(path, "w") as f:
-            json.dump(data, f)
-    
-    def load(self, path: Path):
-        with open(path) as f:
-            data = json.load(f)
+
+    def from_dict(self, data: dict):
+        """Restore model state from a dict."""
         self.weights = np.array(data["weights"])
         self.bias = np.array(data["bias"])
         self.feature_mean = np.array(data["feature_mean"])
@@ -506,29 +546,16 @@ _classifier = SimpleLogisticClassifier()
 
 
 def get_classifier() -> SimpleLogisticClassifier:
-    global _classifier
-    if not _classifier.is_trained:
-        if MODEL_PATH.exists():
-            try:
-                _classifier.load(MODEL_PATH)
-                logger.info("[ml] Model loaded from disk")
-            except Exception as e:
-                logger.warning(f"[ml] Failed to load model: {e}, training fresh")
-                _train_fresh()
-        else:
-            _train_fresh()
+    """Return the global classifier instance."""
     return _classifier
 
 
 def _train_fresh():
+    """Train the classifier on synthetic data."""
     global _classifier
     X, y = _create_synthetic_training_data()
     _classifier.fit(X, y)
-    try:
-        _classifier.save(MODEL_PATH)
-        logger.info("[ml] Model trained on synthetic data and saved")
-    except Exception as e:
-        logger.warning(f"[ml] Could not save model: {e}")
+    logger.info("[ml] Model trained on synthetic data")
 
 
 def ml_predict(prompt_text: str, metrics: dict, count_tech_fn=None, has_structure_fn=None) -> tuple[int, float]:
@@ -564,76 +591,78 @@ slowapi>=0.1.9
 File: backend/retrain.py
 ================================================================
 """
-Retrain ML classifier on accumulated feedback data.
-Run manually after collecting enough real user data:
+Retrain ML classifier on accumulated feedback data stored in PostgreSQL.
+Run manually:
   python retrain.py
-  python retrain.py --csv ml_feedback.csv --min-samples 15
+  python retrain.py --min-samples 15
 """
-import csv
 import sys
+import json
+import asyncio
 import argparse
+
 import numpy as np
-from pathlib import Path
+from sqlalchemy import select
+
+from database import AsyncSessionLocal, init_db, MLFeedback, MLModelCache
+from ml_classifier import SimpleLogisticClassifier
 
 
-def retrain_from_feedback(csv_path: str = "ml_feedback.csv", min_samples: int = 10):
-    path = Path(csv_path)
-    if not path.exists():
-        print(f"[retrain] File not found: {csv_path}")
+async def retrain_from_db(min_samples: int = 10):
+    await init_db()
+
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(select(MLFeedback))
+        rows = result.scalars().all()
+
+    print(f"[retrain] Loaded {len(rows)} valid samples from database")
+
+    if len(rows) < min_samples:
+        print(f"[retrain] Not enough data ({len(rows)} < {min_samples}). Aborting.")
         sys.exit(1)
 
-    X, y = [], []
-    feature_cols = [
-        "prompt_length", "word_count", "tech_term_count",
-        "has_structure", "chars_per_second", "session_message_count",
-        "avg_prompt_length", "used_advanced_features_count", "tooltip_click_count",
-    ]
-
-    with open(path, newline="") as f:
-        reader = csv.DictReader(f)
-        for i, row in enumerate(reader, 1):
-            try:
-                features = [float(row[col]) for col in feature_cols]
-                label = int(row["actual_level"])
-                if label not in (1, 2, 3):
-                    print(f"[retrain] Skipping row {i}: invalid label {label}")
-                    continue
-                X.append(features)
-                y.append(label)
-            except (KeyError, ValueError) as e:
-                print(f"[retrain] Skipping row {i}: {e}")
-
-    print(f"[retrain] Loaded {len(X)} valid samples")
-
-    if len(X) < min_samples:
-        print(f"[retrain] Not enough data ({len(X)} < {min_samples}). Aborting.")
-        sys.exit(1)
+    X = np.array([
+        [r.prompt_length, r.word_count, r.tech_term_count, r.has_structure,
+         r.chars_per_second, r.session_message_count, r.avg_prompt_length,
+         r.used_advanced_features_count, r.tooltip_click_count]
+        for r in rows
+    ], dtype=float)
+    y = np.array([r.actual_level for r in rows])
 
     # Class distribution
     for lvl in (1, 2, 3):
-        count = sum(1 for l in y if l == lvl)
+        count = int((y == lvl).sum())
         print(f"[retrain]   L{lvl}: {count} samples ({count/len(y)*100:.1f}%)")
 
-    from ml_classifier import SimpleLogisticClassifier, MODEL_PATH
     clf = SimpleLogisticClassifier()
-    clf.fit(np.array(X), np.array(y), lr=0.01, epochs=1000)
-    clf.save(MODEL_PATH)
-    print(f"[retrain] ✅ Model saved to {MODEL_PATH}")
+    clf.fit(X, y, lr=0.01, epochs=1000)
 
     # Quick accuracy check on training data
     correct = sum(
         1 for xi, yi in zip(X, y)
-        if clf.predict(np.array(xi).reshape(1, -1)) == yi
+        if clf.predict(xi.reshape(1, -1)) == yi
     )
     print(f"[retrain] Train accuracy: {correct}/{len(X)} = {correct/len(X)*100:.1f}%")
+
+    # Persist to DB
+    weights_json = json.dumps(clf.to_dict())
+    async with AsyncSessionLocal() as db:
+        existing = await db.execute(select(MLModelCache).where(MLModelCache.id == 1))
+        cache_row = existing.scalar_one_or_none()
+        if cache_row:
+            cache_row.weights_json = weights_json
+        else:
+            db.add(MLModelCache(id=1, weights_json=weights_json))
+        await db.commit()
+
+    print("[retrain] Model saved to database")
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--csv", default="ml_feedback.csv")
     parser.add_argument("--min-samples", type=int, default=10)
     args = parser.parse_args()
-    retrain_from_feedback(args.csv, args.min_samples)
+    asyncio.run(retrain_from_db(args.min_samples))
 
 ================================================================
 File: backend/routers/__init__.py
@@ -647,7 +676,6 @@ import io
 import json
 import logging
 import time
-from pathlib import Path
 
 import numpy as np
 from fastapi import APIRouter, Depends, Request
@@ -656,7 +684,8 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import ml_classifier
-from database import InteractionLog
+from ml_classifier import SimpleLogisticClassifier, FEATURE_NAMES
+from database import InteractionLog, MLFeedback, MLModelCache
 from dependencies import limiter, check_admin_key, get_db
 from schemas.api import TrainingFeedback, RetrainResponse
 from services.llm import clients, AVAILABLE_MODELS
@@ -726,8 +755,7 @@ async def test_providers(request: Request):
 
 @limiter.limit("20/minute")
 @router.post("/ml/feedback", dependencies=[Depends(check_admin_key)])
-async def ml_feedback(request: Request, data: TrainingFeedback):
-    feedback_path = Path("ml_feedback.csv")
+async def ml_feedback(request: Request, data: TrainingFeedback, db: AsyncSession = Depends(get_db)):
     try:
         metrics_dict = {
             "chars_per_second":             data.metrics.chars_per_second,
@@ -736,68 +764,69 @@ async def ml_feedback(request: Request, data: TrainingFeedback):
             "used_advanced_features_count": getattr(data.metrics, "used_advanced_features_count", 0),
             "tooltip_click_count":          getattr(data.metrics, "tooltip_click_count", 0),
         }
-        features   = ml_classifier.extract_features(data.prompt_text, metrics_dict, count_technical_terms, has_structured_patterns)
-        file_exists = feedback_path.exists()
-        with open(feedback_path, "a", newline="") as f:
-            writer = csv.writer(f)
-            if not file_exists:
-                writer.writerow([
-                    "prompt_length", "word_count", "tech_term_count", "has_structure",
-                    "chars_per_second", "session_message_count", "avg_prompt_length",
-                    "used_advanced_features_count", "tooltip_click_count", "actual_level",
-                ])
-            writer.writerow(list(features) + [data.actual_level])
+        features = ml_classifier.extract_features(data.prompt_text, metrics_dict, count_technical_terms, has_structured_patterns)
+        row = MLFeedback(
+            prompt_length=float(features[0]),
+            word_count=float(features[1]),
+            tech_term_count=float(features[2]),
+            has_structure=float(features[3]),
+            chars_per_second=float(features[4]),
+            session_message_count=float(features[5]),
+            avg_prompt_length=float(features[6]),
+            used_advanced_features_count=float(features[7]),
+            tooltip_click_count=float(features[8]),
+            actual_level=data.actual_level,
+        )
+        db.add(row)
+        await db.commit()
         return {"ok": True, "message": "Feedback saved"}
     except Exception as e:
         return {"ok": False, "error": str(e)}
 
 
 @router.post("/ml/retrain", response_model=RetrainResponse, dependencies=[Depends(check_admin_key)])
-async def ml_retrain():
+async def ml_retrain(db: AsyncSession = Depends(get_db)):
     """Retrain the ML classifier on accumulated feedback data."""
-    feedback_path = Path("ml_feedback.csv")
-    if not feedback_path.exists():
-        return RetrainResponse(ok=False, message="ml_feedback.csv not found — collect feedback first")
-
     try:
-        from ml_classifier import SimpleLogisticClassifier, MODEL_PATH, FEATURE_NAMES
+        result = await db.execute(select(MLFeedback))
+        rows = result.scalars().all()
 
-        X, y = [], []
-        feature_cols = FEATURE_NAMES
-
-        with open(feedback_path, newline="") as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                try:
-                    features = [float(row[col]) for col in feature_cols]
-                    label    = int(row["actual_level"])
-                    if label in (1, 2, 3):
-                        X.append(features)
-                        y.append(label)
-                except (KeyError, ValueError):
-                    pass
-
-        if len(X) < 10:
+        if len(rows) < 10:
             return RetrainResponse(
                 ok=False,
-                message=f"Not enough samples ({len(X)} < 10). Keep collecting feedback.",
-                samples_used=len(X),
+                message=f"Not enough samples ({len(rows)} < 10). Keep collecting feedback.",
+                samples_used=len(rows),
             )
 
+        X = np.array([
+            [r.prompt_length, r.word_count, r.tech_term_count, r.has_structure,
+             r.chars_per_second, r.session_message_count, r.avg_prompt_length,
+             r.used_advanced_features_count, r.tooltip_click_count]
+            for r in rows
+        ], dtype=float)
+        y = np.array([r.actual_level for r in rows])
+
         clf = SimpleLogisticClassifier()
-        clf.fit(np.array(X), np.array(y), lr=0.01, epochs=1000)
-        clf.save(MODEL_PATH)
+        clf.fit(X, y, lr=0.01, epochs=1000)
 
         correct = sum(
             1 for xi, yi in zip(X, y)
-            if clf.predict(np.array(xi).reshape(1, -1)) == yi
+            if clf.predict(xi.reshape(1, -1)) == yi
         )
         accuracy = correct / len(X)
 
-        # Reload global classifier
-        import ml_classifier as _mc
-        _mc._classifier = SimpleLogisticClassifier()
-        _mc._classifier.load(MODEL_PATH)
+        # Persist model weights to DB
+        weights_json = json.dumps(clf.to_dict())
+        existing = await db.execute(select(MLModelCache).where(MLModelCache.id == 1))
+        cache_row = existing.scalar_one_or_none()
+        if cache_row:
+            cache_row.weights_json = weights_json
+        else:
+            db.add(MLModelCache(id=1, weights_json=weights_json))
+        await db.commit()
+
+        # Update the global in-memory classifier
+        ml_classifier._classifier.from_dict(clf.to_dict())
 
         return RetrainResponse(
             ok=True,

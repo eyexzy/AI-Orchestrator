@@ -1,18 +1,3 @@
-export const MODELS = [
-  { value: "llama-3.3-70b",    label: "Llama 3.3 70B · Groq" },
-  { value: "llama-3.1-8b",     label: "Llama 3.1 8B · Groq" },
-  { value: "mixtral-8x7b",     label: "Mixtral 8x7B · Groq" },
-  { value: "gemini-2.0-flash", label: "Gemini 2.0 Flash" },
-  { value: "gemini-1.5-pro",   label: "Gemini 1.5 Pro" },
-  { value: "or-llama-70b",     label: "Llama 70B · OR" },
-  { value: "or-deepseek-r1",   label: "DeepSeek R1 · OR" },
-  { value: "or-gemma-27b",     label: "Gemma 3 27B · OR" },
-  { value: "or-qwen3-coder",   label: "Qwen3 Coder · OR" },
-  { value: "or-mistral-small", label: "Mistral Small · OR" },
-  { value: "gpt-4o",           label: "GPT-4o" },
-  { value: "gpt-4o-mini",      label: "GPT-4o Mini" },
-];
-
 export const DEFAULT_SYSTEM = "You are a helpful AI assistant. Respond in Ukrainian.";
 
 export interface FewShotExample {
