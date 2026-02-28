@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef } from "react";
+import { useRef, useEffect } from "react";
 import {
   SlidersHorizontal,
   Cpu,
@@ -12,9 +12,10 @@ import {
   ListOrdered,
 } from "lucide-react";
 import { useUserLevelStore } from "@/lib/store/userLevelStore";
+import { useModelsStore } from "@/lib/store/modelsStore";
 import { TEMPLATES, CATEGORY_LABELS } from "@/lib/templates";
 
-import { MODELS, DEFAULT_SYSTEM } from "./sidebar/config";
+import { DEFAULT_SYSTEM } from "./sidebar/config";
 import type { SidebarConfig } from "./sidebar/config";
 import {
   CollapsibleSection, Divider, SectionLabel, SliderRow, MiniSwitch, StyledSelect,
@@ -22,7 +23,7 @@ import {
 import { VariableEditor } from "./sidebar/VariableEditor";
 import { FewShotEditor } from "./sidebar/FewShotEditor";
 
-export { MODELS, DEFAULT_SYSTEM };
+export { DEFAULT_SYSTEM };
 export type { SidebarConfig };
 export type { FewShotExample } from "./sidebar/config";
 
@@ -32,9 +33,13 @@ const SIDEBAR_WIDTH = 292;
 export function ConfigSidebar({ config }: { config: SidebarConfig }) {
   const level = useUserLevelStore((s) => s.level);
   const { trackAdvancedFeature } = useUserLevelStore();
+  const models = useModelsStore((s) => s.models);
+  const fetchModels = useModelsStore((s) => s.fetchModels);
   const tempTracked  = useRef(false);
   const modelTracked = useRef(false);
   const sysTracked   = useRef(false);
+
+  useEffect(() => { fetchModels(); }, [fetchModels]);
 
   const isVisible = level >= 2;
   const compareOn = level === 3 && (config.compareEnabled ?? false);
@@ -250,7 +255,7 @@ export function ConfigSidebar({ config }: { config: SidebarConfig }) {
                     }}
                     borderColor="rgba(123,147,255,0.20)"
                   >
-                    {MODELS.map((o) => (
+                    {models.map((o) => (
                       <option key={o.value} value={o.value}>
                         {o.label}
                       </option>
@@ -275,7 +280,7 @@ export function ConfigSidebar({ config }: { config: SidebarConfig }) {
                     onChange={(v) => config.setCompareModelB?.(v)}
                     borderColor="rgba(52,211,153,0.20)"
                   >
-                    {MODELS.map((o) => (
+                    {models.map((o) => (
                       <option key={o.value} value={o.value}>
                         {o.label}
                       </option>
@@ -294,7 +299,7 @@ export function ConfigSidebar({ config }: { config: SidebarConfig }) {
                   }
                 }}
               >
-                {MODELS.map((o) => (
+                {models.map((o) => (
                   <option key={o.value} value={o.value}>
                     {o.label}
                   </option>
