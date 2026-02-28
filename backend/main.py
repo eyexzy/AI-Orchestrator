@@ -9,6 +9,7 @@ import time
 import random
 import asyncio
 import logging
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -18,14 +19,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, JSONResponse
 from pydantic import BaseModel, Field
 from openai import AsyncOpenAI
-from sqlalchemy import func
-from sqlalchemy.orm import Session
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 
-from database import init_db, get_db, save_interaction, SessionLocal, InteractionLog, UserProfile, ChatSession, ChatMessage
+from database import init_db, get_db, save_interaction, AsyncSessionLocal, InteractionLog, UserProfile, ChatSession, ChatMessage
 import ml_classifier
 
 load_dotenv()
@@ -79,15 +80,22 @@ def _check_admin_key(x_api_key: str = Header(default="")):
 
 limiter = Limiter(key_func=get_remote_address)
 
+
+# ── Lifespan ─────────────────────────────────────────────────────────────────
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    await init_db()
+    yield
+
+
 app = FastAPI(
     title="AI-Orchestrator Backend",
     version="0.9.0",
     description="Adaptive UX scoring engine + multi-provider LLM proxy",
+    lifespan=lifespan,
 )
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
-
-init_db()
 
 ALLOWED_ORIGINS = os.getenv(
     "ALLOWED_ORIGINS",
@@ -841,7 +849,7 @@ async def list_models():
 
 @limiter.limit("60/minute")
 @app.post("/analyze", response_model=AnalyzeResponse)
-async def analyze(request: Request, body: AnalyzeRequest, db: Session = Depends(get_db)) -> AnalyzeResponse:
+async def analyze(request: Request, body: AnalyzeRequest, db: AsyncSession = Depends(get_db)) -> AnalyzeResponse:
     suggested_level, confidence, reasons, score, normalized, breakdown = compute_score(body)
 
     typing_speed = body.metrics.chars_per_second if body.metrics else 0.0
@@ -849,7 +857,8 @@ async def analyze(request: Request, body: AnalyzeRequest, db: Session = Depends(
 
     # ── user_email as PK — survives page reloads and new sessions ──
     profile_key = body.user_email if body.user_email != "anonymous" else body.session_id
-    profile = db.get(UserProfile, profile_key)
+    result = await db.execute(select(UserProfile).where(UserProfile.user_email == profile_key))
+    profile = result.scalars().first()
     if not profile:
         profile = UserProfile(user_email=profile_key)
         db.add(profile)
@@ -871,9 +880,9 @@ async def analyze(request: Request, body: AnalyzeRequest, db: Session = Depends(
     profile.current_level      = final_level
     profile.level_history_json = json.dumps(history)
     profile.consecutive_high   = ((profile.consecutive_high or 0) + 1 if suggested_level > current else 0)
-    db.commit()
+    await db.commit()
 
-    save_interaction(
+    await save_interaction(
         db=db, session_id=body.session_id, user_email=body.user_email,
         user_level=final_level, prompt_text=body.prompt_text,
         score=score, normalized=normalized,
@@ -925,7 +934,7 @@ async def refine(request: Request, body: dict) -> dict:
 
 @limiter.limit("20/minute")
 @app.post("/generate")
-async def generate(request: Request, body: GenerateRequest, db: Session = Depends(get_db)):
+async def generate(request: Request, body: GenerateRequest, db: AsyncSession = Depends(get_db)):
     logger.info(
         f"[generate] model={body.model}, prompt_len={len(body.prompt)}, "
         f"history={len(body.history)}, stream={body.stream}, top_p={body.top_p}, top_k={body.top_k}"
@@ -936,14 +945,11 @@ async def generate(request: Request, body: GenerateRequest, db: Session = Depend
         raise HTTPException(status_code=400, detail=f"Unknown model: {body.model}")
 
     # ── Validate / auto-create chat session ────────────────────────────────
-    # Without this check a missing session_id causes IntegrityError (FK)
-    # which bubbles up as a raw 500 to the client.
     if body.session_id:
-        existing_session = (
-            db.query(ChatSession)
-            .filter(ChatSession.id == body.session_id)
-            .first()
+        result = await db.execute(
+            select(ChatSession).where(ChatSession.id == body.session_id)
         )
+        existing_session = result.scalars().first()
         if not existing_session:
             logger.warning(
                 f"[generate] session_id={body.session_id} not found — auto-creating"
@@ -955,9 +961,9 @@ async def generate(request: Request, body: GenerateRequest, db: Session = Depend
             )
             db.add(new_session)
             try:
-                db.commit()
+                await db.commit()
             except Exception:
-                db.rollback()
+                await db.rollback()
                 raise HTTPException(
                     status_code=400,
                     detail=f"Chat session '{body.session_id}' not found and could not be created",
@@ -967,12 +973,9 @@ async def generate(request: Request, body: GenerateRequest, db: Session = Depend
     if body.session_id:
         user_msg = ChatMessage(session_id=body.session_id, role="user", content=body.prompt)
         db.add(user_msg)
-        db.commit()
+        await db.commit()
 
     # ── STREAMING path ──────────────────────────────────────────────────────
-    # NOTE: FastAPI closes the `db` dependency when the route handler returns —
-    # which happens immediately for StreamingResponse. So we open a FRESH
-    # SessionLocal() inside the generator for the post-stream DB write.
     if body.stream:
         if client is not None:
             async def stream_with_save():
@@ -988,14 +991,9 @@ async def generate(request: Request, body: GenerateRequest, db: Session = Depend
                             except Exception:
                                 pass
                 finally:
-                    # FIX: classic try/finally instead of context manager
-                    # because SQLAlchemy sessionmaker does not support `with`.
                     if body.session_id and full_text:
-                        db2 = SessionLocal()
-                        try:
-                            _save_assistant_message(db2, body, full_text, {}, "stream")
-                        finally:
-                            db2.close()
+                        async with AsyncSessionLocal() as db2:
+                            await _save_assistant_message(db2, body, full_text, {}, "stream")
         else:
             async def stream_with_save():
                 async for chunk in _mock_generate_stream(body):
@@ -1023,12 +1021,12 @@ async def generate(request: Request, body: GenerateRequest, db: Session = Depend
             "latency_ms": result.usage.latency_ms,
             "provider":   result.provider,
         }
-        _save_assistant_message(db, body, result.text, meta, result.provider)
+        await _save_assistant_message(db, body, result.text, meta, result.provider)
 
     return result
 
 
-def _save_assistant_message(db, body: GenerateRequest, text: str, meta: dict, provider: str):
+async def _save_assistant_message(db: AsyncSession, body: GenerateRequest, text: str, meta: dict, provider: str):
     """Persist assistant reply and update chat title."""
     ai_msg = ChatMessage(
         session_id=    body.session_id,
@@ -1037,15 +1035,18 @@ def _save_assistant_message(db, body: GenerateRequest, text: str, meta: dict, pr
         metadata_json= json.dumps(meta, ensure_ascii=False),
     )
     db.add(ai_msg)
-    sess = db.query(ChatSession).filter(ChatSession.id == body.session_id).first()
+    result = await db.execute(
+        select(ChatSession).where(ChatSession.id == body.session_id)
+    )
+    sess = result.scalars().first()
     if sess:
-        sess.updated_at = datetime.now(timezone.utc)
+        sess.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
         if sess.title == "Новий чат":
             title = body.prompt[:60].strip()
             if len(body.prompt) > 60:
                 title += "…"
             sess.title = title
-    db.commit()
+    await db.commit()
 
 
 # ---------------------------------------------------------------------------
@@ -1125,8 +1126,11 @@ async def ml_retrain():
 # ---------------------------------------------------------------------------
 
 @app.get("/export-csv", dependencies=[Depends(_check_admin_key)])
-async def export_csv(db: Session = Depends(get_db)):
-    logs   = db.query(InteractionLog).order_by(InteractionLog.timestamp.asc()).all()
+async def export_csv(db: AsyncSession = Depends(get_db)):
+    result = await db.execute(
+        select(InteractionLog).order_by(InteractionLog.timestamp.asc())
+    )
+    logs = result.scalars().all()
     output = io.StringIO()
     writer = csv.DictWriter(
         output,
@@ -1144,14 +1148,18 @@ async def export_csv(db: Session = Depends(get_db)):
 
 
 @app.get("/stats", dependencies=[Depends(_check_admin_key)])
-async def stats(db: Session = Depends(get_db)):
-    total = db.query(InteractionLog).count()
+async def stats(db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(func.count(InteractionLog.id)))
+    total = result.scalar() or 0
     return {"total_interactions": total}
 
 
 @app.get("/stats/ml", dependencies=[Depends(_check_admin_key)])
-async def ml_stats(db: Session = Depends(get_db)):
-    logs = db.query(InteractionLog).order_by(InteractionLog.timestamp.asc()).all()
+async def ml_stats(db: AsyncSession = Depends(get_db)):
+    result = await db.execute(
+        select(InteractionLog).order_by(InteractionLog.timestamp.asc())
+    )
+    logs = result.scalars().all()
     if not logs:
         return {
             "total": 0,
@@ -1210,17 +1218,18 @@ class UpdateChatRequest(BaseModel):
 @app.get("/chats")
 async def list_chats(
     user_email: str = "anonymous",
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     _api_key: str = Depends(_check_admin_key),
 ):
-    rows = (
-        db.query(ChatSession, func.count(ChatMessage.id))
+    stmt = (
+        select(ChatSession, func.count(ChatMessage.id).label("msg_count"))
         .outerjoin(ChatMessage, ChatSession.id == ChatMessage.session_id)
-        .filter(ChatSession.user_email == user_email)
+        .where(ChatSession.user_email == user_email)
         .group_by(ChatSession.id)
         .order_by(ChatSession.updated_at.desc())
-        .all()
     )
+    result = await db.execute(stmt)
+    rows = result.all()
     return [
         {
             "id":            s.id,
@@ -1236,13 +1245,13 @@ async def list_chats(
 @app.post("/chats")
 async def create_chat(
     req: CreateChatRequest,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     _api_key: str = Depends(_check_admin_key),
 ):
     session = ChatSession(user_email=req.user_email, title=req.title)
     db.add(session)
-    db.commit()
-    db.refresh(session)
+    await db.commit()
+    await db.refresh(session)
     return {
         "id":            session.id,
         "title":         session.title,
@@ -1255,18 +1264,21 @@ async def create_chat(
 @app.get("/chats/{chat_id}/messages")
 async def get_chat_messages(
     chat_id: str,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     _api_key: str = Depends(_check_admin_key),
 ):
-    session = db.query(ChatSession).filter(ChatSession.id == chat_id).first()
+    result = await db.execute(
+        select(ChatSession).where(ChatSession.id == chat_id)
+    )
+    session = result.scalars().first()
     if not session:
         return JSONResponse(status_code=404, content={"error": "Chat not found"})
-    msgs = (
-        db.query(ChatMessage)
-        .filter(ChatMessage.session_id == chat_id)
+    result = await db.execute(
+        select(ChatMessage)
+        .where(ChatMessage.session_id == chat_id)
         .order_by(ChatMessage.created_at.asc())
-        .all()
     )
+    msgs = result.scalars().all()
     return [
         {
             "id":         m.id,
@@ -1283,28 +1295,34 @@ async def get_chat_messages(
 async def update_chat(
     chat_id: str,
     req: UpdateChatRequest,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     _api_key: str = Depends(_check_admin_key),
 ):
-    session = db.query(ChatSession).filter(ChatSession.id == chat_id).first()
+    result = await db.execute(
+        select(ChatSession).where(ChatSession.id == chat_id)
+    )
+    session = result.scalars().first()
     if not session:
         return JSONResponse(status_code=404, content={"error": "Chat not found"})
     session.title = req.title
-    db.commit()
+    await db.commit()
     return {"ok": True}
 
 
 @app.delete("/chats/{chat_id}")
 async def delete_chat(
     chat_id: str,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     _api_key: str = Depends(_check_admin_key),
 ):
-    session = db.query(ChatSession).filter(ChatSession.id == chat_id).first()
+    result = await db.execute(
+        select(ChatSession).where(ChatSession.id == chat_id)
+    )
+    session = result.scalars().first()
     if not session:
         return JSONResponse(status_code=404, content={"error": "Chat not found"})
-    db.delete(session)
-    db.commit()
+    await db.delete(session)
+    await db.commit()
     return {"ok": True}
 
 
