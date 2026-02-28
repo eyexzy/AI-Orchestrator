@@ -3,7 +3,6 @@ import io
 import json
 import logging
 import time
-from pathlib import Path
 
 import numpy as np
 from fastapi import APIRouter, Depends, Request
@@ -12,7 +11,8 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import ml_classifier
-from database import InteractionLog
+from ml_classifier import SimpleLogisticClassifier, FEATURE_NAMES
+from database import InteractionLog, MLFeedback, MLModelCache
 from dependencies import limiter, check_admin_key, get_db
 from schemas.api import TrainingFeedback, RetrainResponse
 from services.llm import clients, AVAILABLE_MODELS
@@ -82,8 +82,7 @@ async def test_providers(request: Request):
 
 @limiter.limit("20/minute")
 @router.post("/ml/feedback", dependencies=[Depends(check_admin_key)])
-async def ml_feedback(request: Request, data: TrainingFeedback):
-    feedback_path = Path("ml_feedback.csv")
+async def ml_feedback(request: Request, data: TrainingFeedback, db: AsyncSession = Depends(get_db)):
     try:
         metrics_dict = {
             "chars_per_second":             data.metrics.chars_per_second,
@@ -92,68 +91,69 @@ async def ml_feedback(request: Request, data: TrainingFeedback):
             "used_advanced_features_count": getattr(data.metrics, "used_advanced_features_count", 0),
             "tooltip_click_count":          getattr(data.metrics, "tooltip_click_count", 0),
         }
-        features   = ml_classifier.extract_features(data.prompt_text, metrics_dict, count_technical_terms, has_structured_patterns)
-        file_exists = feedback_path.exists()
-        with open(feedback_path, "a", newline="") as f:
-            writer = csv.writer(f)
-            if not file_exists:
-                writer.writerow([
-                    "prompt_length", "word_count", "tech_term_count", "has_structure",
-                    "chars_per_second", "session_message_count", "avg_prompt_length",
-                    "used_advanced_features_count", "tooltip_click_count", "actual_level",
-                ])
-            writer.writerow(list(features) + [data.actual_level])
+        features = ml_classifier.extract_features(data.prompt_text, metrics_dict, count_technical_terms, has_structured_patterns)
+        row = MLFeedback(
+            prompt_length=float(features[0]),
+            word_count=float(features[1]),
+            tech_term_count=float(features[2]),
+            has_structure=float(features[3]),
+            chars_per_second=float(features[4]),
+            session_message_count=float(features[5]),
+            avg_prompt_length=float(features[6]),
+            used_advanced_features_count=float(features[7]),
+            tooltip_click_count=float(features[8]),
+            actual_level=data.actual_level,
+        )
+        db.add(row)
+        await db.commit()
         return {"ok": True, "message": "Feedback saved"}
     except Exception as e:
         return {"ok": False, "error": str(e)}
 
 
 @router.post("/ml/retrain", response_model=RetrainResponse, dependencies=[Depends(check_admin_key)])
-async def ml_retrain():
+async def ml_retrain(db: AsyncSession = Depends(get_db)):
     """Retrain the ML classifier on accumulated feedback data."""
-    feedback_path = Path("ml_feedback.csv")
-    if not feedback_path.exists():
-        return RetrainResponse(ok=False, message="ml_feedback.csv not found — collect feedback first")
-
     try:
-        from ml_classifier import SimpleLogisticClassifier, MODEL_PATH, FEATURE_NAMES
+        result = await db.execute(select(MLFeedback))
+        rows = result.scalars().all()
 
-        X, y = [], []
-        feature_cols = FEATURE_NAMES
-
-        with open(feedback_path, newline="") as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                try:
-                    features = [float(row[col]) for col in feature_cols]
-                    label    = int(row["actual_level"])
-                    if label in (1, 2, 3):
-                        X.append(features)
-                        y.append(label)
-                except (KeyError, ValueError):
-                    pass
-
-        if len(X) < 10:
+        if len(rows) < 10:
             return RetrainResponse(
                 ok=False,
-                message=f"Not enough samples ({len(X)} < 10). Keep collecting feedback.",
-                samples_used=len(X),
+                message=f"Not enough samples ({len(rows)} < 10). Keep collecting feedback.",
+                samples_used=len(rows),
             )
 
+        X = np.array([
+            [r.prompt_length, r.word_count, r.tech_term_count, r.has_structure,
+             r.chars_per_second, r.session_message_count, r.avg_prompt_length,
+             r.used_advanced_features_count, r.tooltip_click_count]
+            for r in rows
+        ], dtype=float)
+        y = np.array([r.actual_level for r in rows])
+
         clf = SimpleLogisticClassifier()
-        clf.fit(np.array(X), np.array(y), lr=0.01, epochs=1000)
-        clf.save(MODEL_PATH)
+        clf.fit(X, y, lr=0.01, epochs=1000)
 
         correct = sum(
             1 for xi, yi in zip(X, y)
-            if clf.predict(np.array(xi).reshape(1, -1)) == yi
+            if clf.predict(xi.reshape(1, -1)) == yi
         )
         accuracy = correct / len(X)
 
-        # Reload global classifier
-        import ml_classifier as _mc
-        _mc._classifier = SimpleLogisticClassifier()
-        _mc._classifier.load(MODEL_PATH)
+        # Persist model weights to DB
+        weights_json = json.dumps(clf.to_dict())
+        existing = await db.execute(select(MLModelCache).where(MLModelCache.id == 1))
+        cache_row = existing.scalar_one_or_none()
+        if cache_row:
+            cache_row.weights_json = weights_json
+        else:
+            db.add(MLModelCache(id=1, weights_json=weights_json))
+        await db.commit()
+
+        # Update the global in-memory classifier
+        ml_classifier._classifier.from_dict(clf.to_dict())
 
         return RetrainResponse(
             ok=True,

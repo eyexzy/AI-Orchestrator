@@ -120,6 +120,35 @@ class ChatMessage(Base):
     session = relationship("ChatSession", back_populates="messages")
 
 
+# ── ML feedback (replaces ml_feedback.csv) ─────────────────────────
+
+class MLFeedback(Base):
+    __tablename__ = "ml_feedback"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    prompt_length = Column(Float, default=0.0)
+    word_count = Column(Float, default=0.0)
+    tech_term_count = Column(Float, default=0.0)
+    has_structure = Column(Float, default=0.0)
+    chars_per_second = Column(Float, default=0.0)
+    session_message_count = Column(Float, default=0.0)
+    avg_prompt_length = Column(Float, default=0.0)
+    used_advanced_features_count = Column(Float, default=0.0)
+    tooltip_click_count = Column(Float, default=0.0)
+    actual_level = Column(Integer, nullable=False)
+    created_at = Column(DateTime, default=_now)
+
+
+# ── ML model cache (replaces ml_model.json) ────────────────────────
+
+class MLModelCache(Base):
+    __tablename__ = "ml_model_cache"
+
+    id = Column(Integer, primary_key=True, default=1)
+    weights_json = Column(Text, nullable=False)
+    updated_at = Column(DateTime, default=_now, onupdate=_now)
+
+
 # ── DB helpers ──────────────────────────────────────────────────────
 
 async def init_db():

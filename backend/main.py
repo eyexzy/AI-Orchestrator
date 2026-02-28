@@ -1,3 +1,4 @@
+import json
 import os
 import sys
 import logging
@@ -8,9 +9,11 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
+from sqlalchemy import select
 
-from database import init_db
+from database import init_db, AsyncSessionLocal, MLModelCache
 from dependencies import limiter
+import ml_classifier
 
 load_dotenv()
 
@@ -63,6 +66,21 @@ _validate_env()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()
+
+    # Load or initialize ML model from DB
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(select(MLModelCache).where(MLModelCache.id == 1))
+        cache_row = result.scalar_one_or_none()
+        if cache_row:
+            ml_classifier.get_classifier().from_dict(json.loads(cache_row.weights_json))
+            logger.info("[ml] Model loaded from database")
+        else:
+            ml_classifier._train_fresh()
+            weights_json = json.dumps(ml_classifier.get_classifier().to_dict())
+            db.add(MLModelCache(id=1, weights_json=weights_json))
+            await db.commit()
+            logger.info("[ml] Synthetic model trained and saved to database")
+
     yield
 
 

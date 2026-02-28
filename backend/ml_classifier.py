@@ -4,17 +4,14 @@ Uses LogisticRegression trained on synthetic + accumulated data.
 Complements the rule-based scoring system.
 """
 import numpy as np
-import json
-import os
 import logging
-from pathlib import Path
 
 logger = logging.getLogger("ml-classifier")
 
 # Feature names (must match extract_features output)
 FEATURE_NAMES = [
     "prompt_length",
-    "word_count", 
+    "word_count",
     "tech_term_count",
     "has_structure",
     "chars_per_second",
@@ -24,13 +21,11 @@ FEATURE_NAMES = [
     "tooltip_click_count",
 ]
 
-MODEL_PATH = Path(__file__).parent / "ml_model.json"
-
 
 def extract_features(prompt_text: str, metrics: dict, count_tech_fn=None, has_structure_fn=None) -> np.ndarray:
     """Extract feature vector from prompt and behavioral metrics."""
     text = prompt_text.strip()
-    
+
     # Import here to avoid circular imports, or use passed functions
     if count_tech_fn is None or has_structure_fn is None:
         try:
@@ -47,7 +42,7 @@ def extract_features(prompt_text: str, metrics: dict, count_tech_fn=None, has_st
             def _count_technical_terms(text: str) -> int:
                 lower = text.lower()
                 return sum(1 for term in TECHNICAL_TERMS if term in lower)
-            
+
             def _has_structured_patterns(text: str) -> bool:
                 import re
                 patterns = [
@@ -60,10 +55,10 @@ def extract_features(prompt_text: str, metrics: dict, count_tech_fn=None, has_st
                     r"\brole\s*:",
                 ]
                 return any(re.search(p, text, re.IGNORECASE) for p in patterns)
-            
+
             count_tech_fn = _count_technical_terms
             has_structure_fn = _has_structured_patterns
-    
+
     features = [
         len(text),                                        # prompt_length
         len(text.split()),                                # word_count
@@ -104,7 +99,7 @@ def _create_synthetic_training_data():
         ([400, 80, 8, 1, 10.0, 18, 380, 6, 0], 3),
         ([310, 62, 6, 1, 8.8, 14, 290, 4, 0], 3),
     ]
-    
+
     X = np.array([s[0] for s in l1_samples + l2_samples + l3_samples], dtype=float)
     y = np.array([s[1] for s in l1_samples + l2_samples + l3_samples])
     return X, y
@@ -113,7 +108,7 @@ def _create_synthetic_training_data():
 class SimpleLogisticClassifier:
     """Hand-implemented logistic regression for 3-class classification.
     Avoids scikit-learn dependency — pure numpy."""
-    
+
     def __init__(self):
         self.weights = None
         self.bias = None
@@ -121,60 +116,58 @@ class SimpleLogisticClassifier:
         self.feature_std = None
         self.classes = [1, 2, 3]
         self.is_trained = False
-    
+
     def _normalize(self, X: np.ndarray) -> np.ndarray:
         return (X - self.feature_mean) / (self.feature_std + 1e-8)
-    
+
     def _softmax(self, z: np.ndarray) -> np.ndarray:
         e = np.exp(z - z.max(axis=1, keepdims=True))
         return e / e.sum(axis=1, keepdims=True)
-    
+
     def fit(self, X: np.ndarray, y: np.ndarray, lr=0.01, epochs=500):
         self.feature_mean = X.mean(axis=0)
         self.feature_std = X.std(axis=0)
         X_norm = self._normalize(X)
-        
+
         n_samples, n_features = X_norm.shape
         n_classes = 3
         self.weights = np.zeros((n_features, n_classes))
         self.bias = np.zeros(n_classes)
-        
+
         # One-hot encode y (1,2,3 → 0,1,2)
         Y = np.zeros((n_samples, n_classes))
         for i, label in enumerate(y):
             Y[i, label - 1] = 1
-        
+
         for _ in range(epochs):
             z = X_norm @ self.weights + self.bias
             probs = self._softmax(z)
             error = probs - Y
             self.weights -= lr * (X_norm.T @ error) / n_samples
             self.bias -= lr * error.mean(axis=0)
-        
+
         self.is_trained = True
-    
+
     def predict_proba(self, X: np.ndarray) -> np.ndarray:
         X_norm = self._normalize(X)
         z = X_norm @ self.weights + self.bias
         return self._softmax(z)
-    
+
     def predict(self, X: np.ndarray) -> int:
         proba = self.predict_proba(X)
         return int(proba.argmax()) + 1  # +1 because classes are 1,2,3
-    
-    def save(self, path: Path):
-        data = {
+
+    def to_dict(self) -> dict:
+        """Serialize model state to a JSON-compatible dict."""
+        return {
             "weights": self.weights.tolist(),
             "bias": self.bias.tolist(),
             "feature_mean": self.feature_mean.tolist(),
             "feature_std": self.feature_std.tolist(),
         }
-        with open(path, "w") as f:
-            json.dump(data, f)
-    
-    def load(self, path: Path):
-        with open(path) as f:
-            data = json.load(f)
+
+    def from_dict(self, data: dict):
+        """Restore model state from a dict."""
         self.weights = np.array(data["weights"])
         self.bias = np.array(data["bias"])
         self.feature_mean = np.array(data["feature_mean"])
@@ -187,29 +180,16 @@ _classifier = SimpleLogisticClassifier()
 
 
 def get_classifier() -> SimpleLogisticClassifier:
-    global _classifier
-    if not _classifier.is_trained:
-        if MODEL_PATH.exists():
-            try:
-                _classifier.load(MODEL_PATH)
-                logger.info("[ml] Model loaded from disk")
-            except Exception as e:
-                logger.warning(f"[ml] Failed to load model: {e}, training fresh")
-                _train_fresh()
-        else:
-            _train_fresh()
+    """Return the global classifier instance."""
     return _classifier
 
 
 def _train_fresh():
+    """Train the classifier on synthetic data."""
     global _classifier
     X, y = _create_synthetic_training_data()
     _classifier.fit(X, y)
-    try:
-        _classifier.save(MODEL_PATH)
-        logger.info("[ml] Model trained on synthetic data and saved")
-    except Exception as e:
-        logger.warning(f"[ml] Could not save model: {e}")
+    logger.info("[ml] Model trained on synthetic data")
 
 
 def ml_predict(prompt_text: str, metrics: dict, count_tech_fn=None, has_structure_fn=None) -> tuple[int, float]:
