@@ -1,71 +1,73 @@
 """
-Retrain ML classifier on accumulated feedback data.
-Run manually after collecting enough real user data:
+Retrain ML classifier on accumulated feedback data stored in PostgreSQL.
+Run manually:
   python retrain.py
-  python retrain.py --csv ml_feedback.csv --min-samples 15
+  python retrain.py --min-samples 15
 """
-import csv
 import sys
+import json
+import asyncio
 import argparse
+
 import numpy as np
-from pathlib import Path
+from sqlalchemy import select
+
+from database import AsyncSessionLocal, init_db, MLFeedback, MLModelCache
+from ml_classifier import SimpleLogisticClassifier
 
 
-def retrain_from_feedback(csv_path: str = "ml_feedback.csv", min_samples: int = 10):
-    path = Path(csv_path)
-    if not path.exists():
-        print(f"[retrain] File not found: {csv_path}")
+async def retrain_from_db(min_samples: int = 10):
+    await init_db()
+
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(select(MLFeedback))
+        rows = result.scalars().all()
+
+    print(f"[retrain] Loaded {len(rows)} valid samples from database")
+
+    if len(rows) < min_samples:
+        print(f"[retrain] Not enough data ({len(rows)} < {min_samples}). Aborting.")
         sys.exit(1)
 
-    X, y = [], []
-    feature_cols = [
-        "prompt_length", "word_count", "tech_term_count",
-        "has_structure", "chars_per_second", "session_message_count",
-        "avg_prompt_length", "used_advanced_features_count", "tooltip_click_count",
-    ]
-
-    with open(path, newline="") as f:
-        reader = csv.DictReader(f)
-        for i, row in enumerate(reader, 1):
-            try:
-                features = [float(row[col]) for col in feature_cols]
-                label = int(row["actual_level"])
-                if label not in (1, 2, 3):
-                    print(f"[retrain] Skipping row {i}: invalid label {label}")
-                    continue
-                X.append(features)
-                y.append(label)
-            except (KeyError, ValueError) as e:
-                print(f"[retrain] Skipping row {i}: {e}")
-
-    print(f"[retrain] Loaded {len(X)} valid samples")
-
-    if len(X) < min_samples:
-        print(f"[retrain] Not enough data ({len(X)} < {min_samples}). Aborting.")
-        sys.exit(1)
+    X = np.array([
+        [r.prompt_length, r.word_count, r.tech_term_count, r.has_structure,
+         r.chars_per_second, r.session_message_count, r.avg_prompt_length,
+         r.used_advanced_features_count, r.tooltip_click_count]
+        for r in rows
+    ], dtype=float)
+    y = np.array([r.actual_level for r in rows])
 
     # Class distribution
     for lvl in (1, 2, 3):
-        count = sum(1 for l in y if l == lvl)
+        count = int((y == lvl).sum())
         print(f"[retrain]   L{lvl}: {count} samples ({count/len(y)*100:.1f}%)")
 
-    from ml_classifier import SimpleLogisticClassifier, MODEL_PATH
     clf = SimpleLogisticClassifier()
-    clf.fit(np.array(X), np.array(y), lr=0.01, epochs=1000)
-    clf.save(MODEL_PATH)
-    print(f"[retrain] ✅ Model saved to {MODEL_PATH}")
+    clf.fit(X, y, lr=0.01, epochs=1000)
 
     # Quick accuracy check on training data
     correct = sum(
         1 for xi, yi in zip(X, y)
-        if clf.predict(np.array(xi).reshape(1, -1)) == yi
+        if clf.predict(xi.reshape(1, -1)) == yi
     )
     print(f"[retrain] Train accuracy: {correct}/{len(X)} = {correct/len(X)*100:.1f}%")
+
+    # Persist to DB
+    weights_json = json.dumps(clf.to_dict())
+    async with AsyncSessionLocal() as db:
+        existing = await db.execute(select(MLModelCache).where(MLModelCache.id == 1))
+        cache_row = existing.scalar_one_or_none()
+        if cache_row:
+            cache_row.weights_json = weights_json
+        else:
+            db.add(MLModelCache(id=1, weights_json=weights_json))
+        await db.commit()
+
+    print("[retrain] Model saved to database")
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--csv", default="ml_feedback.csv")
     parser.add_argument("--min-samples", type=int, default=10)
     args = parser.parse_args()
-    retrain_from_feedback(args.csv, args.min_samples)
+    asyncio.run(retrain_from_db(args.min_samples))
