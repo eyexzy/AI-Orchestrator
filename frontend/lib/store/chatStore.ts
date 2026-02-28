@@ -9,6 +9,7 @@
  */
 
 import { create } from "zustand";
+import { toast } from "sonner";
 import { useUserLevelStore } from "./userLevelStore";
 import { API_URL } from "@/lib/config";
 
@@ -172,6 +173,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       set({ chats: res.ok ? (await res.json()) || [] : [] });
     } catch {
       set({ chats: [] });
+      toast.error("Не вдалося завантажити історію чатів");
     } finally {
       set({ isLoadingChats: false });
     }
@@ -229,7 +231,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         return chat.id;
       }
     } catch {
-      /* silent */
+      toast.error("Помилка створення чату. Перевірте з'єднання.");
     }
     return null;
   },
@@ -266,7 +268,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         }
       }
     } catch {
-      /* silent */
+      toast.error("Не вдалося видалити чат");
     }
   },
 
@@ -281,7 +283,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         chats: s.chats.map((c) => (c.id === id ? { ...c, title } : c)),
       }));
     } catch {
-      /* silent */
+      toast.error("Не вдалося перейменувати чат");
     }
   },
 
@@ -622,6 +624,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
       return get().messages.find((m) => m.id === asstMsgId) ?? null;
     } catch {
+      toast.error("Помилка підключення до сервера");
       set((s) => ({
         messages: s.messages.map((m) =>
           m.id === asstMsgId

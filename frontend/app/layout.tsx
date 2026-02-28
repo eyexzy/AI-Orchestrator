@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Inter } from "next/font/google";
+import { Toaster } from "sonner";
 import { SessionProvider } from "@/components/SessionProvider";
 import "./globals.css";
 
@@ -23,6 +24,7 @@ export default function RootLayout({
   return (
     <html lang="uk" className={`${inter.variable} dark`}>
       <body className="font-sans">
+        <Toaster position="bottom-right" theme="dark" />
         <SessionProvider>{children}</SessionProvider>
       </body>
     </html>
