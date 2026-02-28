@@ -287,6 +287,26 @@ export function ConfigSidebar({ config }: { config: SidebarConfig }) {
                     ))}
                   </StyledSelect>
                 </div>
+                {/* Warning if same models are selected */}
+                {(config.compareModelA ?? config.model) === (config.compareModelB ?? "gemini-2.0-flash") && (
+                  <div
+                    className="mt-2.5 flex items-start gap-1.5 rounded-lg px-2.5 py-2 text-[10px] leading-relaxed transition-all animate-in"
+                    style={{
+                      background: "rgba(251,191,36,0.08)",
+                      color: "rgb(251,191,36)",
+                      border: "1px solid rgba(251,191,36,0.2)",
+                    }}
+                  >
+                    <svg className="mt-0.5 shrink-0" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/>
+                      <line x1="12" y1="9" x2="12" y2="13"/>
+                      <line x1="12" y1="17" x2="12.01" y2="17"/>
+                    </svg>
+                    <span>
+                      Оберіть різні моделі. Інакше буде використано звичайний режим генерації.
+                    </span>
+                  </div>
+                )}
               </div>
             ) : (
               <StyledSelect
