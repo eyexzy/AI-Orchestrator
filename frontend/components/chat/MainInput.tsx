@@ -7,6 +7,7 @@ import { useChatStore } from "@/lib/store/chatStore";
 import { ChatInputBox } from "@/components/chat/ChatInputBox";
 import { API_URL } from "@/lib/config";
 import { resolveVariables } from "@/lib/api";
+import { toast } from "sonner";
 import { TutorModal } from "./input/TutorModal";
 import { L1Chips } from "./input/L1Chips";
 import { L3StrategyChips } from "./input/L3StrategyChips";
@@ -140,8 +141,10 @@ export function MainInput({
         }
         return true; // success — modal is open
       }
+      toast.error("Не вдалося покращити промпт. Сервер недоступний.");
       return false; // API error — caller decides what to do
     } catch {
+      toast.error("Не вдалося покращити промпт. Сервер недоступний.");
       return false; // network / timeout error
     } finally {
       if (isMountedRef.current) setIsRefining(false);
