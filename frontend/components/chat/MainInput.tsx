@@ -77,9 +77,13 @@ export function MainInput({
     }
   }, [externalPrompt, onExternalPromptConsumed, onChange]);
 
-  const { startTyping, recordKeystroke, analyzePrompt, trackSuggestionClick, trackCancelAction } = useUserLevelStore();
+  const { analyzePrompt, trackSuggestionClick, trackCancelAction } = useUserLevelStore();
   const { isSending, sendMessage } = useChatStore();
   const userEmail = session?.user?.email ?? "anonymous";
+
+  const lastKeystrokeTimeRef = useRef<number | null>(null);
+  const activeTypingDurationMsRef = useRef<number>(0);
+  const typingCharsRef = useRef<number>(0);
 
   const _dispatch = useCallback(async (text: string) => {
     onChange("");
@@ -88,6 +92,10 @@ export function MainInput({
     const finalPrompt = chatParams.variables
       ? resolveVariables(text, chatParams.variables)
       : text;
+
+    // Calculate typing speed from active duration (idle breaks > 3s excluded)
+    const elapsedSeconds = Math.max(activeTypingDurationMsRef.current / 1000, 0.1);
+    const cps = typingCharsRef.current > 0 ? typingCharsRef.current / elapsedSeconds : 0;
 
     try {
       const result = await sendMessage(finalPrompt, {
@@ -104,13 +112,17 @@ export function MainInput({
         selfConsistencyEnabled:    chatParams.selfConsistencyEnabled,
       });
       if (result) {
-        analyzePrompt(finalPrompt);
+        analyzePrompt(finalPrompt, cps);
         if (onRawResponse && result.metadata) {
           onRawResponse(result.metadata as Record<string, unknown>);
         }
       }
     } catch (err) {
       console.error(err);
+    } finally {
+      lastKeystrokeTimeRef.current = null;
+      activeTypingDurationMsRef.current = 0;
+      typingCharsRef.current = 0;
     }
   }, [sendMessage, analyzePrompt, userEmail, chatParams, onChange, onRawResponse]);
 
@@ -224,8 +236,13 @@ export function MainInput({
       <ChatInputBox
         value={value}
         onChange={(v) => {
-          if (value.length === 0 && v.length > 0) startTyping();
-          recordKeystroke();
+          const now = Date.now();
+          if (lastKeystrokeTimeRef.current !== null) {
+            const delta = now - lastKeystrokeTimeRef.current;
+            if (delta < 3000) activeTypingDurationMsRef.current += delta;
+          }
+          lastKeystrokeTimeRef.current = now;
+          typingCharsRef.current++;
           onChange(v);
         }}
         onSend={() => handleSend()}

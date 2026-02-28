@@ -18,8 +18,6 @@ export interface BehavioralMetrics {
   sessionMessageCount: number;
   avgPromptLength: number;
   promptLengths: number[];
-  typingStartTime: number | null;
-  typingChars: number;
   changedTemperature: boolean;
   changedModel: boolean;
   usedSystemPrompt: boolean;
@@ -64,13 +62,11 @@ interface UserLevelState {
   setUserEmail: (email: string) => void;
   setLevel: (level: UserLevel) => void;
   setGroundTruth: (level: number) => void;
-  startTyping: () => void;
-  recordKeystroke: () => void;
   trackAdvancedFeature: (feature: string) => void;
   trackTooltipClick: () => void;
   trackSuggestionClick: () => void;
   trackCancelAction: () => void;
-  analyzePrompt: (text: string) => Promise<void>;
+  analyzePrompt: (text: string, currentCps: number) => Promise<void>;
   resetMetrics: () => void;
   restoreFromMessages: (userTexts: string[]) => Promise<void>;
 }
@@ -80,8 +76,6 @@ const initialMetrics: BehavioralMetrics = {
   sessionMessageCount: 0,
   avgPromptLength: 0,
   promptLengths: [],
-  typingStartTime: null,
-  typingChars: 0,
   changedTemperature: false,
   changedModel: false,
   usedSystemPrompt: false,
@@ -118,23 +112,6 @@ export const useUserLevelStore = create<UserLevelState>((set, get) => ({
 
   setLevel: (level) => set({ level }),
   setGroundTruth: (level) => set({ groundTruth: level }),
-
-  startTyping: () =>
-    set((s) => ({
-      metrics: { ...s.metrics, typingStartTime: Date.now(), typingChars: 0 },
-    })),
-
-  recordKeystroke: () =>
-    set((s) => {
-      const m = s.metrics;
-      const newChars = m.typingChars + 1;
-      let cps = m.charsPerSecond;
-      if (m.typingStartTime) {
-        const elapsed = (Date.now() - m.typingStartTime) / 1000;
-        if (elapsed > 0.5) cps = newChars / elapsed;
-      }
-      return { metrics: { ...m, typingChars: newChars, charsPerSecond: cps } };
-    }),
 
   trackAdvancedFeature: (feature: string) =>
     set((s) => {
@@ -179,7 +156,7 @@ export const useUserLevelStore = create<UserLevelState>((set, get) => ({
       metrics: { ...s.metrics, cancelActionCount: s.metrics.cancelActionCount + 1 },
     })),
 
-  analyzePrompt: async (text: string) => {
+  analyzePrompt: async (text: string, currentCps: number) => {
     const { metrics, sessionId, userEmail } = get(); // FIX #1: include userEmail
     const newLengths = [...metrics.promptLengths, text.length];
     const avg = newLengths.reduce((a, b) => a + b, 0) / newLengths.length;
@@ -189,11 +166,10 @@ export const useUserLevelStore = create<UserLevelState>((set, get) => ({
     set((s) => ({
       metrics: {
         ...s.metrics,
+        charsPerSecond: currentCps,
         sessionMessageCount: newCount,
         avgPromptLength: avg,
         promptLengths: newLengths,
-        typingStartTime: null,
-        typingChars: 0,
         sessionDurationSeconds: durationSeconds,
       },
       isAnalyzing: true,
@@ -208,7 +184,7 @@ export const useUserLevelStore = create<UserLevelState>((set, get) => ({
           session_id: sessionId,
           user_email: userEmail,       // FIX #1: send user_email so backend uses it as profile key
           metrics: {
-            chars_per_second: metrics.charsPerSecond,
+            chars_per_second: currentCps,
             session_message_count: newCount,
             avg_prompt_length: avg,
             changed_temperature: metrics.changedTemperature,
