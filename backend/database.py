@@ -3,14 +3,34 @@ import os
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import create_engine, Column, Integer, Float, String, DateTime, Text, ForeignKey
-from sqlalchemy.orm import sessionmaker, DeclarativeBase, relationship
+from dotenv import load_dotenv
+load_dotenv()
 
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./orchestrator.db")
+from sqlalchemy import Column, Integer, Float, String, DateTime, Text, ForeignKey
+from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
+from sqlalchemy.orm import DeclarativeBase, relationship
+
+# ── Build async-compatible DATABASE_URL ──────────────────────────────────────
+_raw_url = os.getenv("DATABASE_URL", "")
+
+if _raw_url.startswith("postgresql://"):
+    DATABASE_URL = _raw_url.replace("postgresql://", "postgresql+asyncpg://", 1)
+elif _raw_url.startswith("postgresql+asyncpg://"):
+    DATABASE_URL = _raw_url
+elif _raw_url:
+    DATABASE_URL = _raw_url
+else:
+    DATABASE_URL = "sqlite+aiosqlite:///./orchestrator.db"
+
+DATABASE_URL = DATABASE_URL.replace("sslmode=", "ssl=")
+
+# asyncpg doesn't support channel_binding as a connect() kwarg — strip it
+import re
+DATABASE_URL = re.sub(r"[&?]channel_binding=[^&]*", "", DATABASE_URL)
 
 _connect_args = {"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {}
-engine = create_engine(DATABASE_URL, connect_args=_connect_args)
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+engine = create_async_engine(DATABASE_URL, connect_args=_connect_args)
+AsyncSessionLocal = async_sessionmaker(bind=engine, class_=AsyncSession, expire_on_commit=False)
 
 
 def _uuid() -> str:
@@ -18,7 +38,7 @@ def _uuid() -> str:
 
 
 def _now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 class Base(DeclarativeBase):
@@ -26,7 +46,6 @@ class Base(DeclarativeBase):
 
 
 # ── Interaction scoring log ──────────────────────────────────────────
-
 class InteractionLog(Base):
     __tablename__ = "interaction_logs"
 
@@ -103,20 +122,21 @@ class ChatMessage(Base):
 
 # ── DB helpers ──────────────────────────────────────────────────────
 
-def init_db():
-    Base.metadata.create_all(bind=engine)
+async def init_db():
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
 
 
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
+async def get_db():
+    async with AsyncSessionLocal() as db:
+        try:
+            yield db
+        finally:
+            await db.close()
 
 
-def save_interaction(
-    db,
+async def save_interaction(
+    db: AsyncSession,
     session_id: str,
     user_email: str,
     user_level: int,
@@ -137,5 +157,5 @@ def save_interaction(
         metrics_json=json.dumps(metrics or {}, ensure_ascii=False),
     )
     db.add(log)
-    db.commit()
+    await db.commit()
     return log
