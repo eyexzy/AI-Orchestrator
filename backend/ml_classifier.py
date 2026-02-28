@@ -34,9 +34,9 @@ def extract_features(prompt_text: str, metrics: dict, count_tech_fn=None, has_st
     # Import here to avoid circular imports, or use passed functions
     if count_tech_fn is None or has_structure_fn is None:
         try:
-            from main import _count_technical_terms, _has_structured_patterns
-            count_tech_fn = _count_technical_terms
-            has_structure_fn = _has_structured_patterns
+            from services.scoring import count_technical_terms, has_structured_patterns
+            count_tech_fn = count_technical_terms
+            has_structure_fn = has_structured_patterns
         except ImportError:
             # Fallback implementations if main not available
             TECHNICAL_TERMS = {
