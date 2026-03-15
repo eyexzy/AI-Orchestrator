@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { Mail, CheckCircle2 } from "lucide-react";
 import { useSearchParams } from "next/navigation";
 import { signIn } from "next-auth/react";
 import { useForm } from "react-hook-form";
@@ -9,9 +10,10 @@ import { z } from "zod";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
+import { Input } from "@/components/ui/input";
 
 const emailSchema = z.object({
-  email: z.string().email("Введіть коректну email адресу"),
+  email: z.string().email("Please enter a valid email address"),
 });
 
 type EmailForm = z.infer<typeof emailSchema>;
@@ -24,23 +26,7 @@ function GitHubIcon() {
   );
 }
 
-function MailIcon() {
-  return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <rect width="20" height="16" x="2" y="4" rx="2" />
-      <path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7" />
-    </svg>
-  );
-}
 
-function CheckIcon() {
-  return (
-    <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="text-primary">
-      <path d="M21.801 10A10 10 0 1 1 17 3.335" />
-      <path d="m9 11 3 3L22 4" />
-    </svg>
-  );
-}
 
 export default function LoginPage() {
   const searchParams = useSearchParams();
@@ -53,7 +39,7 @@ export default function LoginPage() {
   const [emailSent, setEmailSent] = useState(isVerify);
   const [emailError, setEmailError] = useState<string | null>(
     authError === "Configuration"
-      ? "Не вдалося відправити лист. Використовуйте GitHub або перевірте email."
+      ? "Failed to send the email. Please use GitHub or check your email address."
       : null,
   );
 
@@ -81,7 +67,7 @@ export default function LoginPage() {
       });
       if (res?.error) {
         setEmailError(
-          "Не вдалося відправити лист. У тестовому режимі Resend дозволяє надсилати листи лише на email власника акаунту. Використайте GitHub для входу.",
+          "Failed to send the email. In test mode, Resend only allows sending to the account owner's email. Please use GitHub to sign in.",
         );
         setIsEmailLoading(false);
       } else if (res?.ok) {
@@ -90,7 +76,7 @@ export default function LoginPage() {
         setIsEmailLoading(false);
       }
     } catch {
-      setEmailError("Виникла помилка при відправці листа.");
+      setEmailError("An error occurred while sending the email.");
       setIsEmailLoading(false);
     }
   };
@@ -100,21 +86,22 @@ export default function LoginPage() {
       <div className="flex min-h-screen items-center justify-center bg-background px-4">
         <Card className="w-full max-w-sm">
           <CardContent className="flex flex-col items-center gap-4 pt-8 pb-8 text-center">
-            <CheckIcon />
+            <CheckCircle2 size={48} strokeWidth={2} className="text-geist-success" />
             <div>
-              <h2 className="text-[15px] font-semibold text-foreground">Перевірте вашу пошту</h2>
-              <p className="mt-2 text-[13px] leading-relaxed text-muted-foreground">
-                Ми надіслали вам магічне посилання для входу.
+              <h2 className="text-base font-semibold text-ds-text">Check your email</h2>
+              <p className="mt-2 text-[15px] leading-relaxed text-ds-text-secondary">
+                We sent you a magic link to sign in.
                 <br />
-                Натисніть на нього, щоб увійти.
+                Click the link in your email to continue.
               </p>
             </div>
-            <button
+            <Button
+              variant="tertiary"
+              size="sm"
               onClick={() => setEmailSent(false)}
-              className="mt-2 text-[12px] text-muted-foreground/60 transition-colors hover:text-foreground"
             >
-              Спробувати інший спосіб
-            </button>
+              Try a different method
+            </Button>
           </CardContent>
         </Card>
       </div>
@@ -126,82 +113,82 @@ export default function LoginPage() {
       <div className="w-full max-w-sm">
         {/* Logo */}
         <div className="mb-8 text-center">
-          <h1 className="text-lg font-semibold tracking-tight text-foreground">
+          <h1 className="text-lg font-semibold tracking-tight text-ds-text">
             AI&#8209;Orchestrator
           </h1>
-          <p className="mt-1 text-[13px] text-muted-foreground">
-            Адаптивний веб-чат з ШІ
+          <p className="mt-1 text-[15px] text-ds-text-secondary">
+            Adaptive AI Web Chat
           </p>
         </div>
 
         <Card>
           <CardHeader className="text-center">
-            <CardTitle className="text-[15px]">Увійти в акаунт</CardTitle>
-            <CardDescription className="text-[12px]">
-              Оберіть спосіб автентифікації
+            <CardTitle className="text-base">Sign in to your account</CardTitle>
+            <CardDescription className="text-sm">
+              Choose your authentication method
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             {/* Error banner */}
             {emailError && (
-              <div className="rounded-lg border border-red-500/20 bg-red-500/[0.08] px-3 py-2.5">
-                <p className="text-[12px] leading-relaxed text-red-300/90">{emailError}</p>
+              <div className="rounded-lg border border-geist-error/20 bg-geist-error/[0.08] px-3 py-2.5">
+                <p className="text-sm leading-relaxed text-geist-error">{emailError}</p>
               </div>
             )}
 
             {/* GitHub */}
             <Button
-              variant="outline"
-              className="w-full gap-2.5"
+              variant="secondary"
+              className="w-full"
               onClick={handleGitHub}
               disabled={isGitHubLoading}
+              isLoading={isGitHubLoading}
+              leftIcon={!isGitHubLoading ? <GitHubIcon /> : undefined}
             >
-              {isGitHubLoading ? (
-                <span className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
-              ) : (
-                <GitHubIcon />
-              )}
-              Увійти через GitHub
+              Sign in with GitHub
             </Button>
 
             {/* Divider */}
             <div className="flex items-center gap-3">
-              <div className="h-px flex-1 bg-white/[0.06]" />
-              <span className="text-[11px] text-muted-foreground/50">або</span>
-              <div className="h-px flex-1 bg-white/[0.06]" />
+              <div className="h-px flex-1 bg-gray-alpha-200" />
+              <span className="text-xs text-ds-text-tertiary">or</span>
+              <div className="h-px flex-1 bg-gray-alpha-200" />
             </div>
 
             {/* Email form */}
             <form onSubmit={handleSubmit(handleEmail)} className="space-y-3">
               <div className="space-y-1.5">
                 <Label htmlFor="email">Email</Label>
-                <input
+                <Input
                   id="email"
                   type="email"
                   placeholder="user@example.com"
                   autoComplete="email"
-                  className="flex h-9 w-full rounded-lg border border-white/[0.08] bg-white/[0.04] px-3 text-[13px] text-foreground outline-none transition-all placeholder:text-muted-foreground/40 focus:border-white/[0.15] focus:bg-white/[0.06] focus:ring-1 focus:ring-primary/30"
+                  variant="default"
+                  size="md"
+                  inputClassName="text-base"
                   {...register("email")}
                 />
                 {errors.email && (
-                  <p className="text-[11px] text-destructive">{errors.email.message}</p>
+                  <p className="text-xs text-geist-error">{errors.email.message}</p>
                 )}
               </div>
 
-              <Button type="submit" className="w-full gap-2" disabled={isEmailLoading}>
-                {isEmailLoading ? (
-                  <span className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
-                ) : (
-                  <MailIcon />
-                )}
-                Увійти через Email
+              <Button
+                type="submit"
+                className="w-full"
+                disabled={isEmailLoading}
+                isLoading={isEmailLoading}
+                leftIcon={!isEmailLoading ? <Mail size={16} strokeWidth={2} /> : undefined}
+              >
+                Sign in with Email
               </Button>
             </form>
 
-            <p className="pt-2 text-center text-[11px] leading-relaxed text-muted-foreground/40">
-              Рекомендуємо вхід через GitHub — він працює без обмежень.
+            <p className="pt-2 text-center text-xs leading-relaxed text-ds-text-tertiary">
+              We recommend signing in via GitHub — it works without limitations.
               <br />
-              Email-вхід у тестовому режимі обмежений.
+              Email sign-in is limited in test mode.
             </p>
           </CardContent>
         </Card>

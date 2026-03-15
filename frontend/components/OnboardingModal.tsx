@@ -1,7 +1,15 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
+import { Sparkles, ArrowRight, ChevronRight } from "lucide-react";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { useUserLevelStore } from "@/lib/store/userLevelStore";
 
@@ -16,33 +24,33 @@ interface Option {
 
 const STEP_OPTIONS: Record<Step, Option[]> = {
   1: [
-    { label: "Вперше чую", score: 0 },
-    { label: "Кілька разів пробував", score: 1 },
-    { label: "Використовую регулярно", score: 2 },
-    { label: "Це частина моєї роботи", score: 3 },
+    { label: "Never heard of it", score: 0 },
+    { label: "Tried a few times", score: 1 },
+    { label: "Use it regularly", score: 2 },
+    { label: "It's part of my daily work", score: 3 },
   ],
   2: [
-    { label: "Просто пишу питання як в Google", score: 0 },
-    { label: "Намагаюсь бути більш конкретним", score: 1 },
-    { label: "Знаю про ролі, контекст, формат", score: 2 },
-    { label: "Використовую system prompts, chain-of-thought", score: 3 },
+    { label: "I just type questions like Google", score: 0 },
+    { label: "I try to be more specific", score: 1 },
+    { label: "I know about roles, context, format", score: 2 },
+    { label: "I use system prompts, chain-of-thought", score: 3 },
   ],
   3: [
-    { label: "Навчитись писати кращі запити", score: 0 },
-    { label: "Зручно спілкуватись з AI", score: 1 },
-    { label: "Тестувати різні моделі та параметри", score: 2 },
-    { label: "Повний контроль: JSON, system prompts, порівняння", score: 3 },
+    { label: "Learn to write better prompts", score: 0 },
+    { label: "Chat comfortably with AI", score: 1 },
+    { label: "Test different models and parameters", score: 2 },
+    { label: "Full control: JSON, system prompts, comparison", score: 3 },
   ],
 };
 
 const STEP_TITLES: Record<Step, string> = {
-  1: "Як часто ти працюєш з AI-інструментами?",
-  2: "Що краще описує твій досвід з промптами?",
-  3: "Що хочеш отримати від цього застосунку?",
+  1: "How often do you work with AI tools?",
+  2: "What best describes your prompt experience?",
+  3: "What do you want from this app?",
 };
 
 function computeStartLevel(s1: number, s2: number, s3: number): 1 | 2 | 3 {
-  const total = s1 + s2 + s3; // 0-9
+  const total = s1 + s2 + s3;
   const startLevel = total <= 2 ? 1 : total <= 5 ? 2 : 3;
   return startLevel as 1 | 2 | 3;
 }
@@ -62,7 +70,6 @@ export function OnboardingModal() {
         setOpen(true);
       }
     } catch {
-      // ignore localStorage errors
     }
   }, []);
 
@@ -75,7 +82,6 @@ export function OnboardingModal() {
       try {
         window.localStorage.setItem(STORAGE_KEY, "1");
       } catch {
-        // ignore
       }
     }
   };
@@ -103,7 +109,7 @@ export function OnboardingModal() {
     const total = s1 + s2 + s3;
     const groundTruth = total <= 2 ? 1 : total <= 5 ? 2 : 3;
     const startLevel = computeStartLevel(s1, s2, s3);
-    
+
     useUserLevelStore.getState().setLevel(startLevel);
     useUserLevelStore.getState().setGroundTruth(groundTruth);
 
@@ -117,42 +123,46 @@ export function OnboardingModal() {
   const isLastStep = step === 3;
   const canProceed = selectedScore != null;
 
-  const progressLabel = `${step}/3`;
-
   return (
     <Dialog open={open} onOpenChange={(v) => !v && handleCloseCompletely()}>
-      <DialogContent className="max-w-xl">
+      <DialogContent className="max-w-[540px] border-gray-alpha-200 shadow-geist-lg text-ds-text">
         <DialogHeader>
           <div className="flex items-center justify-between">
             <div>
-              <DialogTitle className="flex items-center gap-2 text-[16px]">
-                <span>Ласкаво просимо до AI-Orchestrator 👋</span>
+              <DialogTitle className="flex items-center gap-2 text-base">
+                <Sparkles size={18} strokeWidth={2} className="text-blue-700" />
+                <span>Welcome to AI-Orchestrator</span>
               </DialogTitle>
-              <DialogDescription className="mt-1 text-[12px]">
-                Відповіді допоможуть підібрати стартовий рівень інтерфейсу та підказок.
+              <DialogDescription className="mt-1 text-sm">
+                Your answers will help us pick the right starting interface level.
               </DialogDescription>
             </div>
-            <span className="rounded-full border border-white/[0.1] bg-white/[0.03] px-2 py-1 text-[11px] font-mono text-muted-foreground/80">
-              {progressLabel}
+            <span className="rounded-full border border-gray-alpha-200 bg-gray-alpha-100 px-2 py-1 text-xs font-mono text-ds-text-tertiary">
+              {step}/3
             </span>
           </div>
         </DialogHeader>
 
         {/* Progress tabs */}
-        <div className="border-b border-white/[0.06] px-6 pb-3 pt-2">
+        <div className="border-b border-gray-alpha-200 px-6 pb-3 pt-2">
           <div className="flex items-center gap-2">
-            {[1, 2, 3].map((s) => {
+            {([1, 2, 3] as Step[]).map((s) => {
               const isActive = step === s;
+              const isDone =
+                (s === 1 && step1 != null && step > 1) ||
+                (s === 2 && step2 != null && step > 2) ||
+                false;
               return (
                 <div
                   key={s}
-                  className={`flex-1 rounded-full border px-2 py-1 text-center text-[11px] font-mono transition-all ${
-                    isActive
-                      ? "border-primary/70 bg-primary/15 text-primary-foreground/90"
-                      : "border-white/[0.08] bg-white/[0.02] text-muted-foreground/70"
-                  }`}
+                  className={`flex-1 rounded-full border px-2 py-1 text-center text-xs font-mono transition-all ${isActive
+                    ? "border-gray-alpha-400 bg-gray-alpha-200 text-ds-text"
+                    : isDone
+                      ? "border-gray-alpha-200 bg-gray-alpha-100 text-ds-text-secondary"
+                      : "border-gray-alpha-200 bg-gray-alpha-50 text-ds-text-tertiary"
+                    }`}
                 >
-                  Крок {s}/3
+                  Step {s}
                 </div>
               );
             })}
@@ -161,7 +171,9 @@ export function OnboardingModal() {
 
         {/* Question & options */}
         <div className="px-6 py-5 space-y-4">
-          <p className="text-[14px] font-medium text-foreground/90">{STEP_TITLES[step]}</p>
+          <p className="text-[15px] font-medium text-ds-text">
+            {STEP_TITLES[step]}
+          </p>
           <div className="grid gap-2">
             {options.map((opt) => {
               const isSelected = selectedScore === opt.score;
@@ -174,17 +186,17 @@ export function OnboardingModal() {
                     if (step === 2) setStep2(opt.score);
                     if (step === 3) setStep3(opt.score);
                   }}
-                  className={`flex w-full items-center justify-between rounded-lg border px-3.5 py-2.5 text-left text-[13px] transition-all ${
-                    isSelected
-                      ? "border-primary bg-primary/10 text-foreground shadow-sm"
-                      : "border-white/[0.09] bg-white/[0.02] text-muted-foreground hover:border-white/[0.2] hover:bg-white/[0.06] hover:text-foreground"
-                  }`}
+                  className={`flex w-full items-center justify-between rounded-lg border px-3.5 py-2.5 text-left text-[15px] transition-all cursor-pointer ${isSelected
+                    ? "border-gray-alpha-400 bg-gray-alpha-200 text-ds-text"
+                    : "border-gray-alpha-200 bg-gray-alpha-100 text-ds-text-secondary hover:border-gray-alpha-300 hover:bg-gray-alpha-200"
+                    }`}
                 >
                   <span>{opt.label}</span>
                   <span
-                    className={`h-4 w-4 shrink-0 rounded-full border-2 transition-colors ${
-                      isSelected ? "border-primary bg-primary" : "border-white/30"
-                    }`}
+                    className={`h-4 w-4 shrink-0 rounded-full border-2 transition-colors ${isSelected
+                      ? "border-foreground bg-foreground"
+                      : "border-gray-alpha-400 bg-transparent"
+                      }`}
                   />
                 </button>
               );
@@ -194,13 +206,15 @@ export function OnboardingModal() {
 
         <DialogFooter className="flex items-center justify-between px-6 py-4">
           {step === 1 ? (
-            <button
+            <Button
               type="button"
+              variant="link"
+              size="sm"
               onClick={handleSkip}
-              className="text-[12px] text-muted-foreground transition-colors hover:text-foreground"
+              className="h-auto px-0 text-sm text-ds-text-tertiary hover:text-ds-text-secondary"
             >
-              Пропустити
-            </button>
+              Skip
+            </Button>
           ) : (
             <div />
           )}
@@ -208,22 +222,20 @@ export function OnboardingModal() {
           <div className="flex items-center gap-2">
             {!isLastStep && (
               <Button
-                type="button"
                 onClick={handleNext}
                 disabled={!canProceed}
-                size="sm"
+                rightIcon={<ChevronRight size={14} strokeWidth={2} />}
               >
-                Далі
+                Next
               </Button>
             )}
             {isLastStep && (
               <Button
-                type="button"
                 onClick={handleStart}
                 disabled={!canProceed}
-                size="sm"
+                rightIcon={<ArrowRight size={14} strokeWidth={2} />}
               >
-                Розпочати
+                Get started
               </Button>
             )}
           </div>
@@ -232,4 +244,3 @@ export function OnboardingModal() {
     </Dialog>
   );
 }
-

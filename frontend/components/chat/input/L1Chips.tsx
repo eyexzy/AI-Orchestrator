@@ -1,8 +1,25 @@
 "use client";
 
-import { useRef, useState } from "react";
-import { TEMPLATES, CATEGORY_LABELS } from "@/lib/templates";
+import { useRef, useState, useEffect, useMemo } from "react";
+import { User, Smile, FileText } from "lucide-react";
+import { useTemplatesStore } from "@/lib/store/templatesStore";
+import { useTranslation } from "@/lib/store/i18nStore";
+import { Button } from "@/components/ui/button";
 import { DropdownMenu, MenuBtn } from "./DropdownMenu";
+
+const SUGGESTION_KEYS = [
+  "chips.sug0", "chips.sug1", "chips.sug2", "chips.sug3",
+  "chips.sug4", "chips.sug5", "chips.sug6", "chips.sug7",
+] as const;
+
+function shuffled<T>(arr: T[]): T[] {
+  const a = [...arr];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
 
 interface L1ChipsProps {
   input: string;
@@ -11,14 +28,36 @@ interface L1ChipsProps {
 }
 
 export function L1Chips({ input, setInput, onSendSuggestion }: L1ChipsProps) {
+  const { t } = useTranslation();
   const [activeMenu, setActiveMenu] = useState<"role" | "tone" | "templates" | null>(null);
-  const roleRef      = useRef<HTMLButtonElement>(null);
-  const toneRef      = useRef<HTMLButtonElement>(null);
-  const templatesRef = useRef<HTMLButtonElement>(null);
+  const roleRef = useRef<HTMLElement>(null);
+  const toneRef = useRef<HTMLElement>(null);
+  const templatesRef = useRef<HTMLElement>(null);
+  const templates = useTemplatesStore((s) => s.templates);
+  const fetchTemplates = useTemplatesStore((s) => s.fetchTemplates);
+
+  useEffect(() => { fetchTemplates(); }, [fetchTemplates]);
+
+  const [pickKeys, setPickKeys] = useState<string[]>(SUGGESTION_KEYS.slice(0, 2));
+  useEffect(() => { setPickKeys(shuffled([...SUGGESTION_KEYS]).slice(0, 2)); }, []);
+
+  const roleOptions = useMemo(() => [
+    { label: t("chips.roleTeacher"), value: t("chips.roleTeacherVal") },
+    { label: t("chips.roleDeveloper"), value: t("chips.roleDeveloperVal") },
+    { label: t("chips.roleScientist"), value: t("chips.roleScientistVal") },
+    { label: t("chips.roleWriter"), value: t("chips.roleWriterVal") },
+  ], [t]);
+
+  const toneOptions = useMemo(() => [
+    { label: t("chips.toneFormal"), value: t("chips.toneFormalVal") },
+    { label: t("chips.toneSimple"), value: t("chips.toneSimpleVal") },
+    { label: t("chips.toneConcise"), value: t("chips.toneConciseVal") },
+    { label: t("chips.toneDetailed"), value: t("chips.toneDetailedVal") },
+  ], [t]);
 
   const getAnchor = () => {
-    if (activeMenu === "role")      return roleRef.current;
-    if (activeMenu === "tone")      return toneRef.current;
+    if (activeMenu === "role") return roleRef.current;
+    if (activeMenu === "tone") return toneRef.current;
     if (activeMenu === "templates") return templatesRef.current;
     return null;
   };
@@ -26,71 +65,88 @@ export function L1Chips({ input, setInput, onSendSuggestion }: L1ChipsProps) {
   const applyPrefix = (prefix: string) => { setInput(input.trim() ? `${prefix}${input}` : prefix); setActiveMenu(null); };
   const applySuffix = (suffix: string) => { setInput(input.trim() ? `${input}${suffix}` : suffix.trimStart()); setActiveMenu(null); };
 
-  const chip: React.CSSProperties = { border: "1px solid rgba(255,255,255,0.09)", color: "rgb(var(--text-2))", background: "rgba(255,255,255,0.03)" };
+  const chipActive = "bg-[var(--ds-blue-200)] text-[var(--ds-blue-900)] shadow-[0_0_0_1px_var(--ds-blue-400)] hover:bg-[var(--ds-blue-300)] hover:text-[var(--ds-blue-900)]";
 
   return (
     <>
-      <div className="flex flex-wrap items-center gap-2">
-        <button ref={roleRef} type="button" onClick={() => setActiveMenu((p) => p === "role" ? null : "role")}
-          className="flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[12px] transition-all"
-          style={{ ...chip, background: activeMenu === "role" ? "rgba(255,255,255,0.06)" : chip.background }}>
-          <span>🎭</span> Роль
-        </button>
-        <button ref={toneRef} type="button" onClick={() => setActiveMenu((p) => p === "tone" ? null : "tone")}
-          className="flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[12px] transition-all"
-          style={{ ...chip, background: activeMenu === "tone" ? "rgba(255,255,255,0.06)" : chip.background }}>
-          <span>🎯</span> Тон
-        </button>
-        <button ref={templatesRef} type="button" onClick={() => setActiveMenu((p) => p === "templates" ? null : "templates")}
-          className="flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[12px] transition-all"
-          style={{ ...chip, background: activeMenu === "templates" ? "rgba(255,255,255,0.06)" : chip.background }}>
-          <span>📋</span> Шаблони
-        </button>
-        {[
-          { label: "Як працює ChatGPT?", text: "Як працює ChatGPT?" },
-          { label: "Що таке prompt engineering?", text: "Що таке prompt engineering?" },
-        ].map((s) => (
-          <button key={s.label} type="button" onClick={() => onSendSuggestion(s.text)}
-            className="rounded-full px-3.5 py-1.5 text-[12px] transition-all hover:bg-white/5" style={chip}>
-            {s.label}
-          </button>
+      <>
+        <Button
+          ref={roleRef}
+          type="button"
+          variant="chip"
+          shape="rounded"
+          size="sm"
+          leftIcon={<User size={14} strokeWidth={2} />}
+          onClick={() => setActiveMenu((p) => p === "role" ? null : "role")}
+          className={activeMenu === "role" ? chipActive : ""}
+        >
+          {t("chips.role")}
+        </Button>
+        <Button
+          ref={toneRef}
+          type="button"
+          variant="chip"
+          shape="rounded"
+          size="sm"
+          leftIcon={<Smile size={14} strokeWidth={2} />}
+          onClick={() => setActiveMenu((p) => p === "tone" ? null : "tone")}
+          className={activeMenu === "tone" ? chipActive : ""}
+        >
+          {t("chips.tone")}
+        </Button>
+        <Button
+          ref={templatesRef}
+          type="button"
+          variant="chip"
+          shape="rounded"
+          size="sm"
+          leftIcon={<FileText size={14} strokeWidth={2} />}
+          onClick={() => setActiveMenu((p) => p === "templates" ? null : "templates")}
+          className={activeMenu === "templates" ? chipActive : ""}
+        >
+          {t("chips.templates")}
+        </Button>
+        {pickKeys.map((key) => (
+          <Button
+            key={key}
+            type="button"
+            variant="chip"
+            shape="rounded"
+            size="sm"
+            onClick={() => onSendSuggestion(t(key))}
+          >
+            {t(key)}
+          </Button>
         ))}
-      </div>
+      </>
 
       {activeMenu === "role" && (
         <DropdownMenu anchorEl={getAnchor()} onClose={() => setActiveMenu(null)} minWidth={220}>
-          {[
-            { label: "👨‍🏫 Вчитель",   value: "Поясни як досвідчений вчитель: " },
-            { label: "👨‍💻 Розробник", value: "Як senior розробник, напиши: " },
-            { label: "🔬 Науковець",  value: "З наукової точки зору поясни: " },
-            { label: "✍️ Письменник", value: "Як досвідчений автор, створи: " },
-          ].map((o) => <MenuBtn key={o.label} onClick={() => applyPrefix(o.value)}>{o.label}</MenuBtn>)}
+          {roleOptions.map((o) => <MenuBtn key={o.label} onClick={() => applyPrefix(o.value)}>{o.label}</MenuBtn>)}
         </DropdownMenu>
       )}
       {activeMenu === "tone" && (
         <DropdownMenu anchorEl={getAnchor()} onClose={() => setActiveMenu(null)} minWidth={240}>
-          {[
-            { label: "🎓 Формальний", value: " Відповідай формально." },
-            { label: "😊 Простий",    value: " Поясни простими словами." },
-            { label: "⚡ Короткий",   value: " Максимум 3 речення." },
-            { label: "📝 Детальний",  value: " Дай розгорнуту відповідь з прикладами." },
-          ].map((o) => <MenuBtn key={o.label} onClick={() => applySuffix(o.value)}>{o.label}</MenuBtn>)}
+          {toneOptions.map((o) => <MenuBtn key={o.label} onClick={() => applySuffix(o.value)}>{o.label}</MenuBtn>)}
         </DropdownMenu>
       )}
       {activeMenu === "templates" && (
         <DropdownMenu anchorEl={getAnchor()} onClose={() => setActiveMenu(null)} minWidth={280}>
-          {TEMPLATES.filter((t) => t.level === 1 && (t.category === "learning" || t.category === "code")).map((tpl) => (
-            <MenuBtn key={tpl.id} column onClick={() => { setInput(tpl.prompt); setActiveMenu(null); }}>
-              <div className="flex items-center gap-1.5">
-                <span className="text-[12px] font-medium" style={{ color: "rgb(var(--text-1))" }}>{tpl.title}</span>
-                <span className="rounded px-1 py-0.5 font-mono text-[9px]"
-                  style={{ background: "rgba(255,255,255,0.05)", color: "rgb(var(--text-3))" }}>
-                  {CATEGORY_LABELS[tpl.category]}
-                </span>
-              </div>
-              <span className="text-[11px]" style={{ color: "rgb(var(--text-3))" }}>{tpl.description}</span>
-            </MenuBtn>
-          ))}
+          {templates.length === 0 ? (
+            <p className="px-3.5 py-3 text-sm text-ds-text-tertiary">{t("chips.noTemplates")}</p>
+          ) : (
+            templates.map((tpl) => (
+              <MenuBtn key={tpl.id} column onClick={() => { setInput(tpl.prompt); setActiveMenu(null); }}>
+                <div className="flex items-center gap-1.5">
+                  <span className="text-sm font-medium text-ds-text">{tpl.title}</span>
+                  <span className="rounded px-1.5 py-0.5 font-mono text-[10px] bg-gray-alpha-200 text-ds-text-tertiary">
+                    {tpl.category_name}
+                  </span>
+                </div>
+                <span className="text-xs text-ds-text-tertiary">{tpl.description}</span>
+              </MenuBtn>
+            ))
+          )}
         </DropdownMenu>
       )}
     </>

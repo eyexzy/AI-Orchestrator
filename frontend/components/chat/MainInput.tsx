@@ -2,24 +2,28 @@
 
 import { useRef, useEffect, useCallback, useState } from "react";
 import { useSession } from "next-auth/react";
+import { Sparkles } from "lucide-react";
 import { useUserLevelStore } from "@/lib/store/userLevelStore";
 import { useChatStore } from "@/lib/store/chatStore";
 import { ChatInputBox } from "@/components/chat/ChatInputBox";
+import { extractVarNames } from "@/components/chat/extractVarNames";
 import { API_URL } from "@/lib/config";
 import { resolveVariables } from "@/lib/api";
 import { toast } from "sonner";
 import { TutorModal } from "./input/TutorModal";
 import { L1Chips } from "./input/L1Chips";
 import { L3StrategyChips } from "./input/L3StrategyChips";
+import { useTranslation } from "@/lib/store/i18nStore";
+import { Button } from "@/components/ui/button";
 
 const MIN_WORDS = 5;
+const VARIABLE_SYNC_DEBOUNCE_MS = 120;
 
 interface ChatParams {
   model: string;
   temperature: number;
   max_tokens: number;
   top_p?: number;
-  top_k?: number;
   system_message?: string;
   variables?: Record<string, string>;
   compareModel?: string;
@@ -29,8 +33,6 @@ interface ChatParams {
 }
 
 export interface MainInputProps {
-  value: string;
-  onChange: (v: string) => void;
   chatParams: ChatParams;
   aiTutor?: boolean;
   mono?: boolean;
@@ -43,27 +45,33 @@ export interface MainInputProps {
   sendOverride?: (text: string) => Promise<void>;
   onRawResponse?: (raw: Record<string, unknown>) => void;
   onAppendToSystem?: (text: string) => void;
+  onVariableNamesChange?: (names: string[]) => void;
+  isEmpty?: boolean;
 }
 
-/* ── Main component ─────────────────────────────────────────────── */
+/* Main component */
 export function MainInput({
-  value, onChange, chatParams,
+  chatParams,
   aiTutor = false, mono = false, placeholder,
   disabled: externalDisabled = false,
   statusBar, topSlot,
   externalPrompt, onExternalPromptConsumed,
   sendOverride, onRawResponse,
   onAppendToSystem,
+  onVariableNamesChange,
+  isEmpty = false,
 }: MainInputProps) {
   const isMountedRef = useRef(true);
+  const { t } = useTranslation();
   const { data: session } = useSession();
   const level = useUserLevelStore((s) => s.level);
 
-  const [isRefining,          setIsRefining]         = useState(false);
-  const [modalOpen,           setModalOpen]           = useState(false);
-  const [originalPrompt,      setOriginalPrompt]      = useState("");
-  const [improvedPrompt,      setImprovedPrompt]      = useState("");
+  const [isRefining, setIsRefining] = useState(false);
+  const [modalOpen, setModalOpen] = useState(false);
+  const [originalPrompt, setOriginalPrompt] = useState("");
+  const [improvedPrompt, setImprovedPrompt] = useState("");
   const [clarifyingQuestions, setClarifyingQuestions] = useState<string[]>([]);
+  const [draft, setDraft] = useState("");
 
   useEffect(() => {
     isMountedRef.current = true;
@@ -72,10 +80,18 @@ export function MainInput({
 
   useEffect(() => {
     if (externalPrompt) {
-      onChange(externalPrompt);
+      setDraft(externalPrompt);
       onExternalPromptConsumed?.();
     }
-  }, [externalPrompt, onExternalPromptConsumed, onChange]);
+  }, [externalPrompt, onExternalPromptConsumed]);
+
+  useEffect(() => {
+    if (!onVariableNamesChange) return;
+    const tid = window.setTimeout(() => {
+      onVariableNamesChange(extractVarNames(draft));
+    }, VARIABLE_SYNC_DEBOUNCE_MS);
+    return () => window.clearTimeout(tid);
+  }, [draft, onVariableNamesChange]);
 
   const { analyzePrompt, trackSuggestionClick, trackCancelAction } = useUserLevelStore();
   const { isSending, sendMessage } = useChatStore();
@@ -86,30 +102,29 @@ export function MainInput({
   const typingCharsRef = useRef<number>(0);
 
   const _dispatch = useCallback(async (text: string) => {
-    onChange("");
+    setDraft("");
+    onVariableNamesChange?.([]);
     setModalOpen(false);
 
     const finalPrompt = chatParams.variables
       ? resolveVariables(text, chatParams.variables)
       : text;
 
-    // Calculate typing speed from active duration (idle breaks > 3s excluded)
     const elapsedSeconds = Math.max(activeTypingDurationMsRef.current / 1000, 0.1);
     const cps = typingCharsRef.current > 0 ? typingCharsRef.current / elapsedSeconds : 0;
 
     try {
       const result = await sendMessage(finalPrompt, {
         userEmail,
-        model:                     chatParams.model,
-        temperature:               chatParams.temperature,
-        max_tokens:                chatParams.max_tokens,
-        top_p:                     chatParams.top_p,
-        top_k:                     chatParams.top_k,
-        system_message:            chatParams.system_message,
-        compareModel:              chatParams.compareModel,
-        modelLabel:                chatParams.modelLabel,
-        compareModelLabel:         chatParams.compareModelLabel,
-        selfConsistencyEnabled:    chatParams.selfConsistencyEnabled,
+        model: chatParams.model,
+        temperature: chatParams.temperature,
+        max_tokens: chatParams.max_tokens,
+        top_p: chatParams.top_p,
+        system_message: chatParams.system_message,
+        compareModel: chatParams.compareModel,
+        modelLabel: chatParams.modelLabel,
+        compareModelLabel: chatParams.compareModelLabel,
+        selfConsistencyEnabled: chatParams.selfConsistencyEnabled,
       });
       if (result) {
         analyzePrompt(finalPrompt, cps);
@@ -124,9 +139,8 @@ export function MainInput({
       activeTypingDurationMsRef.current = 0;
       typingCharsRef.current = 0;
     }
-  }, [sendMessage, analyzePrompt, userEmail, chatParams, onChange, onRawResponse]);
+  }, [sendMessage, analyzePrompt, userEmail, chatParams, onRawResponse, onVariableNamesChange]);
 
-  // ── Extracted refine logic (shared by auto-refine & manual button) ───
   const _callRefine = useCallback(async (text: string): Promise<boolean> => {
     setOriginalPrompt(text);
     setIsRefining(true);
@@ -151,31 +165,34 @@ export function MainInput({
           setClarifyingQuestions(data.clarifying_questions ?? []);
           setModalOpen(true);
         }
-        return true; // success — modal is open
+        return true;
       }
-      toast.error("Не вдалося покращити промпт. Сервер недоступний.");
-      return false; // API error — caller decides what to do
+      toast.error("Failed to enhance prompt. Server unavailable.");
+      return false;
     } catch {
-      toast.error("Не вдалося покращити промпт. Сервер недоступний.");
-      return false; // network / timeout error
+      toast.error("Failed to enhance prompt. Server unavailable.");
+      return false;
     } finally {
       if (isMountedRef.current) setIsRefining(false);
     }
   }, []);
 
   const handleSend = useCallback(async (text?: string) => {
-    const trimmed = (text ?? value).trim();
+    const trimmed = (text ?? draft).trim();
     if (!trimmed || isSending || isRefining || externalDisabled) return;
 
-    if (sendOverride) { onChange(""); await sendOverride(trimmed); return; }
+    if (sendOverride) {
+      setDraft("");
+      onVariableNamesChange?.([]);
+      await sendOverride(trimmed);
+      return;
+    }
 
-    // Auto-refine for short prompts (< MIN_WORDS) when aiTutor is on
     if (aiTutor && !text) {
       const wordCount = trimmed.split(/\s+/).filter(Boolean).length;
       if (wordCount < MIN_WORDS) {
         const opened = await _callRefine(trimmed);
         if (!opened && isMountedRef.current) {
-          // Refine failed — send as-is
           await _dispatch(trimmed);
         }
         return;
@@ -183,39 +200,53 @@ export function MainInput({
     }
 
     await _dispatch(trimmed);
-  }, [value, isSending, isRefining, externalDisabled, sendOverride, aiTutor, _callRefine, _dispatch, onChange]);
+  }, [draft, isSending, isRefining, externalDisabled, sendOverride, aiTutor, _callRefine, _dispatch, onVariableNamesChange]);
 
-  // ── Manual refine (triggered by "✨ Покращити" button) ──────────
   const handleManualRefine = useCallback(async () => {
-    const trimmed = value.trim();
+    const trimmed = draft.trim();
     if (!trimmed || isSending || isRefining || externalDisabled) return;
 
-    const opened = await _callRefine(trimmed);
-    if (!opened && isMountedRef.current) {
-      // Refine failed — do nothing, user still has their text in the input
-      // (no auto-dispatch on manual refine — let the user decide)
-    }
-  }, [value, isSending, isRefining, externalDisabled, _callRefine]);
+    await _callRefine(trimmed);
+  }, [draft, isSending, isRefining, externalDisabled, _callRefine]);
 
-  /* CoT injection — append to system message */
   const handleCoT = useCallback(() => {
     onAppendToSystem?.("Let's think step by step. Explain your reasoning.");
   }, [onAppendToSystem]);
 
-  /* Step-Back injection — prepend to input */
   const handleStepBack = useCallback(() => {
     const prefix = "Identify the core abstract principles or laws underlying this request before answering. ";
-    onChange(value.startsWith(prefix) ? value : prefix + value);
-  }, [onChange, value]);
+    setDraft((prev) => (prev.startsWith(prefix) ? prev : prefix + prev));
+  }, []);
 
-  const wordCount = value.trim().split(/\s+/).filter(Boolean).length;
-  const isShort   = value.trim() && wordCount < MIN_WORDS;
   const isDisabled = isRefining || isSending || externalDisabled;
+  const showEnhance = (level === 1 || level === 2) && draft.trim().length >= 2 && !isRefining;
+  const showStatusBar = !!statusBar;
 
-  // ── "Покращити" button visibility ────────────────────────────
-  const showManualRefine = aiTutor && (level === 1 || level === 2) && value.trim().length >= 2;
+  const resolvedPlaceholder = placeholder ?? (mono ? t("placeholder.mono") : t("placeholder.default"));
 
-  const resolvedPlaceholder = placeholder ?? (mono ? "Введіть промпт... Підтримуються {{змінні}}" : "Напишіть повідомлення...");
+  const enhanceButton = showEnhance ? (
+    <Button
+      variant="chip"
+      size="sm"
+      shape="rounded"
+      onClick={handleManualRefine}
+      disabled={isDisabled}
+      leftIcon={
+        isRefining ? (
+          <span className="flex items-center gap-0.5">
+            {[0, 150, 300].map((d) => (
+              <span key={d} className="h-1 w-1 rounded-full bg-[var(--ds-gray-900)]"
+                style={{ animation: `pulse-dot 1.2s ${d}ms infinite` }} />
+            ))}
+          </span>
+        ) : (
+          <Sparkles size={13} strokeWidth={2} />
+        )
+      }
+    >
+      {isRefining ? t("input.analyzing") : t("input.enhance")}
+    </Button>
+  ) : null;
 
   return (
     <>
@@ -234,7 +265,7 @@ export function MainInput({
       )}
 
       <ChatInputBox
-        value={value}
+        value={draft}
         onChange={(v) => {
           const now = Date.now();
           if (lastKeystrokeTimeRef.current !== null) {
@@ -243,7 +274,7 @@ export function MainInput({
           }
           lastKeystrokeTimeRef.current = now;
           typingCharsRef.current++;
-          onChange(v);
+          setDraft(v);
         }}
         onSend={() => handleSend()}
         placeholder={resolvedPlaceholder}
@@ -252,63 +283,35 @@ export function MainInput({
         topSlot={topSlot}
         bottomSlot={
           <div>
-            {aiTutor && isShort && !isRefining && (
-              <p className="mb-2 text-center text-[11px]" style={{ color: "rgb(var(--text-3))" }}>
-                Надішліть — ШІ-тьютор допоможе покращити запит
-              </p>
-            )}
-            {aiTutor && isRefining && (
-              <div className="mb-2 flex items-center justify-center gap-2">
-                <div className="flex items-center gap-1">
-                  {[0, 150, 300].map((d) => (
-                    <span key={d} className="h-1.5 w-1.5 rounded-full"
-                      style={{ background: "rgb(123,147,255)", animation: `pulse-dot 1.2s ${d}ms infinite` }} />
-                  ))}
-                </div>
-                <p className="text-[12px]" style={{ color: "rgb(var(--text-3))" }}>Аналізую...</p>
-              </div>
-            )}
-
-            {/* L3 Strategy Chips */}
-            {level === 3 && onAppendToSystem && (
-              <div className="mb-2">
-                <L3StrategyChips
-                  onInjectCoT={handleCoT}
-                  onInjectStepBack={handleStepBack}
-                />
-              </div>
-            )}
-
-            {/* L1 Chips + Manual Refine button */}
-            {aiTutor && (
-              <div className="flex flex-wrap items-center gap-2">
-                <L1Chips
-                  input={value}
-                  setInput={onChange}
-                  onSendSuggestion={(text) => { trackSuggestionClick(); handleSend(text); }}
-                />
-
-                {showManualRefine && (
-                  <button
-                    type="button"
-                    onClick={handleManualRefine}
-                    disabled={isDisabled}
-                    className="flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[12px] transition-all"
-                    style={{
-                      border: "1px solid rgba(251,191,36,0.3)",
-                      color: "rgb(251,197,68)",
-                      background: "rgba(251,191,36,0.06)",
-                      opacity: isDisabled ? 0.4 : 1,
-                      cursor: isDisabled ? "not-allowed" : "pointer",
-                    }}
-                    title="ШІ-тьютор покращить ваш промпт"
-                  >
-                    <span> Покращити</span>
-                  </button>
+            {/* Chips area — fixed height in empty state to prevent layout shift between levels */}
+            {isEmpty && (
+              <div className="min-h-[36px] flex flex-wrap items-center justify-center gap-2 mt-1">
+                {enhanceButton}
+                {level === 1 && (
+                  <L1Chips
+                    input={draft}
+                    setInput={setDraft}
+                    onSendSuggestion={(text) => { trackSuggestionClick(); handleSend(text); }}
+                  />
+                )}
+                {level === 3 && onAppendToSystem && (
+                  <L3StrategyChips
+                    onInjectCoT={handleCoT}
+                    onInjectStepBack={handleStepBack}
+                  />
                 )}
               </div>
             )}
-            {statusBar}
+
+            {/* Enhance — floating mode (not empty state) */}
+            {!isEmpty && enhanceButton && (
+              <div className="flex items-center justify-start gap-2 mt-1 animate-fade-in">
+                {enhanceButton}
+              </div>
+            )}
+
+            {/* Status bar — visible for L2/L3, hidden in empty state */}
+            {showStatusBar && !isEmpty && statusBar}
           </div>
         }
       />

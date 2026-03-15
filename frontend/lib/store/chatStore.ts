@@ -1,19 +1,9 @@
-/**
- * chatStore.ts — Zustand store for chat state
- *
- * Fixes applied in this version:
- *   #5  Compare Mode guard — silently falls back to Normal if modelA === modelB
- *   #6  deleteChat — selectChat wrapped in try/catch to handle 404 gracefully
- *   SEC Chat CRUD now goes through Next.js /api/chats proxy (auth + admin key)
- *       instead of calling FastAPI directly with client-supplied user_email.
- */
-
 import { create } from "zustand";
 import { toast } from "sonner";
 import { useUserLevelStore } from "./userLevelStore";
 import { API_URL } from "@/lib/config";
 
-// ─── Types ────────────────────────────────────────────────────────────────────
+// Types 
 
 export type Role = "user" | "assistant";
 
@@ -68,7 +58,6 @@ export interface SendMessageOpts {
   temperature: number;
   max_tokens: number;
   top_p?: number;
-  top_k?: number;
   system_message?: string;
   compareModel?: string;
   modelLabel?: string;
@@ -90,7 +79,7 @@ interface ChatState {
   setSidebarOpen: (open: boolean) => void;
   toggleSidebar: () => void;
   loadChats: (userEmail: string) => Promise<void>;
-  selectChat: (id: string) => Promise<void>;
+  selectChat: (id: string, messageIdToFocus?: number) => Promise<void>;
   createNewChat: (userEmail: string) => Promise<string | null>;
   deleteChat: (id: string) => Promise<void>;
   renameChat: (id: string, title: string) => Promise<void>;
@@ -106,16 +95,12 @@ interface ChatState {
   regenerateLastResponse: () => Promise<void>;
 }
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
+// Helpers
 
 function uid() {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 }
 
-/**
- * Build the `history` array to send to the backend.
- * Filters out optimistic / error messages and keeps the last N turns.
- */
 function buildHistory(
   messages: ChatMessage[],
   limit = 20,
@@ -126,11 +111,6 @@ function buildHistory(
     .map((m) => ({ role: m.role, content: m.content }));
 }
 
-/**
- * Parser for messages from DB.
- * Restores Compare / Self-Consistency flags stored in metadata
- * so they render correctly after page reload.
- */
 function parseMessageFromDB(m: any): ChatMessage {
   const parsed = { ...m } as ChatMessage;
   if (m.metadata) {
@@ -146,7 +126,142 @@ function parseMessageFromDB(m: any): ChatMessage {
   return parsed;
 }
 
-// ─── Store ────────────────────────────────────────────────────────────────────
+type GeneratePayload = {
+  prompt: string;
+  history: Array<{ role: Role; content: string }>;
+  system_message: string;
+  model: string;
+  temperature: number;
+  max_tokens: number;
+  top_p: number;
+  stream: boolean;
+  session_id: string;
+};
+
+function makePayload(
+  text: string,
+  model: string,
+  opts: SendMessageOpts,
+  history: Array<{ role: Role; content: string }>,
+  chatId: string,
+): GeneratePayload {
+  return {
+    prompt: text,
+    history,
+    system_message: opts.system_message ?? "",
+    model,
+    temperature: opts.temperature,
+    max_tokens: opts.max_tokens,
+    top_p: opts.top_p ?? 1.0,
+    stream: opts.stream ?? false,
+    session_id: chatId,
+  };
+}
+
+function postGenerate(payload: GeneratePayload): Promise<Response> {
+  return fetch(`${API_URL}/generate`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
+
+async function fetchSelfConsistency(
+  payload: GeneratePayload,
+  opts: SendMessageOpts,
+): Promise<ChatMessage["selfConsistency"]> {
+  const responses = await Promise.all([1, 2, 3].map(() => postGenerate(payload)));
+  if (responses.some((r) => !r.ok)) throw new Error("Self-consistency failed");
+  const dataArr = await Promise.all(responses.map((r) => r.json()));
+  return {
+    model: opts.model,
+    modelLabel: opts.modelLabel ?? opts.model,
+    runs: dataArr.map((d) => ({
+      text: d.text,
+      latency_ms: d.usage?.latency_ms ?? 0,
+      total_tokens: d.usage?.total_tokens ?? 0,
+    })),
+  };
+}
+
+async function fetchCompare(
+  payloadA: GeneratePayload,
+  payloadB: GeneratePayload,
+  opts: SendMessageOpts,
+  compareModel: string,
+): Promise<ChatMessage["comparison"]> {
+  const [resA, resB] = await Promise.all([postGenerate(payloadA), postGenerate(payloadB)]);
+  if (!resA.ok || !resB.ok) throw new Error("Compare failed");
+  const [dataA, dataB] = await Promise.all([resA.json(), resB.json()]);
+  return {
+    modelA: {
+      text: dataA.text,
+      model: opts.model,
+      modelLabel: opts.modelLabel ?? opts.model,
+      latency_ms: dataA.usage?.latency_ms ?? 0,
+      total_tokens: dataA.usage?.total_tokens ?? 0,
+    },
+    modelB: {
+      text: dataB.text,
+      model: compareModel,
+      modelLabel: opts.compareModelLabel ?? compareModel,
+      latency_ms: dataB.usage?.latency_ms ?? 0,
+      total_tokens: dataB.usage?.total_tokens ?? 0,
+    },
+  };
+}
+
+async function readSSEStream(
+  body: ReadableStream<Uint8Array>,
+  onChunk: (accumulated: string) => void,
+): Promise<void> {
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let accumulated = "";
+  let buffer = "";
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+
+    const parts = buffer.split("\n\n");
+    buffer = parts.pop() ?? "";
+
+    for (const event of parts) {
+      const trimmed = event.trim();
+      if (!trimmed.startsWith("data: ")) continue;
+      const payload = trimmed.slice(6);
+      if (payload === "[DONE]") continue;
+      try {
+        const data = JSON.parse(payload);
+        if (data.text) {
+          accumulated += data.text;
+          onChunk(accumulated);
+        }
+      } catch {
+      }
+    }
+  }
+
+  // Flush residual event after stream closes
+  const residual = buffer.trim();
+  if (residual.startsWith("data: ")) {
+    const payload = residual.slice(6);
+    if (payload !== "[DONE]") {
+      try {
+        const data = JSON.parse(payload);
+        if (data.text) {
+          accumulated += data.text;
+          onChunk(accumulated);
+        }
+      } catch { /* skip */ }
+    }
+  }
+}
+
+// Store 
 
 export const useChatStore = create<ChatState>((set, get) => ({
   chats: [],
@@ -161,8 +276,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
   setSidebarOpen: (open) => set({ sidebarOpen: open }),
   toggleSidebar: () => set((s) => ({ sidebarOpen: !s.sidebarOpen })),
 
-  // SEC: userEmail param kept for signature compat but NOT sent to the server.
-  // The Next.js /api/chats proxy reads email from the NextAuth session.
   loadChats: async (_userEmail) => {
     set({ isLoadingChats: true });
     try {
@@ -173,13 +286,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
       set({ chats: res.ok ? (await res.json()) || [] : [] });
     } catch {
       set({ chats: [] });
-      toast.error("Не вдалося завантажити історію чатів");
+      toast.error("Failed to load chat history");
     } finally {
       set({ isLoadingChats: false });
     }
   },
 
-  selectChat: async (id) => {
+  selectChat: async (id, messageIdToFocus) => {
     set({ activeChatId: id, isLoadingMessages: true, messages: [] });
     useUserLevelStore.getState().setSessionId(id);
     try {
@@ -192,7 +305,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
       if (res.ok) {
         const data: any[] = await res.json();
-        // Guard: user may have switched chats while this was loading
         if (get().activeChatId === id) {
           const parsedMessages = (data || []).map(parseMessageFromDB);
           set({ messages: parsedMessages });
@@ -200,6 +312,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
             .filter((m) => m.role === "user")
             .map((m) => m.content);
           await useUserLevelStore.getState().restoreFromMessages(userTexts);
+
+          if (messageIdToFocus != null) {
+            setTimeout(() => {
+              document
+                .getElementById(`msg-${messageIdToFocus}`)
+                ?.scrollIntoView({ behavior: "smooth", block: "center" });
+            }, 150);
+          }
         }
       } else {
         if (get().activeChatId === id) set({ messages: [] });
@@ -211,7 +331,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }
   },
 
-  // SEC: userEmail param kept for signature compat but NOT sent to the server.
   createNewChat: async (_userEmail) => {
     try {
       const res = await fetch("/api/chats", {
@@ -231,15 +350,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
         return chat.id;
       }
     } catch {
-      toast.error("Помилка створення чату. Перевірте з'єднання.");
+      toast.error("Failed to create chat. Check your connection.");
     }
     return null;
   },
 
-  // FIX #6: selectChat is wrapped in try/catch.
-  // Before: if the next chat returned 404 (deleted concurrently in another tab),
-  // the error propagated silently and left the UI showing a ghost/empty chat.
-  // After: any error from selectChat cleanly resets to no active chat.
   deleteChat: async (id) => {
     try {
       await fetch(`/api/chats/${id}`, { method: "DELETE" });
@@ -255,20 +370,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
         };
       });
 
-      // Load the newly-selected chat if there is one.
-      // FIX: wrapped in try/catch — another tab may have deleted chats[0]
-      // between our set() and this fetch, returning 404.
       const { activeChatId } = get();
       if (activeChatId && activeChatId !== id) {
         try {
           await get().selectChat(activeChatId);
         } catch {
-          // Race condition: the "next" chat no longer exists — reset cleanly
           set({ activeChatId: null, messages: [] });
         }
       }
     } catch {
-      toast.error("Не вдалося видалити чат");
+      toast.error("Failed to delete chat");
     }
   },
 
@@ -283,7 +394,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         chats: s.chats.map((c) => (c.id === id ? { ...c, title } : c)),
       }));
     } catch {
-      toast.error("Не вдалося перейменувати чат");
+      toast.error("Failed to rename chat");
     }
   },
 
@@ -292,14 +403,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
       messages: s.messages.map((m) =>
         m.id === messageId
           ? {
-              ...m,
-              content: selectedText,
-              metadata: selectedMetadata,
-              isCompare: false,
-              comparison: undefined,
-              isSelfConsistency: false,
-              selfConsistency: undefined,
-            }
+            ...m,
+            content: selectedText,
+            metadata: selectedMetadata,
+            isCompare: false,
+            comparison: undefined,
+            isSelfConsistency: false,
+            selfConsistency: undefined,
+          }
           : m,
       ),
     }));
@@ -338,10 +449,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
   sendMessage: async (text, opts) => {
     set({ lastSendOpts: opts });
 
-    // FIX #5: Prevent comparing a model with itself.
-    // If the user accidentally set modelA === modelB in the UI,
-    // we simply ignore compareModel and run normal single-model mode.
-    // This avoids two identical API calls and a pointless "comparison".
     const effectiveCompareModel =
       opts.compareModel && opts.compareModel !== opts.model
         ? opts.compareModel
@@ -357,7 +464,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
           messages: [{
             id: `err-${Date.now()}`,
             role: "assistant",
-            content: "Не вдалося створити чат.",
+            content: "Failed to create chat.",
             isError: true,
           }],
           isSending: false,
@@ -378,28 +485,26 @@ export const useChatStore = create<ChatState>((set, get) => ({
       isSending: true,
     }));
 
-    // Build history from the PREVIOUS messages (before optimistic additions)
     const history = buildHistory(messages);
 
-    const makePayload = (model: string) => ({
-      prompt: text,
-      history,              // full conversation context sent to LLM
-      system_message: opts.system_message ?? "",
-      model,
-      temperature: opts.temperature,
-      max_tokens: opts.max_tokens,
-      top_p: opts.top_p ?? 1.0,
-      top_k: opts.top_k ?? 40,
-      stream: opts.stream ?? false,
-      session_id: chatId,
-    });
+    /** Replace optimistic assistant placeholder + confirm user message */
+    const finalizeMessages = (asstMsg: ChatMessage) => {
+      set((s) => ({
+        messages: s.messages.map((m) =>
+          m.id === asstMsgId ? asstMsg
+            : m.id === userMsgId ? { ...m, isOptimistic: false }
+              : m,
+        ),
+        isSending: false,
+      }));
+    };
 
     const updateChatTitle = () => {
       set((s) => ({
         chats: s.chats.map((c) => {
           if (c.id !== chatId) return c;
           const newTitle =
-            c.title === "Новий чат"
+            c.title === "New Chat"
               ? text.slice(0, 60) + (text.length > 60 ? "…" : "")
               : c.title;
           return { ...c, title: newTitle, updated_at: new Date().toISOString() };
@@ -408,183 +513,56 @@ export const useChatStore = create<ChatState>((set, get) => ({
     };
 
     try {
-      /* ── SELF-CONSISTENCY MODE ─────────────────────────────────────────── */
+      /* SELF-CONSISTENCY MODE */
       if (opts.selfConsistencyEnabled) {
-        const responses = await Promise.all(
-          [1, 2, 3].map(() =>
-            fetch(`${API_URL}/generate`, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify(makePayload(opts.model)),
-            }),
-          ),
+        const scData = await fetchSelfConsistency(
+          makePayload(text, opts.model, opts, history, chatId), opts,
         );
-        if (responses.some((r) => !r.ok)) throw new Error("Self-consistency failed");
-        const dataArr = await Promise.all(responses.map((r) => r.json()));
-
-        const selfConsistencyData = {
-          model: opts.model,
-          modelLabel: opts.modelLabel ?? opts.model,
-          runs: dataArr.map((d) => ({
-            text: d.text,
-            latency_ms: d.usage?.latency_ms ?? 0,
-            total_tokens: d.usage?.total_tokens ?? 0,
-          })),
-        };
-
         const scMsg: ChatMessage = {
-          id: asstMsgId,
-          role: "assistant",
-          content: "",
-          isSelfConsistency: true,
-          isOptimistic: false,
-          selfConsistency: selfConsistencyData,
-          metadata: { isSelfConsistency: true, selfConsistency: selfConsistencyData },
+          id: asstMsgId, role: "assistant", content: "",
+          isSelfConsistency: true, isOptimistic: false,
+          selfConsistency: scData,
+          metadata: { isSelfConsistency: true, selfConsistency: scData },
         };
-        set((s) => ({
-          messages: s.messages.map((m) =>
-            m.id === asstMsgId ? scMsg
-            : m.id === userMsgId ? { ...m, isOptimistic: false }
-            : m,
-          ),
-          isSending: false,
-        }));
+        finalizeMessages(scMsg);
         updateChatTitle();
         return scMsg;
       }
 
-      /* ── COMPARE MODE ──────────────────────────────────────────────────── */
-      // FIX #5: effectiveCompareModel is undefined when modelA === modelB,
-      // so this block is skipped and we fall through to Normal Mode.
+      /* COMPARE MODE */
       if (effectiveCompareModel) {
-        const [resA, resB] = await Promise.all([
-          fetch(`${API_URL}/generate`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(makePayload(opts.model)),
-          }),
-          fetch(`${API_URL}/generate`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(makePayload(effectiveCompareModel)),
-          }),
-        ]);
-        if (!resA.ok || !resB.ok) throw new Error("Compare failed");
-        const [dataA, dataB] = await Promise.all([resA.json(), resB.json()]);
-
-        const comparisonData = {
-          modelA: {
-            text: dataA.text,
-            model: opts.model,
-            modelLabel: opts.modelLabel ?? opts.model,
-            latency_ms: dataA.usage?.latency_ms ?? 0,
-            total_tokens: dataA.usage?.total_tokens ?? 0,
-          },
-          modelB: {
-            text: dataB.text,
-            model: effectiveCompareModel,
-            modelLabel: opts.compareModelLabel ?? effectiveCompareModel,
-            latency_ms: dataB.usage?.latency_ms ?? 0,
-            total_tokens: dataB.usage?.total_tokens ?? 0,
-          },
-        };
-
+        const comparisonData = await fetchCompare(
+          makePayload(text, opts.model, opts, history, chatId),
+          makePayload(text, effectiveCompareModel, opts, history, chatId),
+          opts, effectiveCompareModel,
+        );
         const cmpMsg: ChatMessage = {
-          id: asstMsgId,
-          role: "assistant",
-          content: "",
-          isCompare: true,
-          isOptimistic: false,
+          id: asstMsgId, role: "assistant", content: "",
+          isCompare: true, isOptimistic: false,
           comparison: comparisonData,
           metadata: { isCompare: true, comparison: comparisonData },
         };
-        set((s) => ({
-          messages: s.messages.map((m) =>
-            m.id === asstMsgId ? cmpMsg
-            : m.id === userMsgId ? { ...m, isOptimistic: false }
-            : m,
-          ),
-          isSending: false,
-        }));
+        finalizeMessages(cmpMsg);
         updateChatTitle();
         return cmpMsg;
       }
 
-      /* ── NORMAL MODE ───────────────────────────────────────────────────── */
-      const res = await fetch(`${API_URL}/generate`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(makePayload(opts.model)),
-      });
+      /* NORMAL MODE */
+      const res = await postGenerate(makePayload(text, opts.model, opts, history, chatId));
       if (!res.ok) throw new Error(`Generate failed: ${res.status}`);
 
       if (opts.stream && res.body) {
-        const reader = res.body.getReader();
-        const decoder = new TextDecoder();
-        let accumulated = "";
-        let buffer = "";
-
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-
-          // Append raw bytes to the buffer; { stream: true } prevents
-          // multi-byte characters from being split across chunks.
-          buffer += decoder.decode(value, { stream: true });
-
-          // Process only *complete* lines (terminated by \n).
-          // If the last segment has no trailing \n it stays in the buffer
-          // until the next read() appends the remainder.
-          const parts = buffer.split("\n");
-          buffer = parts.pop() ?? "";          // incomplete tail → keep
-
-          for (const line of parts) {
-            const trimmed = line.trim();
-            if (!trimmed.startsWith("data: ")) continue;
-            const payload = trimmed.slice(6);
-            if (payload === "[DONE]") continue; // standard SSE sentinel
-            try {
-              const data = JSON.parse(payload);
-              if (data.text) {
-                accumulated += data.text;
-                set((s) => ({
-                  messages: s.messages.map((m) =>
-                    m.id === asstMsgId
-                      ? { ...m, content: accumulated, isOptimistic: false }
-                      : m,
-                  ),
-                }));
-              }
-            } catch {
-              // Genuinely malformed JSON — safe to skip.
-              // Incomplete lines never reach here because they stay in `buffer`.
-            }
-          }
-        }
-
-        // Flush any residual complete line left in the buffer after the
-        // stream closes (server may not send a trailing \n after last chunk).
-        if (buffer.trim().startsWith("data: ")) {
-          const payload = buffer.trim().slice(6);
-          if (payload !== "[DONE]") {
-            try {
-              const data = JSON.parse(payload);
-              if (data.text) {
-                accumulated += data.text;
-                set((s) => ({
-                  messages: s.messages.map((m) =>
-                    m.id === asstMsgId
-                      ? { ...m, content: accumulated, isOptimistic: false }
-                      : m,
-                  ),
-                }));
-              }
-            } catch { /* skip */ }
-          }
-        }
+        await readSSEStream(res.body, (accumulated) => {
+          set((s) => ({
+            messages: s.messages.map((m) =>
+              m.id === asstMsgId
+                ? { ...m, content: accumulated, isOptimistic: false }
+                : m,
+            ),
+          }));
+        });
 
         // Refresh from DB to get real server IDs and metadata
-        // SEC: also goes through the proxy now
         const msgsRes = await fetch(`/api/chats/${chatId}/messages`);
         if (msgsRes.ok) {
           set({ messages: (await msgsRes.json()).map(parseMessageFromDB), isSending: false });
@@ -593,26 +571,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
         }
       } else {
         const data = await res.json();
-        set((s) => ({
-          messages: s.messages.map((m) =>
-            m.id === asstMsgId
-              ? {
-                  ...m,
-                  content: data.text,
-                  isOptimistic: false,
-                  metadata: {
-                    model: data.usage?.model,
-                    tokens: data.usage?.total_tokens,
-                    latency_ms: data.usage?.latency_ms,
-                    provider: data.provider,
-                  },
-                }
-              : m.id === userMsgId
-              ? { ...m, isOptimistic: false }
-              : m,
-          ),
-          isSending: false,
-        }));
+        finalizeMessages({
+          id: asstMsgId, role: "assistant",
+          content: data.text, isOptimistic: false,
+          metadata: {
+            model: data.usage?.model,
+            tokens: data.usage?.total_tokens,
+            latency_ms: data.usage?.latency_ms,
+            provider: data.provider,
+          },
+        });
       }
 
       updateChatTitle();
@@ -624,19 +592,18 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
       return get().messages.find((m) => m.id === asstMsgId) ?? null;
     } catch {
-      toast.error("Помилка підключення до сервера");
+      toast.error("Server connection error");
       set((s) => ({
         messages: s.messages.map((m) =>
           m.id === asstMsgId
             ? {
-                ...m,
-                content: "Сталася помилка при генерації відповіді. Перевірте з'єднання з сервером.",
-                isError: true,
-                isOptimistic: false,
-              }
+              ...m,
+              content: "An error occurred while generating a response. Please check your server connection.",
+              isError: true, isOptimistic: false,
+            }
             : m.id === userMsgId
-            ? { ...m, isOptimistic: false }
-            : m,
+              ? { ...m, isOptimistic: false }
+              : m,
         ),
         isSending: false,
       }));

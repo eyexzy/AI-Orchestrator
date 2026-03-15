@@ -1,10 +1,3 @@
-/**
- * app/api/models/route.ts
- *
- * Public proxy for FastAPI /models endpoint.
- * No authentication required — the models list is public info.
- */
-
 import { NextResponse } from "next/server";
 
 const API_URL =

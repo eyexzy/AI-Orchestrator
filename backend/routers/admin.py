@@ -22,10 +22,7 @@ logger = logging.getLogger("ai-orchestrator")
 
 router = APIRouter()
 
-
-# ---------------------------------------------------------------------------
 # Health & models
-# ---------------------------------------------------------------------------
 
 @router.get("/health")
 async def health():
@@ -47,9 +44,7 @@ async def list_models():
     return {"models": result}
 
 
-# ---------------------------------------------------------------------------
 # Provider test
-# ---------------------------------------------------------------------------
 
 @limiter.limit("5/minute")
 @router.get("/test-providers", dependencies=[Depends(check_admin_key)])
@@ -76,9 +71,7 @@ async def test_providers(request: Request):
     return {"providers": results}
 
 
-# ---------------------------------------------------------------------------
 # ML feedback & retrain
-# ---------------------------------------------------------------------------
 
 @limiter.limit("20/minute")
 @router.post("/ml/feedback", dependencies=[Depends(check_admin_key)])
@@ -167,9 +160,7 @@ async def ml_retrain(db: AsyncSession = Depends(get_db)):
         return RetrainResponse(ok=False, message=f"Retrain failed: {e}")
 
 
-# ---------------------------------------------------------------------------
 # Export / stats
-# ---------------------------------------------------------------------------
 
 @router.get("/export-csv", dependencies=[Depends(check_admin_key)])
 async def export_csv(db: AsyncSession = Depends(get_db)):

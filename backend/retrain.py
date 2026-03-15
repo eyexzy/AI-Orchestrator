@@ -1,9 +1,3 @@
-"""
-Retrain ML classifier on accumulated feedback data stored in PostgreSQL.
-Run manually:
-  python retrain.py
-  python retrain.py --min-samples 15
-"""
 import sys
 import json
 import asyncio

@@ -60,10 +60,10 @@ def extract_features(prompt_text: str, metrics: dict, count_tech_fn=None, has_st
             has_structure_fn = _has_structured_patterns
 
     features = [
-        len(text),                                        # prompt_length
-        len(text.split()),                                # word_count
-        count_tech_fn(text),                              # tech_term_count
-        1.0 if has_structure_fn(text) else 0.0,          # has_structure
+        len(text), # prompt_length
+        len(text.split()), # word_count
+        count_tech_fn(text), # tech_term_count
+        1.0 if has_structure_fn(text) else 0.0, # has_structure
         float(metrics.get("chars_per_second", 0)),
         float(metrics.get("session_message_count", 0)),
         float(metrics.get("avg_prompt_length", 0)),
@@ -155,7 +155,7 @@ class SimpleLogisticClassifier:
 
     def predict(self, X: np.ndarray) -> int:
         proba = self.predict_proba(X)
-        return int(proba.argmax()) + 1  # +1 because classes are 1,2,3
+        return int(proba.argmax()) + 1 # +1 because classes are 1,2,3
 
     def to_dict(self) -> dict:
         """Serialize model state to a JSON-compatible dict."""

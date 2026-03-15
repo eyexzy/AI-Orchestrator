@@ -21,9 +21,7 @@ logger = logging.getLogger("ai-orchestrator")
 logging.basicConfig(level=logging.INFO)
 
 
-# ---------------------------------------------------------------------------
 # Environment validation
-# ---------------------------------------------------------------------------
 
 def _validate_env():
     is_production = os.getenv("ENV", "development") == "production"
@@ -48,20 +46,18 @@ def _validate_env():
             errors.append("ALLOWED_ORIGINS is required in production")
 
     for w in warnings:
-        logger.warning(f"[config] ⚠️  {w}")
+        logger.warning(f"[config]  {w}")
 
     if errors:
         for e in errors:
-            logger.error(f"[config] ❌ {e}")
+            logger.error(f"[config] {e}")
         sys.exit(1)
 
 
 _validate_env()
 
 
-# ---------------------------------------------------------------------------
 # Lifespan
-# ---------------------------------------------------------------------------
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -84,9 +80,7 @@ async def lifespan(app: FastAPI):
     yield
 
 
-# ---------------------------------------------------------------------------
 # App
-# ---------------------------------------------------------------------------
 
 app = FastAPI(
     title="AI-Orchestrator Backend",
@@ -110,16 +104,18 @@ app.add_middleware(
 )
 
 
-# ---------------------------------------------------------------------------
 # Register routers
-# ---------------------------------------------------------------------------
 
 from routers.analyze import router as analyze_router
 from routers.generate import router as generate_router
 from routers.chats import router as chats_router
 from routers.admin import router as admin_router
+from routers.templates import router as templates_router
+from routers.profile import router as profile_router
 
 app.include_router(analyze_router)
 app.include_router(generate_router)
 app.include_router(chats_router)
 app.include_router(admin_router)
+app.include_router(templates_router)
+app.include_router(profile_router)

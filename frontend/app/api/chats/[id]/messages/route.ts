@@ -1,10 +1,3 @@
-/**
- * app/api/chats/[id]/messages/route.ts
- *
- * Server-side proxy for FastAPI GET /chats/:id/messages.
- * Auth check ensures only logged-in users can fetch messages.
- */
-
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/auth";
 

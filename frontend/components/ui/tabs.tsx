@@ -2,13 +2,14 @@
 
 import * as React from "react";
 import { cn } from "@/lib/utils";
+import { Button } from "@/components/ui/button";
 
 interface TabsContextValue {
   value: string;
   onValueChange: (value: string) => void;
 }
 
-const TabsContext = React.createContext<TabsContextValue>({ value: "", onValueChange: () => {} });
+const TabsContext = React.createContext<TabsContextValue>({ value: "", onValueChange: () => { } });
 
 interface TabsProps extends React.HTMLAttributes<HTMLDivElement> {
   value: string;
@@ -27,7 +28,7 @@ const TabsList = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivEl
   ({ className, ...props }, ref) => (
     <div
       ref={ref}
-      className={cn("inline-flex items-center rounded-lg bg-white/[0.04] p-0.5", className)}
+      className={cn("inline-flex items-center rounded-lg bg-gray-alpha-100 p-0.5", className)}
       {...props}
     />
   ),
@@ -46,12 +47,13 @@ const TabsTrigger = React.forwardRef<HTMLButtonElement, TabsTriggerProps>(
       <button
         ref={ref}
         type="button"
+       
         role="tab"
         aria-selected={isActive}
         onClick={() => ctx.onValueChange(value)}
         className={cn(
-          "inline-flex items-center justify-center rounded-md px-3 py-1 text-[12px] font-medium transition-all duration-200",
-          isActive ? "bg-white/[0.1] text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground/70",
+          "inline-flex items-center justify-center rounded-md px-3 py-1 text-sm font-medium transition-all duration-200",
+          isActive ? "bg-gray-alpha-300 text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground/70",
           className,
         )}
         {...props}

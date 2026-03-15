@@ -1,130 +1,182 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import remarkGfm from "remark-gfm";
+import { Copy, Check, FileCode, ExternalLink, CheckSquare, Square } from "lucide-react";
 import type { Components } from "react-markdown";
+import { Button } from "@/components/ui/button";
+import { Tooltip } from "@/components/ui/tooltip";
 
-/* ── Refined syntax theme ─────────────────────────────────────── */
-const CODE_THEME: Record<string, React.CSSProperties> = {
-  'code[class*="language-"]': {
-    color: "#c9d1d9", background: "none",
-    fontFamily: "'IBM Plex Mono', monospace", fontSize: "12.5px", lineHeight: 1.6,
-  },
-  'pre[class*="language-"]': {
-    color: "#c9d1d9", background: "none",
-    margin: 0, padding: "1rem", overflow: "auto",
-  },
-  comment:      { color: "#4a5568", fontStyle: "italic" },
-  prolog:       { color: "#4a5568" },
-  doctype:      { color: "#4a5568" },
-  cdata:        { color: "#4a5568" },
-  punctuation:  { color: "#718096" },
-  property:     { color: "#79c0ff" },
-  tag:          { color: "#ff7b72" },
-  boolean:      { color: "#ffa657" },
-  number:       { color: "#ffa657" },
-  constant:     { color: "#79c0ff" },
-  symbol:       { color: "#ffa657" },
-  deleted:      { color: "#ff7b72" },
-  selector:     { color: "#7ee787" },
-  "attr-name":  { color: "#7ee787" },
-  string:       { color: "#a5d6ff" },
-  char:         { color: "#a5d6ff" },
-  builtin:      { color: "#7ee787" },
-  inserted:     { color: "#7ee787" },
-  operator:     { color: "#c9d1d9" },
-  entity:       { color: "#c9d1d9", cursor: "help" },
-  url:          { color: "#79c0ff" },
-  "attr-value": { color: "#a5d6ff" },
-  keyword:      { color: "#ff7b72" },
-  atrule:       { color: "#7ee787" },
-  function:     { color: "#d2a8ff" },
-  "class-name": { color: "#ffa657" },
-  regex:        { color: "#a5d6ff" },
-  important:    { color: "#ff7b72", fontWeight: "bold" },
-  variable:     { color: "#ffa657" },
-  bold:         { fontWeight: "bold" },
-  italic:       { fontStyle: "italic" },
-};
-
-/* ── Copy icon ────────────────────────────────────────────────── */
-function IconCopy({ done }: { done: boolean }) {
-  if (done) {
-    return (
-      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-        <polyline points="20 6 9 17 4 12"/>
-      </svg>
-    );
-  }
-  return (
-    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <rect x="9" y="9" width="13" height="13" rx="2"/>
-      <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
-    </svg>
-  );
+/* language names */
+function formatLanguageName(lang: string): string {
+  const map: Record<string, string> = {
+    js: "JavaScript", javascript: "JavaScript",
+    ts: "TypeScript", typescript: "TypeScript",
+    jsx: "React", tsx: "React",
+    py: "Python", python: "Python",
+    sh: "Bash", bash: "Bash", shell: "Terminal",
+    json: "JSON", html: "HTML", css: "CSS",
+    java: "Java", cpp: "C++", c: "C", go: "Go",
+    rs: "Rust", rust: "Rust", sql: "SQL",
+    md: "Markdown", markdown: "Markdown",
+    yaml: "YAML", yml: "YAML",
+  };
+  return map[lang.toLowerCase()] || lang;
 }
 
-/* ── Code block ───────────────────────────────────────────────── */
+/* Syntax Highlighting Palette */
+export const CODE_THEME: Record<string, React.CSSProperties> = {
+  'code[class*="language-"]': { color: "var(--ds-gray-1000)", background: "none", fontFamily: "var(--font-geist-mono), monospace", fontSize: "13px", lineHeight: "24px", fontStyle: "normal" },
+  'pre[class*="language-"]': { color: "var(--ds-gray-1000)", background: "none", margin: 0, padding: 0, overflow: "auto", fontStyle: "normal" },
+  tag: { color: "var(--ds-green-900)", fontStyle: "normal" },
+  keyword: { color: "var(--ds-pink-900)", fontStyle: "normal" },
+  boolean: { color: "var(--ds-pink-900)", fontStyle: "normal" },
+  operator: { color: "var(--ds-gray-1000)", fontStyle: "normal" },
+  constant: { color: "var(--ds-purple-900)", fontStyle: "normal" },
+  function: { color: "var(--ds-purple-900)", fontStyle: "normal" },
+  "class-name": { color: "var(--ds-purple-900)", fontStyle: "normal" },
+  "attr-name": { color: "var(--ds-blue-900)", fontStyle: "normal" },
+  property: { color: "var(--ds-blue-900)", fontStyle: "normal" },
+  url: { color: "var(--ds-blue-900)", fontStyle: "normal" },
+  string: { color: "var(--ds-green-900)", fontStyle: "normal" },
+  char: { color: "var(--ds-green-900)", fontStyle: "normal" },
+  "attr-value": { color: "var(--ds-green-900)", fontStyle: "normal" },
+  regex: { color: "var(--ds-green-900)", fontStyle: "normal" },
+  selector: { color: "var(--ds-green-900)", fontStyle: "normal" },
+  builtin: { color: "var(--ds-green-900)", fontStyle: "normal" },
+  inserted: { color: "var(--ds-green-900)", fontStyle: "normal" },
+  atrule: { color: "var(--ds-green-900)", fontStyle: "normal" },
+  "template-string": { color: "var(--ds-green-900)", fontStyle: "normal" },
+  punctuation: { color: "var(--ds-gray-1000)", fontStyle: "normal" },
+  entity: { color: "var(--ds-gray-1000)", fontStyle: "normal", cursor: "help" },
+  variable: { color: "var(--ds-gray-1000)", fontStyle: "normal" },
+  number: { color: "var(--ds-amber-900)", fontStyle: "normal" },
+  symbol: { color: "var(--ds-amber-900)", fontStyle: "normal" },
+  comment: { color: "var(--ds-gray-900)", fontStyle: "normal" },
+  prolog: { color: "var(--ds-gray-900)", fontStyle: "normal" },
+  doctype: { color: "var(--ds-gray-900)", fontStyle: "normal" },
+  cdata: { color: "var(--ds-gray-900)", fontStyle: "normal" },
+  deleted: { color: "var(--ds-pink-900)", fontStyle: "normal" },
+  important: { color: "var(--ds-pink-900)", fontWeight: "bold", fontStyle: "normal" },
+  bold: { fontWeight: "bold" },
+  italic: { fontStyle: "normal" },
+};
+
 function CodeBlock({ language, code }: { language: string; code: string }) {
   const [copied, setCopied] = useState(false);
-  const [hovered, setHovered] = useState(false);
+  const [selectedLines, setSelectedLines] = useState<number[]>([]);
 
+  /* Copy handler */
   const handleCopy = useCallback(async () => {
     try {
       await navigator.clipboard.writeText(code);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
-    } catch {}
+    } catch {
+    }
   }, [code]);
 
+  /* Line selection toggle */
+  const toggleLine = useCallback((lineNum: number) => {
+    setSelectedLines((prev) =>
+      prev.includes(lineNum)
+        ? prev.filter((n) => n !== lineNum)
+        : [...prev, lineNum],
+    );
+  }, []);
+
+  const lang = language || "text";
+
   return (
-    <div
-      className="group relative my-4 overflow-hidden"
-      style={{
-        borderRadius: 12,
-        border: "1px solid rgba(255,255,255,0.08)",
-        background: "rgb(13, 13, 18)",
-        boxShadow: "0 1px 3px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.03)",
-      }}
-    >
-      <div
-        className="flex items-center justify-between px-4"
-        style={{ height: 36, borderBottom: "1px solid rgba(255,255,255,0.05)", background: "rgba(255,255,255,0.015)" }}
-      >
-        <span className="font-mono text-[10px] select-none" style={{ color: "rgba(255,255,255,0.25)", letterSpacing: "0.06em" }}>
-          {language || "text"}
-        </span>
-        <button
-          type="button"
-          onClick={handleCopy}
-          onMouseEnter={() => setHovered(true)}
-          onMouseLeave={() => setHovered(false)}
-          className="flex items-center gap-1.5 font-mono text-[10px] transition-all duration-150"
-          style={{
-            padding: "3px 8px", borderRadius: 6, border: "1px solid rgba(255,255,255,0.1)",
-            background: hovered ? "rgba(255,255,255,0.10)" : "rgba(255,255,255,0.04)",
-            backdropFilter: "blur(8px)", WebkitBackdropFilter: "blur(8px)",
-            color: copied ? "rgb(52,211,153)" : hovered ? "rgba(255,255,255,0.8)" : "rgba(255,255,255,0.3)",
-            opacity: hovered || copied ? 1 : 0,
-            transform: hovered ? "translateY(0)" : "translateY(1px)",
-            cursor: "pointer", letterSpacing: "0.04em", pointerEvents: "auto",
-          }}
-          aria-label="Copy code"
-        >
-          <IconCopy done={copied} />
-          {copied ? "Copied!" : "Copy"}
-        </button>
+    <div className="my-6 overflow-hidden rounded-md border border-gray-alpha-400 bg-background-100">
+      {/* Header */}
+      <div className="flex items-center justify-between pl-3 pr-4 h-12 border-b border-gray-alpha-400 bg-background-200">
+        {/* Left: file icon + language label */}
+        <div className="flex items-center gap-2">
+          <FileCode size={14} strokeWidth={2} className="opacity-70" />
+          <span className="font-mono text-[13px] text-ds-gray-900 select-none">
+            {formatLanguageName(lang)}
+          </span>
+        </div>
+
+        {/* Right: icon-only copy button */}
+        <Tooltip content={copied ? "Copied!" : "Copy code"}>
+          <Button
+            variant="tertiary"
+            size="sm"
+            iconOnly
+            onClick={handleCopy}
+            aria-label="Copy code"
+          >
+            {copied ? <Check size={14} strokeWidth={2} /> : <Copy size={14} strokeWidth={2} />}
+          </Button>
+        </Tooltip>
       </div>
+
+      {/* Code body */}
       <SyntaxHighlighter
-        language={language || "text"}
+        language={lang}
         style={CODE_THEME as any}
         PreTag="div"
-        customStyle={{ margin: 0, padding: "14px 16px", background: "transparent", fontSize: "12.5px", lineHeight: 1.65 }}
-        codeTagProps={{ style: { fontFamily: "'IBM Plex Mono', monospace" } }}
-        showLineNumbers={false}
-        wrapLongLines
+        showLineNumbers={true}
+        wrapLines={true}
+        lineNumberStyle={{
+          minWidth: "3em",
+          paddingRight: "1em",
+          textAlign: "right" as const,
+          userSelect: "none" as const,
+          color: "var(--ds-gray-900)",
+          fontFamily: "var(--font-geist-mono), monospace",
+          fontSize: "13px",
+          lineHeight: "24px",
+          fontStyle: "normal",
+        }}
+        lineProps={(lineNumber: number) => {
+          const isSelected = selectedLines.includes(lineNumber);
+          return {
+            style: {
+              display: "block",
+              padding: "0 16px",
+              cursor: "pointer",
+              borderLeft: isSelected
+                ? "2px solid var(--ds-blue-900)"
+                : "2px solid transparent",
+              background: isSelected
+                ? "var(--ds-blue-300)"
+                : "transparent",
+              transition: "background 0.1s ease, border-color 0.1s ease",
+            },
+            onClick: () => toggleLine(lineNumber),
+            onMouseEnter: (e: React.MouseEvent<HTMLElement>) => {
+              if (!isSelected) {
+                e.currentTarget.style.background = "var(--ds-gray-alpha-100)";
+              }
+            },
+            onMouseLeave: (e: React.MouseEvent<HTMLElement>) => {
+              if (!isSelected) {
+                e.currentTarget.style.background = "transparent";
+              }
+            },
+          };
+        }}
+        customStyle={{
+          margin: 0,
+          padding: "20px 0",
+          background: "transparent",
+          fontSize: "13px",
+          fontWeight: 500,
+          lineHeight: "24px",
+          fontStyle: "normal",
+        }}
+        codeTagProps={{
+          style: {
+            fontFamily: "var(--font-geist-mono), monospace",
+            fontWeight: 500,
+            fontStyle: "normal",
+          },
+        }}
       >
         {code}
       </SyntaxHighlighter>
@@ -132,8 +184,10 @@ function CodeBlock({ language, code }: { language: string; code: string }) {
   );
 }
 
-/* ── ReAct trace line detector ────────────────────────────────── */
-function detectReActType(text: string): "thought" | "action" | "observation" | null {
+/* ReAct trace line detect */
+function detectReActType(
+  text: string,
+): "thought" | "action" | "observation" | null {
   const t = text.trimStart();
   if (/^Thought\s*:/i.test(t)) return "thought";
   if (/^Action\s*:/i.test(t)) return "action";
@@ -141,35 +195,20 @@ function detectReActType(text: string): "thought" | "action" | "observation" | n
   return null;
 }
 
-/**
- * Wrap a paragraph text through ReAct detection.
- * Returns the JSX for the paragraph (possibly highlighted).
- */
-function ReActParagraph({ text, children }: { text: string; children: React.ReactNode }) {
+function ReActParagraph({
+  text,
+  children,
+}: {
+  text: string;
+  children: React.ReactNode;
+}) {
   const type = detectReActType(text);
-
-  if (type === "thought") {
-    return (
-      <p className="react-thought">
-        {children}
-      </p>
-    );
-  }
-  if (type === "action") {
-    return (
-      <p className="react-action">
-        {children}
-      </p>
-    );
-  }
-  if (type === "observation") {
-    return (
-      <p className="react-observation">
-        {children}
-      </p>
-    );
-  }
-
+  if (type === "thought")
+    return <p className="react-thought">{children}</p>;
+  if (type === "action")
+    return <p className="react-action">{children}</p>;
+  if (type === "observation")
+    return <p className="react-observation">{children}</p>;
   return <p>{children}</p>;
 }
 
@@ -177,12 +216,101 @@ function ReActParagraph({ text, children }: { text: string; children: React.Reac
 function extractText(children: React.ReactNode): string {
   if (typeof children === "string") return children;
   if (Array.isArray(children)) return children.map(extractText).join("");
-  if (children && typeof children === "object" && "props" in (children as any)) {
+  if (
+    children &&
+    typeof children === "object" &&
+    "props" in (children as any)
+  ) {
     return extractText((children as any).props.children);
   }
   return "";
 }
 
+/* Custom components for enhanced rendering */
+
+/* Table with copy button — mirrors CodeBlock header pattern */
+function TableBlock({ children }: { children: React.ReactNode }) {
+  const [copied, setCopied] = useState(false);
+  const tableRef = useRef<HTMLDivElement>(null);
+
+  const handleCopy = useCallback(async () => {
+    if (!tableRef.current) return;
+    const table = tableRef.current.querySelector("table");
+    if (!table) return;
+
+    const rows = Array.from(table.querySelectorAll("tr"));
+    const tsv = rows
+      .map((row) =>
+        Array.from(row.querySelectorAll("th, td"))
+          .map((cell) => cell.textContent?.trim() ?? "")
+          .join("\t")
+      )
+      .join("\n");
+
+    try {
+      await navigator.clipboard.writeText(tsv);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {}
+  }, []);
+
+  return (
+    <div className="md-table-wrap" ref={tableRef}>
+      <div className="md-table-header">
+        <span className="md-table-label">Table</span>
+        <Tooltip content={copied ? "Copied!" : "Copy table"}>
+          <Button
+            variant="tertiary"
+            size="sm"
+            iconOnly
+            onClick={handleCopy}
+            aria-label="Copy table"
+          >
+            {copied ? <Check size={14} strokeWidth={2} /> : <Copy size={14} strokeWidth={2} />}
+          </Button>
+        </Tooltip>
+      </div>
+      <div className="md-table-scroll">
+        <table>{children}</table>
+      </div>
+    </div>
+  );
+}
+
+/* Link with external icon for http links */
+function LinkRenderer({ href, children }: { href?: string; children: React.ReactNode }) {
+  const isExternal = href?.startsWith("http");
+  return (
+    <a
+      href={href}
+      target={isExternal ? "_blank" : undefined}
+      rel={isExternal ? "noopener noreferrer" : undefined}
+    >
+      {children}
+      {isExternal && (
+        <ExternalLink size={10} strokeWidth={2} className="md-ext-icon" />
+      )}
+    </a>
+  );
+}
+
+/* Task list item with CheckSquare/Square icons */
+function TaskListItem({ checked, children }: { checked?: boolean; children: React.ReactNode }) {
+  return (
+    <li className="md-task-item">
+      <span className="md-task-check">
+        {checked ? (
+          <CheckSquare size={16} strokeWidth={2} className="text-[var(--ds-blue-700)]" />
+        ) : (
+          <Square size={16} strokeWidth={2} className="text-[var(--ds-gray-500)]" />
+        )}
+      </span>
+      <span className={checked ? "md-task-done" : ""}>{children}</span>
+    </li>
+  );
+}
+
+/* MarkdownRenderer */
 export function MarkdownRenderer({ content }: { content: string }) {
   const components: Components = {
     code({ className, children }) {
@@ -195,10 +323,32 @@ export function MarkdownRenderer({ content }: { content: string }) {
       const rawText = extractText(children);
       return <ReActParagraph text={rawText}>{children}</ReActParagraph>;
     },
+    table({ children }) {
+      return <TableBlock>{children}</TableBlock>;
+    },
+    a({ href, children }) {
+      return <LinkRenderer href={href}>{children}</LinkRenderer>;
+    },
+    li({ children, node }) {
+      const inputChild = node?.children?.find(
+        (child: any) => child.tagName === "input" && child.properties?.type === "checkbox"
+      );
+      if (inputChild) {
+        const checked = !!(inputChild as any).properties?.checked;
+        const filteredChildren = Array.isArray(children)
+          ? children.filter((child: any) => {
+              if (typeof child === "object" && child?.type === "input") return false;
+              return true;
+            })
+          : children;
+        return <TaskListItem checked={checked}>{filteredChildren}</TaskListItem>;
+      }
+      return <li>{children}</li>;
+    },
   };
 
   return (
-    <div className="md text-[14px]">
+    <div className="md text-[15px] leading-7">
       <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
         {content}
       </ReactMarkdown>

@@ -2,12 +2,12 @@ import json
 
 from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import ChatSession, ChatMessage
 from dependencies import check_admin_key, get_db
-from schemas.api import CreateChatRequest, UpdateChatRequest
+from schemas.api import CreateChatRequest, UpdateChatRequest, ChatSearchResult
 
 router = APIRouter()
 
@@ -56,6 +56,70 @@ async def create_chat(
         "updated_at":    session.updated_at.isoformat() if session.updated_at else None,
         "message_count": 0,
     }
+
+
+@router.get("/chats/search")
+async def search_chats(
+    query: str,
+    user_email: str = "anonymous",
+    db: AsyncSession = Depends(get_db),
+    _api_key: str = Depends(check_admin_key),
+):
+    pattern = f"%{query}%"
+    results: list[dict] = []
+    seen_chat_ids: set[str] = set()
+
+    # 1) Messages whose content matches
+    msg_stmt = (
+        select(ChatMessage, ChatSession)
+        .join(ChatSession, ChatMessage.session_id == ChatSession.id)
+        .where(
+            ChatSession.user_email == user_email,
+            ChatMessage.content.ilike(pattern),
+        )
+        .order_by(ChatMessage.created_at.desc())
+        .limit(20)
+    )
+    msg_rows = (await db.execute(msg_stmt)).all()
+    for msg, chat in msg_rows:
+        snippet = msg.content[:150]
+        results.append({
+            "chat_id":         chat.id,
+            "chat_title":      chat.title,
+            "message_id":      msg.id,
+            "message_content": snippet,
+            "role":            msg.role,
+            "updated_at":      (msg.created_at or chat.updated_at or "").isoformat()
+                               if hasattr(msg.created_at or chat.updated_at, "isoformat")
+                               else "",
+        })
+        seen_chat_ids.add(chat.id)
+
+    # 2) Chats whose title matches (not already covered by message hits)
+    title_stmt = (
+        select(ChatSession)
+        .where(
+            ChatSession.user_email == user_email,
+            ChatSession.title.ilike(pattern),
+        )
+        .order_by(ChatSession.updated_at.desc())
+        .limit(20)
+    )
+    title_rows = (await db.execute(title_stmt)).scalars().all()
+    for chat in title_rows:
+        if chat.id not in seen_chat_ids:
+            results.append({
+                "chat_id":         chat.id,
+                "chat_title":      chat.title,
+                "message_id":      None,
+                "message_content": None,
+                "role":            None,
+                "updated_at":      chat.updated_at.isoformat() if chat.updated_at else "",
+            })
+
+    # Sort combined results by updated_at desc, limit to 20
+    results.sort(key=lambda r: r["updated_at"], reverse=True)
+    return results[:20]
 
 
 @router.get("/chats/{chat_id}/messages")

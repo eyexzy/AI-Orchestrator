@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { createPortal } from "react-dom";
 import { cn } from "@/lib/utils";
 
 interface DialogProps {
@@ -11,6 +12,12 @@ interface DialogProps {
 }
 
 export function Dialog({ open, onOpenChange, onCancel, children }: DialogProps) {
+  const [mounted, setMounted] = React.useState(false);
+
+  React.useEffect(() => {
+    setMounted(true);
+  }, []);
+
   React.useEffect(() => {
     if (!open) return;
     const handler = (e: KeyboardEvent) => {
@@ -23,19 +30,20 @@ export function Dialog({ open, onOpenChange, onCancel, children }: DialogProps) 
     return () => window.removeEventListener("keydown", handler);
   }, [open, onOpenChange, onCancel]);
 
-  if (!open) return null;
+  if (!open || !mounted) return null;
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+  return createPortal(
+    <div className="fixed inset-0 z-[100] flex items-center justify-center overflow-hidden p-4">
       <div
-        className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+        className="absolute -inset-4 bg-black/60 backdrop-blur-sm dark:bg-black/70 transition-all duration-200 animate-in fade-in"
         onClick={() => {
           onCancel?.();
           onOpenChange?.(false);
         }}
       />
       {children}
-    </div>
+    </div>,
+    document.body
   );
 }
 
@@ -47,7 +55,7 @@ export function DialogContent({ className, children, ...props }: DialogContentPr
   return (
     <div
       className={cn(
-        "relative z-50 w-full max-w-lg overflow-hidden rounded-2xl border border-white/[0.1] bg-[hsl(0,0%,8%)] shadow-2xl animate-in",
+        "relative z-[101] w-full max-w-lg overflow-hidden rounded-2xl bg-background shadow-geist-lg animate-in fade-in zoom-in-95 duration-200",
         className,
       )}
       {...props}
@@ -60,7 +68,7 @@ export function DialogContent({ className, children, ...props }: DialogContentPr
 export function DialogHeader({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
   return (
     <div
-      className={cn("border-b border-white/[0.06] px-6 py-5", className)}
+      className={cn("border-b border-gray-alpha-200 px-6 py-5", className)}
       {...props}
     />
   );
@@ -69,7 +77,7 @@ export function DialogHeader({ className, ...props }: React.HTMLAttributes<HTMLD
 export function DialogFooter({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
   return (
     <div
-      className={cn("border-t border-white/[0.06] px-6 py-4", className)}
+      className={cn("border-t border-gray-alpha-200 px-6 py-4", className)}
       {...props}
     />
   );
@@ -90,9 +98,8 @@ export function DialogDescription({
 }: React.HTMLAttributes<HTMLParagraphElement>) {
   return (
     <p
-      className={cn("mt-0.5 text-[13px] text-muted-foreground", className)}
+      className={cn("mt-0.5 text-[15px] text-muted-foreground", className)}
       {...props}
     />
   );
 }
-

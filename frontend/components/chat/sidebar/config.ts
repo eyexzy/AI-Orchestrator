@@ -1,4 +1,12 @@
-export const DEFAULT_SYSTEM = "You are a helpful AI assistant. Respond in Ukrainian.";
+import { getTranslation } from "@/lib/store/i18nStore";
+
+export function getDefaultSystem(): string {
+  return getTranslation("system.default");
+}
+
+export function isDefaultSystem(value: string): boolean {
+  return value === getTranslation("system.default");
+}
 
 export interface FewShotExample {
   input: string;
@@ -25,8 +33,6 @@ export interface SidebarConfig {
   setVariables?: (v: Record<string, string>) => void;
   topP?: number;
   setTopP?: (v: number) => void;
-  topK?: number;
-  setTopK?: (v: number) => void;
   fewShotExamples?: FewShotExample[];
   setFewShotExamples?: (v: FewShotExample[]) => void;
   compareEnabled?: boolean;

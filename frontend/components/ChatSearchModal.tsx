@@ -1,0 +1,228 @@
+"use client";
+
+import { useEffect, useRef, useState } from "react";
+import { useSession } from "next-auth/react";
+import { Search, MessageSquare, Plus, Clock, Folder } from "lucide-react";
+import { Dialog, DialogContent } from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { useChatStore, type ChatSession } from "@/lib/store/chatStore";
+
+interface SearchResult {
+  chat_id: string;
+  chat_title: string;
+  message_id: number | null;
+  message_content: string | null;
+  role: string | null;
+  updated_at: string;
+}
+
+export function ChatSearchModal({
+  open,
+  onOpenChange,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const { data: session } = useSession();
+  const userEmail = session?.user?.email ?? "anonymous";
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  const chats: ChatSession[] = useChatStore((s) => s.chats);
+
+  const [query, setQuery] = useState("");
+  const [results, setResults] = useState<SearchResult[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  // Focus input when opened
+  useEffect(() => {
+    if (open) {
+      setQuery("");
+      setResults([]);
+      setTimeout(() => inputRef.current?.focus(), 50);
+    }
+  }, [open]);
+
+  // Debounced search
+  useEffect(() => {
+    if (!open) return;
+    const trimmed = query.trim();
+    if (!trimmed) {
+      setResults([]);
+      return;
+    }
+
+    setLoading(true);
+    const timer = setTimeout(async () => {
+      try {
+        const res = await fetch(
+          `/api/chats/search?q=${encodeURIComponent(trimmed)}`,
+        );
+        if (res.ok) {
+          setResults(await res.json());
+        }
+      } catch {
+        /* ignore */
+      } finally {
+        setLoading(false);
+      }
+    }, 300);
+
+    return () => {
+      clearTimeout(timer);
+      setLoading(false);
+    };
+  }, [query, open]);
+
+  const close = () => onOpenChange(false);
+
+  const handleSelect = (chatId: string, messageId?: number) => {
+    useChatStore.getState().selectChat(chatId, messageId);
+    close();
+  };
+
+  const handleNewChat = async () => {
+    await useChatStore.getState().createNewChat(userEmail);
+    close();
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="p-0 gap-0 overflow-hidden bg-background border border-gray-alpha-200 shadow-geist-lg max-w-2xl">
+        {/* Search input */}
+        <div className="flex items-center gap-3 px-4 h-14">
+          <Search size={18} strokeWidth={2} className="shrink-0 text-gray-500" />
+          <Input
+            ref={inputRef}
+            variant="ghost"
+            size="md"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search across all workspaces..."
+            className="flex-1"
+            inputClassName="text-lg"
+          />
+          <kbd className="hidden sm:inline-flex h-6 items-center rounded-md border border-gray-alpha-300 bg-gray-alpha-100 px-1.5 text-[11px] font-mono text-ds-text-tertiary">
+            Esc
+          </kbd>
+        </div>
+
+        {/* Divider */}
+        <div className="h-px bg-gray-alpha-200" />
+
+        {/* Results area */}
+        <div className="max-h-[60vh] overflow-y-auto p-2">
+          {!query.trim() ? (
+            /* Empty query: quick actions + recent chats */
+            <>
+              <div className="space-y-0.5">
+                <button
+                  type="button"
+                 
+                  onClick={handleNewChat}
+                  className="flex w-full items-center gap-3 rounded-lg px-4 py-2.5 text-sm text-ds-text transition-colors hover:bg-gray-alpha-200 hover:text-ds-text bg-transparent border-none cursor-pointer"
+                >
+                  <Plus size={16} strokeWidth={2} className="text-ds-text-secondary" />
+                  New Chat
+                </button>
+                <button
+                  type="button"
+                 
+                  className="flex w-full items-center gap-3 rounded-lg px-4 py-2.5 text-sm text-ds-text transition-colors hover:bg-gray-alpha-200 hover:text-ds-text bg-transparent border-none cursor-pointer"
+                >
+                  <Clock size={16} strokeWidth={2} className="text-ds-text-secondary" />
+                  All Recent Chats
+                </button>
+                <button
+                  type="button"
+                 
+                  className="flex w-full items-center gap-3 rounded-lg px-4 py-2.5 text-sm text-ds-text transition-colors hover:bg-gray-alpha-200 hover:text-ds-text bg-transparent border-none cursor-pointer"
+                >
+                  <Folder size={16} strokeWidth={2} className="text-ds-text-secondary" />
+                  Projects
+                </button>
+              </div>
+
+              {chats.length > 0 && (
+                <>
+                  <div className="px-4 py-2 mt-2 text-xs font-semibold uppercase tracking-wider text-ds-text-tertiary">
+                    Recent Chats
+                  </div>
+                  <div className="space-y-0.5">
+                    {chats.slice(0, 5).map((chat) => (
+                      <button
+                        key={chat.id}
+                        type="button"
+                       
+                        onClick={() => handleSelect(chat.id)}
+                        className="flex w-full items-center justify-between rounded-lg px-4 py-2.5 text-sm text-ds-text transition-colors hover:bg-gray-alpha-200 hover:text-ds-text bg-transparent border-none cursor-pointer text-left"
+                      >
+                        <div className="flex items-center gap-3 min-w-0">
+                          <MessageSquare size={16} strokeWidth={2} className="shrink-0 text-ds-text-secondary" />
+                          <span className="truncate max-w-[350px]">{chat.title}</span>
+                        </div>
+                        <span className="shrink-0 ml-3 text-ds-text-tertiary text-xs">
+                          {new Date(chat.updated_at).toLocaleDateString()}
+                        </span>
+                      </button>
+                    ))}
+                    {chats.length > 5 && (
+                      <button
+                        type="button"
+                       
+                        className="w-full text-left text-sm text-ds-text-secondary px-4 py-2 hover:text-ds-text bg-transparent border-none cursor-pointer"
+                      >
+                        View All...
+                      </button>
+                    )}
+                  </div>
+                </>
+              )}
+            </>
+          ) : loading ? (
+            /* Loading */
+            <div className="flex items-center justify-center py-6">
+              <div className="h-4 w-4 animate-spin rounded-full border-2 border-gray-alpha-200 border-t-gray-alpha-400" />
+            </div>
+          ) : results.length > 0 ? (
+            /* Search results */
+            <div className="space-y-0.5">
+              {results.map((r, i) => (
+                <button
+                  key={`${r.chat_id}-${r.message_id ?? "title"}-${i}`}
+                  type="button"
+                 
+                  onClick={() => handleSelect(r.chat_id, r.message_id ?? undefined)}
+                  className="flex w-full items-center justify-between rounded-lg px-4 py-2.5 text-sm text-ds-text transition-colors hover:bg-gray-alpha-200 hover:text-ds-text bg-transparent border-none cursor-pointer text-left"
+                >
+                  <div className="flex items-center gap-3 min-w-0">
+                    <MessageSquare size={16} strokeWidth={2} className="shrink-0 text-ds-text-secondary" />
+                    <div className="min-w-0">
+                      <span className="block truncate max-w-full font-medium">{r.chat_title}</span>
+                      {r.message_content && (
+                        <span className="block truncate max-w-full text-xs text-ds-text-tertiary mt-0.5">
+                          <span className="font-medium text-ds-text-secondary">
+                            {r.role === "user" ? "User: " : "AI: "}
+                          </span>
+                          {r.message_content}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  <span className="shrink-0 ml-3 text-ds-text-tertiary text-xs">
+                    {new Date(r.updated_at).toLocaleDateString()}
+                  </span>
+                </button>
+              ))}
+            </div>
+          ) : (
+            /* No results */
+            <p className="px-4 py-6 text-center text-sm text-ds-text-tertiary">
+              No chats found
+            </p>
+          )}
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}

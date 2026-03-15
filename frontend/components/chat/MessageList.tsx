@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useEffect } from "react";
+import { memo, useRef, useEffect } from "react";
 import { useChatStore } from "@/lib/store/chatStore";
 import { UserMessageBubble } from "@/components/chat/messages/UserMessage";
 import { AssistantMessage } from "@/components/chat/messages/AssistantMessage";
@@ -13,16 +13,15 @@ interface MessageListProps {
   floatingInputOffset?: number;
 }
 
-/* ─────────────────────────────────────────────────────────────────
- *  Main MessageList
- * ────────────────────────────────────────────────────────────── */
-export function MessageList({
+/* Main MessageList */
+const MessageListComponent = ({
   showRaw = false,
   emptyHint,
   floatingInputOffset = 0,
-}: MessageListProps) {
+}: MessageListProps) => {
   const scrollRef = useRef<HTMLDivElement>(null);
-  const { messages, isSending } = useChatStore();
+  const messages = useChatStore((s) => s.messages);
+  const isSending = useChatStore((s) => s.isSending);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({
@@ -34,15 +33,14 @@ export function MessageList({
   return (
     <div ref={scrollRef} className="message-scroll">
       <div
-        className="mx-auto w-full max-w-3xl px-6 py-5 space-y-5"
+        className="mx-auto w-full max-w-3xl px-6 py-6 space-y-6"
         style={floatingInputOffset > 0 ? { paddingBottom: floatingInputOffset } : undefined}
       >
-        {/* ── Empty hint ── */}
+        {/* Empty hint */}
         {messages.length === 0 && !isSending && emptyHint && (
           <div className="flex h-40 items-center justify-center">
             <p
-              className="text-center text-[13px]"
-              style={{ color: "rgb(var(--text-3))" }}
+              className="text-center text-[15px] text-ds-text-tertiary"
               dangerouslySetInnerHTML={{ __html: emptyHint }}
             />
           </div>
@@ -51,10 +49,11 @@ export function MessageList({
         {messages.map((m) => (
           <div
             key={m.id}
+            id={`msg-${m.id}`}
             className={`flex ${m.role === "user" ? "justify-end" : "justify-start"} animate-in`}
           >
             {m.role === "user" ? (
-              /* ── User message ── */
+              /* User message */
               <UserMessageBubble
                 id={m.id}
                 content={m.content}
@@ -62,7 +61,7 @@ export function MessageList({
               />
 
             ) : m.isSelfConsistency && m.selfConsistency ? (
-              /* ── Self-Consistency block ── */
+              /* Self-Consistency block */
               <div className="w-full">
                 <SelfConsistencyTabs
                   messageId={m.id}
@@ -72,7 +71,7 @@ export function MessageList({
               </div>
 
             ) : m.comparison ? (
-              /* ── Compare block ── */
+              /* Compare block */
               <div className="w-full">
                 <CompareTabs
                   messageId={m.id}
@@ -82,7 +81,7 @@ export function MessageList({
               </div>
 
             ) : (
-              /* ── Normal assistant message ── */
+              /* Normal assistant message */
               <AssistantMessage
                 content={m.content}
                 metadata={m.metadata}
@@ -92,16 +91,15 @@ export function MessageList({
           </div>
         ))}
 
-        {/* ── Typing indicator ── */}
+        {/* Typing indicator */}
         {isSending && (
           <div className="flex justify-start animate-in">
             <div className="flex items-center gap-1.5 px-1 py-3">
               {[0, 150, 300].map((d) => (
                 <span
                   key={d}
-                  className="h-1.5 w-1.5 rounded-full"
+                  className="h-1.5 w-1.5 rounded-full bg-gray-alpha-400"
                   style={{
-                    background: "rgb(var(--text-3))",
                     animation: `pulse-dot 1.2s ${d}ms infinite`,
                   }}
                 />
@@ -112,4 +110,7 @@ export function MessageList({
       </div>
     </div>
   );
-}
+};
+
+export const MessageList = memo(MessageListComponent);
+MessageList.displayName = "MessageList";

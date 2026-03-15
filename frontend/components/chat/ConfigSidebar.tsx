@@ -1,668 +1,526 @@
 "use client";
 
-import { useRef, useEffect } from "react";
-import {
-  SlidersHorizontal,
-  Cpu,
-  Settings2,
-  Bookmark,
-  FileText,
-  Terminal,
-  Braces,
-  ListOrdered,
-} from "lucide-react";
+import { Fragment, memo, useRef, useEffect, useState, useMemo } from "react";
+import { Settings, ChevronUp, Layers2, Cpu, SlidersHorizontal, LayoutTemplate, Terminal, Braces, BookOpen } from "lucide-react";
+import { cn } from "@/lib/utils";
 import { useUserLevelStore } from "@/lib/store/userLevelStore";
 import { useModelsStore } from "@/lib/store/modelsStore";
-import { TEMPLATES, CATEGORY_LABELS } from "@/lib/templates";
+import { useTemplatesStore, getMergedTemplates, type PromptTemplate } from "@/lib/store/templatesStore";
+import { useTranslation } from "@/lib/store/i18nStore";
 
-import { DEFAULT_SYSTEM } from "./sidebar/config";
+import { getDefaultSystem, isDefaultSystem } from "./sidebar/config";
 import type { SidebarConfig } from "./sidebar/config";
-import {
-  CollapsibleSection, Divider, SectionLabel, SliderRow, MiniSwitch, StyledSelect,
-} from "./sidebar/SidebarUI";
+import { Switch } from "@/components/ui/switch";
+import { Material } from "@/components/ui/material";
+import { Description } from "@/components/ui/description";
+import { Select } from "@/components/ui/select";
+import { Slider } from "@/components/ui/slider";
+import { Note } from "@/components/ui/note";
+import { Textarea } from "@/components/ui/textarea";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Tooltip } from "@/components/ui/tooltip";
+import { SegmentedControl } from "@/components/ui/segmented-control";
+import { Divider, SectionHeader } from "./sidebar/SidebarUI";
 import { VariableEditor } from "./sidebar/VariableEditor";
 import { FewShotEditor } from "./sidebar/FewShotEditor";
+import { TemplateManagerModal } from "./sidebar/TemplateManagerModal";
 
-export { DEFAULT_SYSTEM };
+export { getDefaultSystem, isDefaultSystem };
 export type { SidebarConfig };
 export type { FewShotExample } from "./sidebar/config";
 
-const SIDEBAR_WIDTH = 292;
+const SIDEBAR_WIDTH_CSS = "clamp(280px, 25vw, 340px)";
 
-/* ── Main ConfigSidebar ───────────────────────────────────────── */
-export function ConfigSidebar({ config }: { config: SidebarConfig }) {
+function SidebarTemplateItem({ tpl, config }: { tpl: PromptTemplate; config: SidebarConfig }) {
+  return (
+    <Material className="group relative flex w-full cursor-pointer flex-col px-3.5 py-3 text-left hover:bg-gray-alpha-200">
+      <div
+        className="flex flex-1 flex-col"
+        onClick={() => {
+          const vars = tpl.variables ?? [];
+          const nv: Record<string, string> = {};
+          if (vars.length > 0 && config.variables) {
+            for (const v of vars) nv[v] = config.variables[v] ?? "";
+          }
+          config.onLoadTemplate!(tpl.prompt, nv, tpl.system_message || undefined);
+          config.setShowTpl!(false);
+        }}
+      >
+        <div className="flex min-w-0 items-center gap-2 pb-1 pr-16">
+          <span className="block min-w-0 truncate text-[14px] font-semibold leading-snug text-ds-text">
+            {tpl.title}
+          </span>
+        </div>
+        <Description className="line-clamp-2 break-words">{tpl.description}</Description>
+        {tpl.variables && tpl.variables.length > 0 && (
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            {tpl.variables.map((v: string) => (
+              <span
+                key={v}
+                className="max-w-[100px] truncate rounded bg-gray-alpha-200 px-1.5 py-0.5 font-mono text-[10px] text-ds-text-tertiary"
+              >
+                {`{{${v}}}`}
+              </span>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div className="pointer-events-none absolute right-3 top-3">
+        <Badge variant={`${tpl.category_color}-subtle` as any}>
+          <span className="max-w-[120px] truncate">{tpl.category_name}</span>
+        </Badge>
+      </div>
+    </Material>
+  );
+}
+
+const ConfigSidebarComponent = ({ config, forceVisible }: { config: SidebarConfig; forceVisible?: boolean }) => {
+  const { t, language } = useTranslation();
   const level = useUserLevelStore((s) => s.level);
   const { trackAdvancedFeature } = useUserLevelStore();
   const models = useModelsStore((s) => s.models);
   const fetchModels = useModelsStore((s) => s.fetchModels);
-  const tempTracked  = useRef(false);
-  const modelTracked = useRef(false);
-  const sysTracked   = useRef(false);
+  const customTemplates = useTemplatesStore((s) => s.templates);
+  const fetchTemplates = useTemplatesStore((s) => s.fetchTemplates);
+  const hiddenTemplates = useUserLevelStore((s) => s.hiddenTemplates);
+  const templates = useMemo(
+    () => getMergedTemplates(customTemplates, level, language as "en" | "uk", hiddenTemplates),
+    [customTemplates, level, language, hiddenTemplates],
+  );
 
-  useEffect(() => { fetchModels(); }, [fetchModels]);
+  const tempTracked = useRef(false);
+  const modelTracked = useRef(false);
+  const sysTracked = useRef(false);
+  const [isTemplateModalOpen, setIsTemplateModalOpen] = useState(false);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const [showScrollTop, setShowScrollTop] = useState(false);
+  const [isScrolled, setIsScrolled] = useState(false);
+
+  useEffect(() => {
+    fetchModels();
+  }, [fetchModels]);
+
+  useEffect(() => {
+    fetchTemplates();
+  }, [fetchTemplates]);
+
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const onScroll = () => {
+      setShowScrollTop(el.scrollTop > 200);
+      setIsScrolled(el.scrollTop > 10);
+    };
+    el.addEventListener("scroll", onScroll, { passive: true });
+    return () => el.removeEventListener("scroll", onScroll);
+  }, []);
 
   const isVisible = level >= 2;
   const compareOn = level === 3 && (config.compareEnabled ?? false);
-  const scOn      = level === 3 && (config.selfConsistencyEnabled ?? false);
+  const fallbackModelB = models?.[1]?.value ?? models?.[0]?.value ?? config.model;
 
   const presets = [
-    { label: "Точний",   t: 0.1, m: 512 },
-    { label: "Balanced", t: 0.7, m: 1024 },
-    { label: "Creative", t: 0.9, m: 2048 },
-    { label: "Determ.",  t: 0,   m: 256 },
+    { id: "precise", label: t("config.precise"), t: 0.1, m: 1024, p: 0.9 },
+    { id: "balanced", label: t("config.balanced"), t: 0.4, m: 2048, p: 0.95 },
+    { id: "creative", label: t("config.creative"), t: 0.9, m: 4096, p: 0.99 },
   ];
 
-  return (
-    <div
-      className={`shrink-0 overflow-hidden transition-all duration-300 ease-in-out ${
-        isVisible ? "hidden md:block" : "hidden"
-      }`}
-      style={{
-        width: isVisible ? SIDEBAR_WIDTH : 0,
-        opacity: isVisible ? 1 : 0,
-        borderLeft: isVisible ? "1px solid rgba(255,255,255,0.06)" : "none",
-      }}
-      aria-hidden={!isVisible}
-    >
-      <div
-        className="h-full overflow-y-auto config-scroll"
-        style={{ width: SIDEBAR_WIDTH, background: "rgba(0,0,0,0.12)" }}
-      >
-        <div className="space-y-4 p-4">
-          {/* ── Header ── */}
-          <div className="flex items-center justify-between pb-1">
-            <h3
-              className="font-display text-[12px] font-semibold tracking-tight"
-              style={{ color: "rgb(var(--text-1))" }}
-            >
-              Config
-            </h3>
-            <span
-              className="rounded-md px-2 py-0.5 font-mono text-[10px] font-bold"
-              style={
-                level === 3
-                  ? {
-                      background: "rgba(251,191,36,0.12)",
-                      color: "rgb(251,197,68)",
-                      border: "1px solid rgba(251,191,36,0.20)",
+  const activePresetId = useMemo(() => {
+    const matched = presets.find((p) => {
+      const matchBase = config.temperature === p.t && config.maxTokens === p.m;
+      if (level < 3) return matchBase;
+      return matchBase && config.topP === p.p;
+    });
+    return matched?.id;
+  }, [config.temperature, config.maxTokens, config.topP, level, presets]);
+
+  const sections: Array<{ key: string; content: React.ReactNode }> = [];
+
+  if (level === 3) {
+    sections.push({
+      key: "modes",
+      content: (
+        <section className="flex flex-col gap-5">
+          <SectionHeader icon={Layers2}>{t("config.modes")}</SectionHeader>
+          <div className="flex flex-col gap-5">
+            <div className="flex flex-col gap-2">
+              <div className="flex items-center justify-between">
+                <Tooltip align="start" content={t("tooltip.compare")}>
+                  <span className="text-[13px] font-medium text-ds-text">{t("config.compare")}</span>
+                </Tooltip>
+                <Switch
+                  checked={config.compareEnabled ?? false}
+                  onCheckedChange={(v) => {
+                    config.setCompareEnabled!(v);
+                    if (v) {
+                      config.setSelfConsistencyEnabled!(false);
+                      trackAdvancedFeature("model_comparison");
                     }
-                  : {
-                      background: "rgba(52,211,153,0.12)",
-                      color: "rgb(74,222,168)",
-                      border: "1px solid rgba(52,211,153,0.20)",
-                    }
-              }
-            >
-              L{level} {level === 2 ? "Constructor" : "Engineer"}
-            </span>
-          </div>
-
-          <Divider />
-
-          {/* ── L3 Mode Toggles ── */}
-          {level === 3 && (
-            <>
-              <CollapsibleSection
-                title="Режими"
-                icon={SlidersHorizontal}
-                defaultOpen
-              >
-                <div className="space-y-1.5">
-                  {/* Compare */}
-                  <div
-                    className="flex items-center justify-between rounded-xl px-3 py-2.5"
-                    style={{
-                      background: compareOn
-                        ? "rgba(123,147,255,0.08)"
-                        : "rgba(0,0,0,0.20)",
-                      border: `1px solid ${
-                        compareOn
-                          ? "rgba(123,147,255,0.25)"
-                          : "rgba(255,255,255,0.05)"
-                      }`,
-                      transition: "all 0.2s",
-                    }}
-                  >
-                    <div className="flex items-center gap-2">
-                      <span className="text-[11px]"></span>
-                      <span
-                        className="font-mono text-[10px] font-bold select-none"
-                        style={{
-                          color: compareOn
-                            ? "rgb(163,178,255)"
-                            : "rgb(var(--text-3))",
-                        }}
-                      >
-                        Compare
-                      </span>
-                    </div>
-                    <MiniSwitch
-                      checked={config.compareEnabled ?? false}
-                      onChange={(v) => {
-                        config.setCompareEnabled!(v);
-                        if (v) trackAdvancedFeature("model_comparison");
-                      }}
-                    />
-                  </div>
-
-                  {/* Self-Consistency */}
-                  <div
-                    className="flex items-center justify-between rounded-xl px-3 py-2.5"
-                    style={{
-                      background: scOn
-                        ? "rgba(251,191,36,0.08)"
-                        : "rgba(0,0,0,0.20)",
-                      border: `1px solid ${
-                        scOn
-                          ? "rgba(251,191,36,0.25)"
-                          : "rgba(255,255,255,0.05)"
-                      }`,
-                      transition: "all 0.2s",
-                    }}
-                  >
-                    <div className="flex items-center gap-2">
-                      <span className="text-[11px]"></span>
-                      <span
-                        className="font-mono text-[10px] font-bold select-none"
-                        style={{
-                          color: scOn
-                            ? "rgb(251,197,68)"
-                            : "rgb(var(--text-3))",
-                        }}
-                      >
-                        Self-Consistency ×3
-                      </span>
-                    </div>
-                    <MiniSwitch
-                      checked={config.selfConsistencyEnabled ?? false}
-                      onChange={(v) => {
-                        config.setSelfConsistencyEnabled!(v);
-                        if (v) trackAdvancedFeature("self_consistency");
-                      }}
-                      color="251,191,36"
-                    />
-                  </div>
-
-                  {/* RAW JSON */}
-                  <div
-                    className="flex items-center justify-between rounded-xl px-3 py-2.5"
-                    style={{
-                      background: config.rawJsonEnabled
-                        ? "rgba(52,211,153,0.08)"
-                        : "rgba(0,0,0,0.20)",
-                      border: `1px solid ${
-                        config.rawJsonEnabled
-                          ? "rgba(52,211,153,0.25)"
-                          : "rgba(255,255,255,0.05)"
-                      }`,
-                      transition: "all 0.2s",
-                    }}
-                  >
-                    <div className="flex items-center gap-2">
-                      <span className="text-[11px]">{""}</span>
-                      <span
-                        className="font-mono text-[10px] font-bold select-none"
-                        style={{
-                          color: config.rawJsonEnabled
-                            ? "rgb(52,211,153)"
-                            : "rgb(var(--text-3))",
-                        }}
-                      >
-                        RAW JSON
-                      </span>
-                    </div>
-                    <MiniSwitch
-                      checked={config.rawJsonEnabled ?? false}
-                      onChange={(v) => {
-                        config.setRawJsonEnabled!(v);
-                        if (v) trackAdvancedFeature("raw_json");
-                      }}
-                      color="52,211,153"
-                    />
-                  </div>
-                </div>
-              </CollapsibleSection>
-
-              <Divider />
-            </>
-          )}
-
-          {/* ── Model ── */}
-          <CollapsibleSection title="Модель" icon={Cpu} defaultOpen>
-            {compareOn ? (
-              <div className="space-y-2.5">
-                <div className="space-y-1.5">
-                  <div className="flex items-center gap-2">
-                    <span
-                      className="flex h-4 w-4 items-center justify-center rounded font-mono text-[9px] font-bold shrink-0"
-                      style={{
-                        background: "rgba(123,147,255,0.15)",
-                        color: "rgb(123,147,255)",
-                      }}
-                    >
-                      A
-                    </span>
-                    <SectionLabel>Модель A</SectionLabel>
-                  </div>
-                  <StyledSelect
-                    value={config.compareModelA ?? config.model}
-                    onChange={(v) => {
-                      config.setCompareModelA?.(v);
-                      if (!modelTracked.current) {
-                        modelTracked.current = true;
-                        trackAdvancedFeature("model");
-                      }
-                    }}
-                    borderColor="rgba(123,147,255,0.20)"
-                  >
-                    {models.map((o) => (
-                      <option key={o.value} value={o.value}>
-                        {o.label}
-                      </option>
-                    ))}
-                  </StyledSelect>
-                </div>
-                <div className="space-y-1.5">
-                  <div className="flex items-center gap-2">
-                    <span
-                      className="flex h-4 w-4 items-center justify-center rounded font-mono text-[9px] font-bold shrink-0"
-                      style={{
-                        background: "rgba(52,211,153,0.15)",
-                        color: "rgb(52,211,153)",
-                      }}
-                    >
-                      B
-                    </span>
-                    <SectionLabel>Модель B</SectionLabel>
-                  </div>
-                  <StyledSelect
-                    value={config.compareModelB ?? "gemini-2.0-flash"}
-                    onChange={(v) => config.setCompareModelB?.(v)}
-                    borderColor="rgba(52,211,153,0.20)"
-                  >
-                    {models.map((o) => (
-                      <option key={o.value} value={o.value}>
-                        {o.label}
-                      </option>
-                    ))}
-                  </StyledSelect>
-                </div>
-                {/* Warning if same models are selected */}
-                {(config.compareModelA ?? config.model) === (config.compareModelB ?? "gemini-2.0-flash") && (
-                  <div
-                    className="mt-2.5 flex items-start gap-1.5 rounded-lg px-2.5 py-2 text-[10px] leading-relaxed transition-all animate-in"
-                    style={{
-                      background: "rgba(251,191,36,0.08)",
-                      color: "rgb(251,191,36)",
-                      border: "1px solid rgba(251,191,36,0.2)",
-                    }}
-                  >
-                    <svg className="mt-0.5 shrink-0" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                      <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/>
-                      <line x1="12" y1="9" x2="12" y2="13"/>
-                      <line x1="12" y1="17" x2="12.01" y2="17"/>
-                    </svg>
-                    <span>
-                      Оберіть різні моделі. Інакше буде використано звичайний режим генерації.
-                    </span>
-                  </div>
-                )}
+                  }}
+                />
               </div>
-            ) : (
-              <StyledSelect
-                value={config.model}
-                onChange={(v) => {
-                  config.setModel(v);
-                  if (!modelTracked.current) {
-                    modelTracked.current = true;
-                    trackAdvancedFeature("model");
-                  }
-                }}
-              >
-                {models.map((o) => (
-                  <option key={o.value} value={o.value}>
-                    {o.label}
-                  </option>
-                ))}
-              </StyledSelect>
+            </div>
+
+            <div className="flex flex-col gap-2">
+              <div className="flex items-center justify-between">
+                <Tooltip align="start" content={t("tooltip.check3x")}>
+                  <span className="text-[13px] font-medium text-ds-text">{t("config.check3x")}</span>
+                </Tooltip>
+                <Switch
+                  checked={config.selfConsistencyEnabled ?? false}
+                  onCheckedChange={(v) => {
+                    config.setSelfConsistencyEnabled!(v);
+                    if (v) {
+                      config.setCompareEnabled!(false);
+                      trackAdvancedFeature("self_consistency");
+                    }
+                  }}
+                />
+              </div>
+            </div>
+
+            <div className="flex flex-col gap-2">
+              <div className="flex items-center justify-between">
+                <Tooltip align="start" content={t("tooltip.rawJson")}>
+                  <span className="text-[13px] font-medium text-ds-text">{t("config.rawJson")}</span>
+                </Tooltip>
+                <Switch
+                  checked={config.rawJsonEnabled ?? false}
+                  onCheckedChange={(v) => {
+                    config.setRawJsonEnabled!(v);
+                    if (v) trackAdvancedFeature("raw_json");
+                  }}
+                />
+              </div>
+            </div>
+          </div>
+        </section>
+      ),
+    });
+  }
+
+  sections.push({
+    key: "model",
+    content: (
+      <section className="flex flex-col gap-4">
+        <SectionHeader icon={Cpu}>{t("config.model")}</SectionHeader>
+        {compareOn ? (
+          <div className="flex flex-col gap-3">
+            <div className="flex flex-col gap-3">
+              <div className="flex flex-col gap-1.5">
+                <div className="flex items-center gap-1.5">
+                  <span className="h-1.5 w-1.5 rounded-full bg-blue-800" />
+                  <span className="text-[12px] font-medium text-ds-text-secondary">
+                    {t("config.modelA")}
+                  </span>
+                </div>
+                <Select
+                  value={config.compareModelA ?? config.model}
+                  onValueChange={(v) => {
+                    config.setCompareModelA?.(v);
+                    if (!modelTracked.current) {
+                      modelTracked.current = true;
+                      trackAdvancedFeature("model");
+                    }
+                  }}
+                  options={models}
+                />
+              </div>
+
+              <div className="flex flex-col gap-1.5">
+                <div className="flex items-center gap-1.5">
+                  <span className="h-1.5 w-1.5 rounded-full bg-green-700" />
+                  <span className="text-[12px] font-medium text-ds-text-secondary">
+                    {t("config.modelB")}
+                  </span>
+                </div>
+                <Select
+                  value={config.compareModelB ?? fallbackModelB}
+                  onValueChange={(v) => config.setCompareModelB?.(v)}
+                  options={models}
+                />
+              </div>
+            </div>
+
+            {(config.compareModelA ?? config.model) === (config.compareModelB ?? fallbackModelB) && (
+              <Note variant="warning" size="sm">
+                {t("config.sameModelWarning")}
+              </Note>
             )}
-          </CollapsibleSection>
+          </div>
+        ) : (
+          <Select
+            value={config.model}
+            onValueChange={(v) => {
+              config.setModel(v);
+              if (!modelTracked.current) {
+                modelTracked.current = true;
+                trackAdvancedFeature("model");
+              }
+            }}
+            options={models}
+          />
+        )}
+      </section>
+    ),
+  });
 
-          <Divider />
+  sections.push({
+    key: "parameters",
+    content: (
+      <section className="flex flex-col gap-5">
+        <SectionHeader icon={SlidersHorizontal}>{t("config.parameters")}</SectionHeader>
+        <div className="flex flex-col gap-5">
+          <SegmentedControl
+            options={presets.map((p) => ({ value: p.id, label: p.label }))}
+            value={activePresetId}
+            onValueChange={(val) => {
+              const p = presets.find((x) => x.id === val);
+              if (p) {
+                config.setTemperature(p.t);
+                config.setMaxTokens(p.m);
+                if (level === 3 && config.setTopP) {
+                  config.setTopP(p.p);
+                }
+              }
+            }}
+          />
 
-          {/* ── Параметри генерації ── */}
-          <CollapsibleSection title="Параметри" icon={Settings2} defaultOpen>
-            <SliderRow
-              label="Temperature"
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <Tooltip align="start" content={t("tooltip.temperature")}>
+                <span className="block cursor-help pb-0 text-[13px] font-medium text-ds-text">
+                  {t("config.temperature")}
+                </span>
+              </Tooltip>
+              <span className="rounded bg-gray-alpha-200 px-2 py-0.5 font-mono text-xs font-medium text-ds-gray-1000">
+                {config.temperature.toFixed(2)}
+              </span>
+            </div>
+            <Slider
               min={0}
               max={level === 3 ? 2 : 1}
               step={0.05}
-              value={config.temperature}
-              onChange={(v) => {
-                config.setTemperature(v);
-                if (!tempTracked.current && v !== 0.7) {
+              value={[config.temperature]}
+              onValueChange={(v) => {
+                config.setTemperature(v[0]);
+                if (!tempTracked.current && v[0] !== 0.7) {
                   tempTracked.current = true;
                   trackAdvancedFeature("temperature");
                 }
               }}
-              format={(v) => v.toFixed(2)}
             />
-            <div className="flex justify-between px-0.5">
-              <span
-                className="font-mono text-[9px]"
-                style={{ color: "rgb(var(--text-3))" }}
-              >
-                Точний
-              </span>
-              <span
-                className="font-mono text-[9px]"
-                style={{ color: "rgb(var(--text-3))" }}
-              >
-                Креативний
+          </div>
+
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <Tooltip align="start" content={t("tooltip.maxTokens")}>
+                <span className="block cursor-help pb-0 text-[13px] font-medium text-ds-text">
+                  {t("config.maxTokens")}
+                </span>
+              </Tooltip>
+              <span className="rounded bg-gray-alpha-200 px-2 py-0.5 font-mono text-xs font-medium text-ds-gray-1000">
+                {config.maxTokens}
               </span>
             </div>
-
-            <SliderRow
-              label="Max Tokens"
+            <Slider
               min={64}
               max={4096}
               step={64}
-              value={config.maxTokens}
-              onChange={(v) => config.setMaxTokens(Math.round(v))}
-              format={(v) => String(v)}
-              trackColor="52,211,153"
+              value={[config.maxTokens]}
+              onValueChange={(v) => config.setMaxTokens(Math.round(v[0]))}
             />
+          </div>
 
-            {/* Top-P and Top-K — L3 only */}
-            {level === 3 && config.setTopP && (
-              <>
-                <SliderRow
-                  label="Top-P"
+          {level === 3 && config.setTopP && (
+            <>
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <Tooltip align="start" content={t("tooltip.topP")}>
+                    <span className="block cursor-help pb-0 text-[13px] font-medium text-ds-text">
+                      {t("config.topP")}
+                    </span>
+                  </Tooltip>
+                  <span className="rounded bg-gray-alpha-200 px-2 py-0.5 font-mono text-xs font-medium text-ds-gray-1000">
+                    {(config.topP ?? 1.0).toFixed(2)}
+                  </span>
+                </div>
+                <Slider
                   min={0}
                   max={1}
                   step={0.05}
-                  value={config.topP ?? 1.0}
-                  onChange={(v) => config.setTopP!(v)}
-                  format={(v) => v.toFixed(2)}
-                  trackColor="16,178,255"
+                  value={[config.topP ?? 1.0]}
+                  onValueChange={(v) => config.setTopP!(v[0])}
                 />
-                <SliderRow
-                  label="Top-K"
-                  min={1}
-                  max={100}
-                  step={1}
-                  value={config.topK ?? 40}
-                  onChange={(v) => config.setTopK!(Math.round(v))}
-                  format={(v) => String(v)}
-                  trackColor="251,191,36"
-                />
-              </>
-            )}
-          </CollapsibleSection>
+              </div>
 
-          <Divider />
-
-          {/* ── Пресети ── */}
-          <CollapsibleSection
-            title="Пресети"
-            icon={Bookmark}
-            defaultOpen={false}
-          >
-            <div className="grid grid-cols-2 gap-1.5">
-              {presets.map((p) => (
-                <button
-                  key={p.label}
-                  type="button"
-                  onClick={() => {
-                    config.setTemperature(p.t);
-                    config.setMaxTokens(p.m);
-                  }}
-                  className="rounded-xl px-2 py-2 text-center text-[11px] font-medium transition-all active:scale-95"
-                  style={{
-                    border: "1px solid rgba(255,255,255,0.07)",
-                    color: "rgb(var(--text-2))",
-                    background: "rgba(0,0,0,0.20)",
-                  }}
-                  onMouseEnter={(e) =>
-                    (e.currentTarget.style.background = "rgba(255,255,255,0.06)")
-                  }
-                  onMouseLeave={(e) =>
-                    (e.currentTarget.style.background = "rgba(0,0,0,0.20)")
-                  }
-                >
-                  {p.label}
-                  <br />
-                  <span
-                    className="font-mono text-[9px]"
-                    style={{ color: "rgb(var(--text-3))" }}
-                  >
-                    t={p.t} · {p.m}tok
-                  </span>
-                </button>
-              ))}
-            </div>
-          </CollapsibleSection>
-
-          {/* ── Templates (L2+) ── */}
-          {config.showTpl !== undefined &&
-            config.setShowTpl &&
-            config.onLoadTemplate && (
-              <>
-                <Divider />
-                <CollapsibleSection
-                  title="Шаблони"
-                  icon={FileText}
-                  defaultOpen={false}
-                >
-                  <div className="space-y-1">
-                    {TEMPLATES.filter((t) =>
-                      level === 2 ? t.level <= 2 : true
-                    ).map((tpl) => (
-                      <button
-                        key={tpl.id}
-                        type="button"
-                        onClick={() => {
-                          const nv: Record<string, string> = {};
-                          if (tpl.variables && config.variables) {
-                            for (const v of tpl.variables)
-                              nv[v] = config.variables[v] ?? "";
-                          }
-                          config.onLoadTemplate!(
-                            tpl.prompt,
-                            nv,
-                            tpl.systemMessage
-                          );
-                          config.setShowTpl!(false);
-                        }}
-                        className="flex w-full flex-col rounded-xl px-3 py-2 text-left transition-all active:scale-[0.98]"
-                        style={{
-                          border: "1px solid rgba(255,255,255,0.05)",
-                          background: "rgba(0,0,0,0.18)",
-                        }}
-                        onMouseEnter={(e) =>
-                          (e.currentTarget.style.background =
-                            "rgba(255,255,255,0.05)")
-                        }
-                        onMouseLeave={(e) =>
-                          (e.currentTarget.style.background =
-                            "rgba(0,0,0,0.18)")
-                        }
-                      >
-                        <div className="flex items-center gap-1.5 flex-wrap">
-                          <span
-                            className="text-[11px] font-medium"
-                            style={{ color: "rgb(var(--text-1))" }}
-                          >
-                            {tpl.title}
-                          </span>
-                          <span
-                            className="rounded px-1.5 py-0.5 font-mono text-[9px]"
-                            style={{
-                              background: "rgba(255,255,255,0.06)",
-                              color: "rgb(var(--text-3))",
-                            }}
-                          >
-                            {CATEGORY_LABELS[tpl.category]}
-                          </span>
-                          <span
-                            className="ml-auto font-mono text-[9px]"
-                            style={{ color: "rgb(123,147,255)" }}
-                          >
-                            L{tpl.level}
-                          </span>
-                        </div>
-                        <span
-                          className="mt-0.5 text-[10px] leading-relaxed"
-                          style={{ color: "rgb(var(--text-3))" }}
-                        >
-                          {tpl.description}
-                        </span>
-                        {tpl.variables && (
-                          <div className="mt-1 flex flex-wrap gap-1">
-                            {tpl.variables.map((v) => (
-                              <span
-                                key={v}
-                                className="font-mono text-[9px] rounded px-1 py-0.5"
-                                style={{
-                                  background: "rgba(123,147,255,0.10)",
-                                  color: "rgba(163,178,255,0.8)",
-                                }}
-                              >
-                                {`{{${v}}}`}
-                              </span>
-                            ))}
-                          </div>
-                        )}
-                      </button>
-                    ))}
-                  </div>
-                </CollapsibleSection>
-              </>
-            )}
-
-          {/* ── L3 blocks ── */}
-          {level === 3 && (
-            <>
-              <Divider />
-
-              {/* System Message */}
-              {config.system !== undefined && config.setSystem && (
-                <CollapsibleSection
-                  title="System Message"
-                  icon={Terminal}
-                  defaultOpen
-                >
-                  <div className="flex items-center justify-between mb-1.5">
-                    <span />
-                    <button
-                      type="button"
-                      onClick={() => config.setSystem!(DEFAULT_SYSTEM)}
-                      className="rounded px-2 py-0.5 font-mono text-[9px] transition-all"
-                      style={{
-                        color: "rgb(var(--text-3))",
-                        border: "1px solid rgba(255,255,255,0.07)",
-                        background: "transparent",
-                      }}
-                      onMouseEnter={(e) =>
-                        (e.currentTarget.style.background =
-                          "rgba(255,255,255,0.05)")
-                      }
-                      onMouseLeave={(e) =>
-                        (e.currentTarget.style.background = "transparent")
-                      }
-                    >
-                      reset
-                    </button>
-                  </div>
-                  <textarea
-                    value={config.system}
-                    onChange={(e) => {
-                      config.setSystem!(e.target.value);
-                      if (
-                        !sysTracked.current &&
-                        e.target.value !== DEFAULT_SYSTEM
-                      ) {
-                        sysTracked.current = true;
-                        trackAdvancedFeature("system_prompt");
-                      }
-                    }}
-                    className="input-field w-full resize-y px-3 py-2 font-mono text-[11px] leading-relaxed"
-                    placeholder="Роль та інструкції..."
-                    style={{
-                      minHeight: 80,
-                      borderRadius: 9,
-                      background: "rgba(0,0,0,0.25)",
-                      border: "1px solid rgba(255,255,255,0.06)",
-                    }}
-                  />
-                </CollapsibleSection>
-              )}
-
-              <Divider />
-
-              {/* Variables */}
-              {config.variables !== undefined && config.setVariables && (
-                <CollapsibleSection
-                  title="Змінні"
-                  icon={Braces}
-                  defaultOpen
-                >
-                  {config.variables &&
-                    Object.keys(config.variables).length > 0 && (
-                      <div className="mb-1.5 flex items-center justify-end">
-                        <span
-                          className="font-mono text-[9px]"
-                          style={{ color: "rgb(var(--text-3))" }}
-                        >
-                          {Object.keys(config.variables).length} активних
-                        </span>
-                      </div>
-                    )}
-                  <VariableEditor
-                    variables={config.variables}
-                    onChange={(v) => {
-                      if (
-                        Object.keys(v).length >
-                        Object.keys(config.variables!).length
-                      ) {
-                        trackAdvancedFeature("variable");
-                      }
-                      config.setVariables!(v);
-                    }}
-                  />
-                </CollapsibleSection>
-              )}
-
-              <Divider />
-
-              {/* Few-Shot Examples */}
-              {config.fewShotExamples !== undefined &&
-                config.setFewShotExamples && (
-                  <CollapsibleSection
-                    title="Few-Shot Приклади"
-                    icon={ListOrdered}
-                    defaultOpen={false}
-                  >
-                    <FewShotEditor
-                      examples={config.fewShotExamples}
-                      onChange={(v) => {
-                        if (
-                          v.length > (config.fewShotExamples?.length ?? 0)
-                        ) {
-                          trackAdvancedFeature("few_shot");
-                        }
-                        config.setFewShotExamples!(v);
-                      }}
-                    />
-                  </CollapsibleSection>
-                )}
             </>
           )}
-
-          {/* Bottom padding */}
-          <div style={{ height: 8 }} />
         </div>
+      </section>
+    ),
+  });
+
+  if (config.showTpl !== undefined && config.setShowTpl && config.onLoadTemplate) {
+    const favorites = templates.filter((tpl) => tpl.is_favorite);
+    sections.push({
+      key: "templates",
+      content: (
+        <section className="flex flex-col gap-4">
+          <SectionHeader icon={LayoutTemplate}>{t("config.templates")}</SectionHeader>
+          <div className="w-full space-y-3">
+            {favorites.length > 0 ? (
+              <div className="flex w-full flex-col gap-2">
+                {favorites.map((tpl) => <SidebarTemplateItem key={tpl.id} tpl={tpl} config={config} />)}
+              </div>
+            ) : (
+              <div className="flex w-full flex-col gap-1 rounded-xl border border-gray-alpha-200 bg-gray-alpha-100 p-4 text-center">
+                <p className="text-[13px] font-semibold text-ds-text-secondary">
+                  {t("config.pinHintTitle")}
+                </p>
+                <p className="text-[11px] leading-relaxed text-ds-text-tertiary">
+                  {t("config.pinHint")}
+                </p>
+              </div>
+            )}
+            <Button
+              variant="secondary"
+              size="sm"
+              className="w-full"
+              onClick={() => setIsTemplateModalOpen(true)}
+              leftIcon={<Settings size={14} />}
+            >
+              {t("config.manageTemplates")}
+            </Button>
+          </div>
+        </section>
+      ),
+    });
+  }
+
+  if (level === 3 && config.system !== undefined && config.setSystem) {
+    sections.push({
+      key: "system",
+      content: (
+        <section className="flex flex-col gap-4">
+          <SectionHeader icon={Terminal}>{t("config.systemMessage")}</SectionHeader>
+          <div className="space-y-2">
+            <Textarea
+              value={config.system}
+              onChange={(e) => {
+                config.setSystem!(e.target.value);
+                if (!sysTracked.current && !isDefaultSystem(e.target.value) && e.target.value !== "") {
+                  sysTracked.current = true;
+                  trackAdvancedFeature("system_prompt");
+                }
+              }}
+              placeholder={t("config.systemPlaceholder")}
+              className="min-h-[100px] font-mono text-[13px] leading-relaxed"
+            />
+            <div className="flex items-center justify-between">
+              {isDefaultSystem(config.system ?? "") ? (
+                <span className="text-xs text-ds-text-tertiary">{t("config.systemDefault")}</span>
+              ) : (
+                <span />
+              )}
+              {!isDefaultSystem(config.system ?? "") && (
+                <button
+                  type="button"
+                  onClick={() => config.setSystem!(getDefaultSystem())}
+                  className="text-xs font-medium text-blue-600 transition-colors hover:text-blue-500"
+                  >
+                    {t("config.systemReset")}
+                  </button>
+              )}
+            </div>
+          </div>
+        </section>
+      ),
+    });
+  }
+
+  if (level === 3 && config.variables !== undefined && config.setVariables) {
+    sections.push({
+      key: "variables",
+      content: (
+        <section className="flex flex-col gap-4">
+          <SectionHeader icon={Braces}>{t("config.variables")}</SectionHeader>
+          <VariableEditor
+            variables={config.variables}
+            onChange={(v) => {
+              config.setVariables!(v);
+            }}
+          />
+        </section>
+      ),
+    });
+  }
+
+  if (level === 3 && config.fewShotExamples !== undefined && config.setFewShotExamples) {
+    sections.push({
+      key: "few-shot",
+      content: (
+        <section className="flex flex-col gap-4">
+          <SectionHeader icon={BookOpen}>{t("config.fewShot")}</SectionHeader>
+          <FewShotEditor
+            examples={config.fewShotExamples}
+            onChange={(v) => {
+              if (v.length > (config.fewShotExamples?.length ?? 0)) {
+                trackAdvancedFeature("few_shot");
+              }
+              config.setFewShotExamples!(v);
+            }}
+          />
+        </section>
+      ),
+    });
+  }
+
+  return (
+    <div
+      className={forceVisible ? "" : `shrink-0 overflow-hidden transition-[width,opacity] duration-300 ease-in-out ${isVisible ? "hidden md:block border-l border-gray-alpha-200" : "hidden"}`}
+      style={forceVisible ? {} : { width: isVisible ? SIDEBAR_WIDTH_CSS : 0, opacity: isVisible ? 1 : 0 }}
+      aria-hidden={forceVisible ? false : !isVisible}
+    >
+      <div ref={scrollRef} className="config-scroll h-full overflow-y-auto bg-background-100 relative">
+
+        {/* Sticky header */}
+        <div className={cn("sticky top-0 z-30 bg-background-100 px-5 py-3.5 transition-shadow duration-200", isScrolled ? "shadow-sm border-b border-gray-alpha-200" : "border-b border-transparent")}>
+          <h3 className="text-base font-semibold tracking-tight text-ds-text">{t("config.title")}</h3>
+        </div>
+
+        {/* Content */}
+        <div className="flex flex-col gap-6 px-5 py-6 pb-24">
+          {sections.map((section, index) => (
+            <Fragment key={section.key}>
+              {index > 0 && <Divider />}
+              {section.content}
+            </Fragment>
+          ))}
+        </div>
+
+        {showScrollTop && (
+          <div className="sticky bottom-6 ml-auto mr-5 w-fit animate-fade-in">
+            <Button
+              variant="secondary"
+              shape="rounded"
+              size="sm"
+              iconOnly
+              onClick={() => scrollRef.current?.scrollTo({ top: 0, behavior: "smooth" })}
+              className="shadow-geist-md"
+              aria-label="Scroll to top"
+            >
+              <ChevronUp size={16} strokeWidth={2} />
+            </Button>
+          </div>
+        )}
       </div>
+      <TemplateManagerModal open={isTemplateModalOpen} onOpenChange={setIsTemplateModalOpen} />
     </div>
   );
-}
+};
+
+export const ConfigSidebar = memo(ConfigSidebarComponent);
+ConfigSidebar.displayName = "ConfigSidebar";

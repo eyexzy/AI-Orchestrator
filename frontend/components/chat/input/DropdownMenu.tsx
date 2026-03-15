@@ -1,15 +1,17 @@
 "use client";
 
-import { useRef, useEffect, useState } from "react";
+import { useRef, useEffect } from "react";
+import { Button } from "@/components/ui/button";
 
 interface DropdownMenuProps {
   anchorEl: HTMLElement | null;
   onClose: () => void;
   children: React.ReactNode;
   minWidth?: number;
+  placement?: "top" | "bottom";
 }
 
-export function DropdownMenu({ anchorEl, onClose, children, minWidth = 220 }: DropdownMenuProps) {
+export function DropdownMenu({ anchorEl, onClose, children, minWidth = 220, placement = "top" }: DropdownMenuProps) {
   const menuRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!anchorEl) return;
@@ -22,15 +24,17 @@ export function DropdownMenu({ anchorEl, onClose, children, minWidth = 220 }: Dr
 
   if (!anchorEl) return null;
   const rect = anchorEl.getBoundingClientRect();
+
+  const posStyle: React.CSSProperties = placement === "bottom"
+    ? { top: rect.bottom + 4, left: Math.min(rect.left, window.innerWidth - minWidth - 8) }
+    : { bottom: window.innerHeight - rect.top + 8, left: Math.min(rect.left, window.innerWidth - minWidth - 8) };
+
   return (
-    <div ref={menuRef} style={{
-      position: "fixed",
-      bottom: window.innerHeight - rect.top + 8,
-      left: Math.min(rect.left, window.innerWidth - minWidth - 8),
-      zIndex: 9999, minWidth, borderRadius: 14, padding: "6px",
-      boxShadow: "0 8px 40px rgba(0,0,0,0.6)",
-      background: "rgb(var(--surface-3))", border: "1px solid rgba(255,255,255,0.12)",
-    }}>
+    <div
+      ref={menuRef}
+      className="fixed z-[9999] rounded-xl p-1.5 shadow-geist-lg bg-background border border-gray-alpha-200"
+      style={{ ...posStyle, minWidth }}
+    >
       {children}
     </div>
   );
@@ -43,18 +47,14 @@ interface MenuBtnProps {
 }
 
 export function MenuBtn({ onClick, children, column = false }: MenuBtnProps) {
-  const [hovered, setHovered] = useState(false);
   return (
-    <button type="button" onClick={onClick}
-      onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}
-      style={{
-        display: "flex", flexDirection: column ? "column" : "row",
-        alignItems: column ? "flex-start" : "center", gap: column ? 3 : 8,
-        width: "100%", borderRadius: 9, padding: column ? "8px 10px" : "7px 10px",
-        fontSize: 12, color: "rgb(var(--text-2))",
-        background: hovered ? "rgba(255,255,255,0.06)" : "transparent",
-        border: "none", cursor: "pointer", textAlign: "left", transition: "background 0.1s",
-      }}>
+    <button
+      type="button"
+     
+      onClick={onClick}
+      className={`flex w-full rounded-lg py-2.5 px-3.5 text-sm text-ds-text-secondary transition-colors hover:bg-gray-alpha-200 hover:text-ds-text cursor-pointer border-none text-left ${column ? "flex-col items-start gap-1" : "flex-row items-center gap-2"
+        }`}
+    >
       {children}
     </button>
   );

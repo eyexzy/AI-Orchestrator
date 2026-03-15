@@ -54,14 +54,14 @@ async def _save_assistant_message(db: AsyncSession, body: GenerateRequest, text:
 async def generate(request: Request, body: GenerateRequest, db: AsyncSession = Depends(get_db)):
     logger.info(
         f"[generate] model={body.model}, prompt_len={len(body.prompt)}, "
-        f"history={len(body.history)}, stream={body.stream}, top_p={body.top_p}, top_k={body.top_k}"
+        f"history={len(body.history)}, stream={body.stream}, top_p={body.top_p}"
     )
     client, model_info = get_client_for_model(body.model)
 
     if model_info is None:
         raise HTTPException(status_code=400, detail=f"Unknown model: {body.model}")
 
-    # ── Validate / auto-create chat session ──────────────────────────────────
+    # Validate / auto-create chat session
     if body.session_id:
         result = await db.execute(
             select(ChatSession).where(ChatSession.id == body.session_id)
@@ -92,7 +92,7 @@ async def generate(request: Request, body: GenerateRequest, db: AsyncSession = D
         db.add(user_msg)
         await db.commit()
 
-    # ── STREAMING path ────────────────────────────────────────────────────────
+    # STREAMING path
     if body.stream:
         if client is not None:
             async def stream_with_save():
@@ -118,7 +118,7 @@ async def generate(request: Request, body: GenerateRequest, db: AsyncSession = D
 
         return StreamingResponse(stream_with_save(), media_type="text/event-stream")
 
-    # ── NON-STREAMING path ────────────────────────────────────────────────────
+    # NON-STREAMING path
     result = None
     if client is not None:
         try:
@@ -130,6 +130,8 @@ async def generate(request: Request, body: GenerateRequest, db: AsyncSession = D
             result = await mock_generate(body)
     else:
         result = await mock_generate(body)
+
+    logger.info(f"[generate] model={body.model} → provider={result.provider}")
 
     if body.session_id and result:
         meta = {
@@ -154,7 +156,7 @@ async def refine(request: Request, body: dict) -> dict:
     except Exception as e:
         logger.error(f"[refine] Failed: {type(e).__name__}: {e}")
 
-        # ── Fallback: Ukrainian/English template instead of 503 ──
+        # Fallback: Ukrainian/English template instead of 503
         is_ukrainian = any(c in prompt for c in "іїєґІЇЄҐ")
         if is_ukrainian:
             improved = (

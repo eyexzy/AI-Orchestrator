@@ -1,79 +1,42 @@
 "use client";
+import { useTranslation } from "@/lib/store/i18nStore";
+import { Input } from "@/components/ui/input";
 
-import { useState, useEffect } from "react";
-
-/* ── Variable Card ────────────────────────────────────────────── */
+/* Variable Card */
 function VarCard({
   varKey,
   value,
-  onRenameKey,
+  valuePlaceholder,
   onChangeValue,
 }: {
   varKey: string;
   value: string;
-  onRenameKey: (oldKey: string, newKey: string) => void;
+  valuePlaceholder: string;
   onChangeValue: (key: string, value: string) => void;
 }) {
-  const [draftKey, setDraftKey] = useState(varKey);
-  useEffect(() => { setDraftKey(varKey); }, [varKey]);
-
-  const commitKey = () => {
-    const clean =
-      draftKey.trim().replace(/\s/g, "_").replace(/[{}]/g, "") || varKey;
-    setDraftKey(clean);
-    if (clean !== varKey) onRenameKey(varKey, clean);
-  };
-
   return (
-    <div
-      className="space-y-2 rounded-xl p-2.5"
-      style={{
-        background: "rgba(0,0,0,0.22)",
-        border: "1px solid rgba(255,255,255,0.05)",
-      }}
-    >
-      <div className="flex items-center gap-1.5">
+    <Input
+      type="text"
+      variant="affix"
+      size="md"
+      value={value}
+      onChange={(e) => onChangeValue(varKey, e.target.value)}
+      placeholder={valuePlaceholder}
+      prefix={
         <span
-          className="font-mono text-[10px] shrink-0 select-none"
-          style={{ color: "rgba(123,147,255,0.55)" }}
+          className="font-mono text-[13px] font-semibold text-ds-text truncate max-w-[75px]"
+          title={varKey}
         >
-          {"{{"}
+          {varKey}
         </span>
-        <input
-          type="text"
-          value={draftKey}
-          onChange={(e) => setDraftKey(e.target.value)}
-          onBlur={commitKey}
-          onKeyDown={(e) => { if (e.key === "Enter") commitKey(); }}
-          placeholder="variable_name"
-          className="input-field flex-1 px-2 py-1 font-mono text-[11px]"
-          style={{
-            height: 24,
-            borderRadius: 6,
-            background: "rgba(123,147,255,0.07)",
-            borderColor: "rgba(123,147,255,0.16)",
-          }}
-        />
-        <span
-          className="font-mono text-[10px] shrink-0 select-none"
-          style={{ color: "rgba(123,147,255,0.55)" }}
-        >
-          {"}}"}
-        </span>
-      </div>
-      <input
-        type="text"
-        value={value}
-        onChange={(e) => onChangeValue(varKey, e.target.value)}
-        placeholder="значення..."
-        className="input-field w-full px-2 py-1.5 text-[11px]"
-        style={{ borderRadius: 6, minHeight: 26 }}
-      />
-    </div>
+      }
+      className="w-full"
+      inputClassName="font-mono text-xs"
+    />
   );
 }
 
-/* ── Variable Editor ─────────────────────────────────────────── */
+/* Variable Editor */
 export function VariableEditor({
   variables,
   onChange,
@@ -81,45 +44,32 @@ export function VariableEditor({
   variables: Record<string, string>;
   onChange: (v: Record<string, string>) => void;
 }) {
+  const { t } = useTranslation();
   const keys = Object.keys(variables);
   return (
-    <div className="space-y-2">
+    <div className="flex flex-col gap-2">
       {keys.length === 0 ? (
-        <div
-          className="rounded-xl p-3.5 text-center"
-          style={{
-            background: "rgba(0,0,0,0.20)",
-            border: "1px dashed rgba(255,255,255,0.07)",
-          }}
-        >
-          <p
-            className="font-mono text-[10px] leading-relaxed"
-            style={{ color: "rgb(var(--text-3))" }}
-          >
-            Використайте{" "}
-            <span style={{ color: "rgb(123,147,255)" }}>{"{{змінна}}"}</span>{" "}
-            у тексті — поля з&apos;являться автоматично
+        <div className="rounded-lg bg-gray-alpha-100 shadow-[0_0_0_1px_var(--ds-gray-alpha-200)] p-4 text-center flex flex-col gap-1">
+          <p className="text-[13px] font-semibold text-ds-text-secondary">
+            {t("config.variablesEmptyTitle")}
+          </p>
+          <p className="text-[11px] leading-relaxed text-ds-text-tertiary">
+            {t("config.variablesEmptyPrefix")} <code className="bg-gray-alpha-200 px-1 rounded">{"{{name}}"}</code> {t("config.variablesEmptySuffix")}
           </p>
         </div>
       ) : (
-        <div className="space-y-1.5">
-          {keys.map((key) => (
-            <VarCard
-              key={key}
-              varKey={key}
-              value={variables[key]}
-              onRenameKey={(old, n) =>
-                onChange(
-                  Object.fromEntries(
-                    Object.entries(variables).map(([k, v]) =>
-                      k === old ? [n, v] : [k, v]
-                    )
-                  )
-                )
-              }
-              onChangeValue={(k, val) => onChange({ ...variables, [k]: val })}
-            />
-          ))}
+        <div className="-mx-1 max-h-[320px] overflow-y-auto px-1 py-1">
+          <div className="flex flex-col gap-3">
+            {keys.map((key) => (
+              <VarCard
+                key={key}
+                varKey={key}
+                value={variables[key]}
+                valuePlaceholder={t("config.variableValuePlaceholder")}
+                onChangeValue={(k, val) => onChange({ ...variables, [k]: val })}
+              />
+            ))}
+          </div>
         </div>
       )}
     </div>

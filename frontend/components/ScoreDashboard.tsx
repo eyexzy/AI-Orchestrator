@@ -1,7 +1,16 @@
 "use client";
 
 import { useState } from "react";
+import { Lightbulb, Zap, Download, PieChart } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { useUserLevelStore } from "@/lib/store/userLevelStore";
+
+/* Level palette — maps to CSS variables */
+const LEVEL_COLORS: Record<1 | 2 | 3, string> = {
+  1: "var(--ds-green-700)",
+  2: "var(--ds-blue-700)",
+  3: "var(--ds-amber-700)",
+};
 
 const LEVEL_NAMES: Record<1 | 2 | 3, string> = {
   1: "Novice",
@@ -9,40 +18,48 @@ const LEVEL_NAMES: Record<1 | 2 | 3, string> = {
   3: "Expert",
 };
 
-function Bar({ value, max = 100 }: { value: number; max?: number }) {
+/* Bar */
+function Bar({
+  value,
+  max = 100,
+  color,
+}: {
+  value: number;
+  max?: number;
+  color?: string;
+}) {
   const pct = Math.min(100, Math.max(0, (value / max) * 100));
   return (
-    <div
-      className="relative h-1 w-full overflow-hidden rounded-full"
-      style={{ background: "rgba(255,255,255,0.06)" }}
-    >
+    <div className="relative h-1 w-full overflow-hidden rounded-full bg-gray-alpha-200">
       <div
         className="h-full rounded-full transition-all duration-500"
-        style={{ width: `${pct}%`, background: "rgb(99,120,255)" }}
+        style={{
+          width: `${pct}%`,
+          background: color ?? "rgb(var(--text-2))",
+        }}
       />
     </div>
   );
 }
 
+/* Progress math */
 function progressToNext(
   normalized: number,
   level: 1 | 2 | 3,
   thresholds: { L2: number; L3: number },
 ) {
-  if (level === 3) return { percent: 100, label: "Максимальний рівень" };
+  if (level === 3) return { percent: 100, label: "Max level reached" };
   if (level === 1) {
     const pct = Math.min(100, (normalized / thresholds.L2) * 100);
-    return { percent: pct, label: `${Math.round(pct)}% до L2` };
+    return { percent: pct, label: `${Math.round(pct)}% to L2` };
   }
   const range = thresholds.L3 - thresholds.L2;
   const progress = normalized - thresholds.L2;
-  const pct = Math.min(100, (progress / range) * 100);
-  return { percent: pct, label: `${Math.round(pct)}% до L3` };
+  const pct = Math.min(100, Math.max(0, (progress / range) * 100));
+  return { percent: pct, label: `${Math.round(pct)}% to L3` };
 }
 
-// ---------------------------------------------------------------------------
-// Tip system — contextual mentor advice
-// ---------------------------------------------------------------------------
+/* Tip system */
 
 interface BreakdownItem {
   category: string;
@@ -57,47 +74,42 @@ function getTip(
   level: 1 | 2 | 3,
   score: number,
 ): string {
-  // 1. Politeness penalty detected
   const hasPolitePenalty = reasoning.some(
     (r) => r.includes("Polite") || r.includes("-0.5"),
   );
   if (hasPolitePenalty) {
     return (
-      "💡 ШІ не потребує ввічливості. Замість «Будь ласка, чи не міг би ти» " +
-      "використовуйте чіткі команди: «Напиши», «Проаналізуй»."
+      "AI doesn't need politeness. Instead of \"Could you please...\", " +
+      "use direct commands: \"Write\", \"Analyze\"."
     );
   }
 
-  // 2. No structure / context points
   const structureItem = breakdown.find(
     (b) => b.category === "Structure & Context",
   );
   if (structureItem && structureItem.points === 0) {
     return (
-      "💡 Додайте структуру: вкажіть роль (напр., «Дій як експерт») " +
-      "або бажаний формат («у вигляді таблиці», «списком»)."
+      "Add structure: specify a role (e.g. \"Act as an expert\") " +
+      "or desired format (\"as a table\", \"as a list\")."
     );
   }
 
-  // 3. No technical terms for intermediate+ users
   const techItem = breakdown.find((b) => b.category === "Technical Terms");
   if (techItem && techItem.points === 0 && level >= 2) {
     return (
-      "💡 Використовуйте системні змінні (наприклад, {{var}}), " +
-      "щоб зробити запити точнішими та гнучкими."
+      "Use system variables (e.g. {{var}}) " +
+      "to make your prompts more precise and flexible."
     );
   }
 
-  // 4. Expert with high score
   if (level === 3 && score > 12) {
     return (
-      "🔥 Ідеальні промпти! Використовуйте режим Compare, " +
-      "щоб тестувати їх на різних моделях одночасно."
+      "Excellent prompts! Try Compare mode " +
+      "to test them across different models simultaneously."
     );
   }
 
-  // 5. Default
-  return "💡 Експериментуйте з довжиною запитів — додавайте більше контексту та деталей.";
+  return "Experiment with prompt length — add more context and details for better results.";
 }
 
 function TipCard({
@@ -112,31 +124,19 @@ function TipCard({
   score: number;
 }) {
   const tip = getTip(breakdown, reasoning, level, score);
-  const isFireTip = tip.startsWith("🔥");
+  const isExpert = level === 3 && score > 12;
 
   return (
-    <div
-      className="rounded-xl px-4 py-3 text-[12px] leading-relaxed transition-all duration-300"
-      style={{
-        background: isFireTip
-          ? "rgba(255,160,60,0.07)"
-          : "rgba(123,147,255,0.07)",
-        border: `1px solid ${
-          isFireTip ? "rgba(255,160,60,0.2)" : "rgba(123,147,255,0.2)"
-        }`,
-        color: isFireTip
-          ? "rgba(255,190,100,0.9)"
-          : "rgba(160,175,255,0.9)",
-      }}
-    >
-      {tip}
+    <div className="flex items-start gap-3 rounded-xl px-4 py-3 text-sm leading-relaxed bg-gray-alpha-100 border border-gray-alpha-200 text-ds-text-secondary">
+      <div className={`mt-0.5 shrink-0 ${isExpert ? "text-amber-700" : "text-ds-text-tertiary"}`}>
+        {isExpert ? <Zap size={14} strokeWidth={2} /> : <Lightbulb size={14} strokeWidth={2} />}
+      </div>
+      <span>{tip}</span>
     </div>
   );
 }
 
-// ---------------------------------------------------------------------------
-// Main dashboard
-// ---------------------------------------------------------------------------
+/* Main dashboard */
 
 export function ScoreDashboard() {
   const {
@@ -152,29 +152,20 @@ export function ScoreDashboard() {
     isAnalyzing,
   } = useUserLevelStore();
 
+  const accent = LEVEL_COLORS[level];
   const progress = progressToNext(normalizedScore, level, thresholds);
 
   if (!hasAnalyzed) {
     return (
       <div className="flex flex-col items-center justify-center py-20 text-center">
         <div className="mb-3 opacity-20">
-          <svg
-            width="32"
-            height="32"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.5"
-          >
-            <path d="M21.21 15.89A10 10 0 1 1 8 2.83" />
-            <path d="M22 12A10 10 0 0 0 12 2v10z" />
-          </svg>
+          <PieChart size={32} strokeWidth={2} />
         </div>
-        <p className="text-[13px]" style={{ color: "rgb(var(--text-2))" }}>
-          Очікую на введення
+        <p className="text-[15px] text-ds-text-secondary">
+          Waiting for input
         </p>
-        <p className="mt-1 text-[11px]" style={{ color: "rgb(var(--text-3))" }}>
-          Надішліть повідомлення, щоб побачити аналіз
+        <p className="mt-1 text-xs text-ds-text-tertiary">
+          Send a message to see the analysis
         </p>
       </div>
     );
@@ -187,18 +178,15 @@ export function ScoreDashboard() {
         <div className="flex items-center gap-3">
           <div
             className="flex h-10 w-10 items-center justify-center rounded-xl font-mono text-sm font-bold"
-            style={{ background: "rgba(99,120,255,0.12)", color: "rgb(99,120,255)" }}
+            style={{ background: `rgb(${accent} / 0.12)`, color: `rgb(${accent})` }}
           >
             {level}
           </div>
           <div>
-            <p
-              className="text-[14px] font-semibold"
-              style={{ color: "rgb(var(--text-1))" }}
-            >
+            <p className="text-[15px] font-semibold text-ds-text">
               {LEVEL_NAMES[level]}
             </p>
-            <p className="text-[11px]" style={{ color: "rgb(var(--text-3))" }}>
+            <p className="text-xs text-ds-text-tertiary">
               {Math.round(confidence * 100)}% confidence
             </p>
           </div>
@@ -210,7 +198,7 @@ export function ScoreDashboard() {
                 key={d}
                 className="h-1.5 w-1.5 rounded-full"
                 style={{
-                  background: "rgb(99,120,255)",
+                  background: `rgb(${accent})`,
                   animation: `pulse-dot 1.2s ${d}ms infinite`,
                 }}
               />
@@ -223,19 +211,19 @@ export function ScoreDashboard() {
 
       {/* Progress */}
       <div className="space-y-2">
-        <div className="flex items-center justify-between text-[11px]">
-          <span style={{ color: "rgb(var(--text-3))" }}>Прогрес</span>
-          <span className="font-mono" style={{ color: "rgb(var(--text-2))" }}>
+        <div className="flex items-center justify-between text-xs">
+          <span className="text-ds-text-tertiary">Progress</span>
+          <span className="font-mono text-ds-text-secondary">
             {score}/13.5
           </span>
         </div>
-        <Bar value={progress.percent} />
-        <p className="text-[11px]" style={{ color: "rgb(var(--text-3))" }}>
+        <Bar value={progress.percent} color={`rgb(${accent})`} />
+        <p className="text-xs text-ds-text-tertiary">
           {progress.label}
         </p>
       </div>
 
-      {/* Mentor tip — right below progress */}
+      {/* Mentor tip */}
       <TipCard
         breakdown={breakdown}
         reasoning={reasoning}
@@ -247,12 +235,12 @@ export function ScoreDashboard() {
 
       {/* Breakdown */}
       <div className="space-y-3">
-        <p className="config-label">Розбивка</p>
+        <p className="config-label">Breakdown</p>
         {breakdown.map((item) => (
           <div key={item.category} className="space-y-1">
-            <div className="flex items-center justify-between text-[11px]">
-              <span style={{ color: "rgb(var(--text-2))" }}>{item.category}</span>
-              <span className="font-mono" style={{ color: "rgb(var(--text-3))" }}>
+            <div className="flex items-center justify-between text-xs">
+              <span className="text-ds-text-secondary">{item.category}</span>
+              <span className="font-mono text-ds-text-tertiary">
                 {item.points < 0 ? "" : "+"}
                 {item.points.toFixed(1)}/{item.max_points.toFixed(1)}
               </span>
@@ -269,15 +257,14 @@ export function ScoreDashboard() {
       {/* Reasoning */}
       {reasoning.length > 0 && (
         <div className="space-y-2">
-          <p className="config-label">Аналіз</p>
+          <p className="config-label">Analysis</p>
           <ul className="space-y-1">
             {reasoning.map((r, i) => (
               <li
                 key={i}
-                className="text-[12px] leading-relaxed"
-                style={{ color: "rgb(var(--text-2))" }}
+                className="text-sm leading-relaxed text-ds-text-secondary"
               >
-                <span style={{ color: "rgb(var(--text-3))" }}>·</span> {r}
+                <span className="text-ds-text-tertiary">·</span> {r}
               </li>
             ))}
           </ul>
@@ -289,26 +276,19 @@ export function ScoreDashboard() {
       {/* Metrics grid */}
       <div className="grid grid-cols-2 gap-2">
         {[
-          { label: "Повідомлень", value: metrics.sessionMessageCount },
-          { label: "Швидкість", value: `${metrics.charsPerSecond.toFixed(1)} c/c` },
-          { label: "Сер. довжина", value: Math.round(metrics.avgPromptLength) },
+          { label: "Messages", value: metrics.sessionMessageCount },
+          { label: "Speed", value: `${metrics.charsPerSecond.toFixed(1)} c/s` },
+          { label: "Avg. length", value: Math.round(metrics.avgPromptLength) },
           { label: "Score", value: score },
         ].map((m) => (
           <div
             key={m.label}
-            className="rounded-xl p-3"
-            style={{
-              background: "rgba(255,255,255,0.03)",
-              border: "1px solid rgba(255,255,255,0.06)",
-            }}
+            className="rounded-xl p-3 bg-gray-alpha-100 border border-gray-alpha-200"
           >
-            <p className="text-[10px]" style={{ color: "rgb(var(--text-3))" }}>
+            <p className="text-xs text-ds-text-tertiary">
               {m.label}
             </p>
-            <p
-              className="mt-0.5 font-mono text-[14px] font-medium"
-              style={{ color: "rgb(var(--text-1))" }}
-            >
+            <p className="mt-0.5 font-mono text-[15px] font-medium text-ds-text">
               {m.value}
             </p>
           </div>
@@ -321,11 +301,11 @@ export function ScoreDashboard() {
   );
 }
 
-// ─── Export Button ────────────────────────────────────────────────────────────
+/* Export Button */
 
 function ExportButton() {
   const [loading, setLoading] = useState(false);
-  const [error, setError]     = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   const handleExport = async () => {
     setLoading(true);
@@ -335,29 +315,26 @@ function ExportButton() {
       const res = await fetch("/api/export");
 
       if (res.status === 401) {
-        setError("Потрібна авторизація. Увійдіть в акаунт.");
+        setError("Authentication required. Please sign in.");
         return;
       }
       if (res.status === 503) {
-        setError(
-          "ADMIN_API_KEY не налаштовано в Next.js. " +
-          "Додайте ADMIN_API_KEY=<ваш ключ> у .env.local і перезапустіть сервер.",
-        );
+        setError("ADMIN_API_KEY is not configured. Add it to .env.local and restart.");
         return;
       }
       if (res.status === 502) {
-        setError("Бекенд недоступний. Перевірте, чи запущено FastAPI.");
+        setError("Backend unavailable. Check that FastAPI is running.");
         return;
       }
       if (!res.ok) {
-        setError(`Помилка: HTTP ${res.status}`);
+        setError(`Error: HTTP ${res.status}`);
         return;
       }
 
       const blob = await res.blob();
-      const url  = URL.createObjectURL(blob);
-      const a    = document.createElement("a");
-      a.href     = url;
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
       a.download = "interaction_logs.csv";
       document.body.appendChild(a);
       a.click();
@@ -365,7 +342,7 @@ function ExportButton() {
       URL.revokeObjectURL(url);
     } catch (e) {
       console.error("Export failed", e);
-      setError("Помилка з'єднання з сервером");
+      setError("Connection error");
     } finally {
       setLoading(false);
     }
@@ -373,34 +350,19 @@ function ExportButton() {
 
   return (
     <div className="space-y-1.5">
-      <button
+      <Button
+        variant="secondary"
+        size="sm"
+        className="w-full"
         onClick={handleExport}
         disabled={loading}
-        className="flex w-full items-center justify-center gap-2 rounded-xl px-3 py-2.5 text-[12px] transition-all"
-        style={{
-          border: "1px solid rgba(255,255,255,0.08)",
-          color: "rgb(var(--text-2))",
-          background: "rgba(255,255,255,0.02)",
-        }}
+        isLoading={loading}
+        leftIcon={!loading ? <Download size={14} strokeWidth={2} /> : undefined}
       >
-        <svg
-          width="13"
-          height="13"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        >
-          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-          <polyline points="7 10 12 15 17 10" />
-          <line x1="12" y1="15" x2="12" y2="3" />
-        </svg>
-        {loading ? "Завантаження..." : "Експорт CSV"}
-      </button>
+        {loading ? "Exporting..." : "Export CSV"}
+      </Button>
       {error && (
-        <p className="text-center text-[11px]" style={{ color: "rgb(var(--accent-red))" }}>
+        <p className="text-center text-xs text-red-700">
           {error}
         </p>
       )}

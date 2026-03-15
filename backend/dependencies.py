@@ -6,10 +6,10 @@ from slowapi.util import get_remote_address
 
 from database import get_db  # noqa: F401 — re-exported for routers
 
-# ── Rate limiter ──────────────────────────────────────────────────────────────
+# Rate limiter
 limiter = Limiter(key_func=get_remote_address)
 
-# ── Optional API key protection for sensitive endpoints ───────────────────────
+# Optional API key protection for sensitive endpoints
 ADMIN_API_KEY = os.getenv("ADMIN_API_KEY", "")  # empty = no protection in dev
 
 

@@ -1,41 +1,77 @@
 "use client";
 
 import * as React from "react";
+import { cva, type VariantProps } from "class-variance-authority";
 import { cn } from "@/lib/utils";
 
-interface SwitchProps {
+const switchVariants = cva(
+  "peer relative inline-flex shrink-0 cursor-pointer items-center overflow-hidden rounded-full transition-colors duration-150 ease-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ds-focus-color)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--geist-background)] disabled:cursor-not-allowed disabled:opacity-50",
+  {
+    variants: {
+      size: {
+        md: "h-[14px] w-[28px]",
+        lg: "h-[24px] w-[40px]",
+      },
+    },
+    defaultVariants: {
+      size: "md",
+    },
+  }
+);
+
+export interface SwitchProps
+  extends Omit<React.ButtonHTMLAttributes<HTMLButtonElement>, "value" | "onChange">,
+  VariantProps<typeof switchVariants> {
   checked: boolean;
   onCheckedChange: (checked: boolean) => void;
-  className?: string;
-  disabled?: boolean;
-  id?: string;
 }
 
-function Switch({ checked, onCheckedChange, className, disabled, id }: SwitchProps) {
-  return (
-    <button
-      id={id}
-      role="switch"
-      type="button"
-      aria-checked={checked}
-      disabled={disabled}
-      onClick={() => onCheckedChange(!checked)}
-      className={cn(
-        "peer inline-flex h-[18px] w-[32px] shrink-0 cursor-pointer items-center rounded-full transition-all duration-200",
-        "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring/50",
-        "disabled:cursor-not-allowed disabled:opacity-50",
-        checked ? "bg-primary" : "bg-white/[0.1]",
-        className,
-      )}
-    >
-      <span
+const KNOB = {
+  // Pixel-perfect positions inside a 1px bordered track.
+  md: { cls: "h-[12px] w-[12px]", on: "translate-x-[14px]", off: "translate-x-0" },
+  lg: { cls: "h-[22px] w-[22px]", on: "translate-x-[16px]", off: "translate-x-0" },
+} as const;
+
+const Switch = React.forwardRef<HTMLButtonElement, SwitchProps>(
+  ({ className, size, checked, onCheckedChange, disabled, id, ...props }, ref) => {
+    const k = KNOB[size || "md"];
+
+    const trackColor = checked
+      ? "bg-[var(--ds-blue-600)]"
+      : "bg-[var(--ds-gray-alpha-400)]";
+
+    const knobColor = "bg-white";
+
+    return (
+      <button
+        id={id}
+        ref={ref}
+        role="switch"
+        type="button"
+        aria-checked={checked}
+        disabled={disabled}
+        onClick={() => onCheckedChange(!checked)}
         className={cn(
-          "pointer-events-none block h-[14px] w-[14px] rounded-full bg-white shadow-sm transition-transform duration-200",
-          checked ? "translate-x-[16px]" : "translate-x-[2px]",
+          switchVariants({ size }),
+          trackColor,
+          "border border-gray-alpha-400",
+          className
         )}
-      />
-    </button>
-  );
-}
+        {...props}
+      >
+        <span
+          className={cn(
+            "pointer-events-none absolute left-0 top-0 block rounded-full transition-transform duration-150 ease-out will-change-transform",
+            k.cls,
+            checked ? k.on : k.off,
+            knobColor,
+            "shadow-none"
+          )}
+        />
+      </button>
+    );
+  }
+);
+Switch.displayName = "Switch";
 
 export { Switch };

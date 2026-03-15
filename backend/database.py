@@ -6,11 +6,11 @@ from datetime import datetime, timezone
 from dotenv import load_dotenv
 load_dotenv()
 
-from sqlalchemy import Column, Integer, Float, String, DateTime, Text, ForeignKey
+from sqlalchemy import Boolean, Column, Integer, Float, String, DateTime, Text, ForeignKey
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase, relationship
 
-# ── Build async-compatible DATABASE_URL ──────────────────────────────────────
+# Build async-compatible DATABASE_URL
 _raw_url = os.getenv("DATABASE_URL", "")
 
 if _raw_url.startswith("postgresql://"):
@@ -45,7 +45,7 @@ class Base(DeclarativeBase):
     pass
 
 
-# ── Interaction scoring log ──────────────────────────────────────────
+# Interaction scoring log
 class InteractionLog(Base):
     __tablename__ = "interaction_logs"
 
@@ -74,9 +74,7 @@ class InteractionLog(Base):
         }
 
 
-# ── User profile (hysteresis state) — keyed by user_email ────────────
-# FIXED: was keyed by session_id, which reset on every page reload.
-# Now keyed by user_email so the level persists across sessions.
+# User profile (hysteresis state) — keyed by user_email
 
 class UserProfile(Base):
     __tablename__ = "user_profiles"
@@ -85,10 +83,14 @@ class UserProfile(Base):
     current_level = Column(Integer, default=1)
     level_history_json = Column(Text, default="[]")
     consecutive_high = Column(Integer, default=0)
+    theme = Column(String(32), default="system")
+    language = Column(String(8), default="en")
+    manual_level_override = Column(Integer, nullable=True)
+    hidden_templates_json = Column(Text, default="[]")
     updated_at = Column(DateTime, default=_now, onupdate=_now)
 
 
-# ── Chat history ────────────────────────────────────────────────────
+# Chat history
 
 class ChatSession(Base):
     __tablename__ = "chat_sessions"
@@ -120,7 +122,7 @@ class ChatMessage(Base):
     session = relationship("ChatSession", back_populates="messages")
 
 
-# ── ML feedback (replaces ml_feedback.csv) ─────────────────────────
+# ML feedback (replaces ml_feedback.csv)
 
 class MLFeedback(Base):
     __tablename__ = "ml_feedback"
@@ -139,7 +141,24 @@ class MLFeedback(Base):
     created_at = Column(DateTime, default=_now)
 
 
-# ── ML model cache (replaces ml_model.json) ────────────────────────
+# ML model cache (replaces ml_model.json)
+
+class PromptTemplateDB(Base):
+    __tablename__ = "prompt_templates"
+
+    id = Column(String(36), primary_key=True, default=_uuid)
+    user_email = Column(String(255), index=True, default="anonymous")
+    title = Column(String(255), default="")
+    description = Column(Text, default="")
+    category_name = Column(String(64), default="")
+    category_color = Column(String(32), default="blue")
+    prompt = Column(Text, default="")
+    system_message = Column(Text, default="")
+    variables_json = Column(Text, default="[]")
+    is_favorite = Column(Boolean, default=False)
+    order_index = Column(Integer, default=0)
+    created_at = Column(DateTime, default=_now)
+
 
 class MLModelCache(Base):
     __tablename__ = "ml_model_cache"
@@ -149,7 +168,7 @@ class MLModelCache(Base):
     updated_at = Column(DateTime, default=_now, onupdate=_now)
 
 
-# ── DB helpers ──────────────────────────────────────────────────────
+# DB helpers
 
 async def init_db():
     async with engine.begin() as conn:

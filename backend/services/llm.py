@@ -74,11 +74,12 @@ AVAILABLE_MODELS = {
     "llama-3.3-70b":    {"provider": "groq",        "label": "Llama 3.3 70B (Groq)",       "api_name": "llama-3.3-70b-versatile"},
     "llama-3.1-8b":     {"provider": "groq",        "label": "Llama 3.1 8B (Groq)",        "api_name": "llama-3.1-8b-instant"},
     "mixtral-8x7b":     {"provider": "groq",        "label": "Mixtral 8x7B (Groq)",        "api_name": "mixtral-8x7b-32768"},
-    "or-llama-70b":     {"provider": "openrouter",  "label": "Llama 3.3 70B (OpenRouter)", "api_name": "meta-llama/llama-3.3-70b-instruct:free"},
-    "or-deepseek-r1":   {"provider": "openrouter",  "label": "DeepSeek R1 (OpenRouter)",   "api_name": "deepseek/deepseek-r1-0528:free"},
-    "or-gemma-27b":     {"provider": "openrouter",  "label": "Gemma 3 27B (OpenRouter)",   "api_name": "google/gemma-3-27b-it:free"},
-    "or-qwen3-coder":   {"provider": "openrouter",  "label": "Qwen3 Coder (OpenRouter)",   "api_name": "qwen/qwen3-coder:free"},
-    "or-mistral-small": {"provider": "openrouter",  "label": "Mistral Small 3.1 (OpenRouter)", "api_name": "mistralai/mistral-small-3.1-24b-instruct:free"},
+    "or-llama-70b":     {"provider": "openrouter",  "label": "Llama 3.3 70B (Free)",       "api_name": "meta-llama/llama-3.3-70b-instruct:free"},
+    "or-qwen3-coder":   {"provider": "openrouter",  "label": "Qwen3 Coder (Free)",         "api_name": "qwen/qwen3-coder:free"},
+    "or-mistral-small": {"provider": "openrouter",  "label": "Mistral Small 3.1 (Free)",   "api_name": "mistralai/mistral-small-3.1-24b-instruct:free"},
+    "or-nemotron-nano": {"provider": "openrouter",  "label": "Nemotron Nano 9B (Free)",    "api_name": "nvidia/nemotron-nano-9b-v2:free"},
+    "or-glm-4.5-air":   {"provider": "openrouter",  "label": "GLM 4.5 Air (Free)",         "api_name": "z-ai/glm-4.5-air:free"},
+    "or-qwen3-4b":      {"provider": "openrouter",  "label": "Qwen3 4B Fast (Free)",       "api_name": "qwen/qwen3-4b:free"},
 }
 
 
@@ -167,9 +168,6 @@ async def real_generate(client: AsyncOpenAI, model_info: dict, req: GenerateRequ
         "top_p":       req.top_p,
     }
 
-    if provider in ("google", "groq", "openrouter") and req.top_k != 40:
-        create_kwargs["extra_body"] = {"top_k": req.top_k}
-
     start    = time.time()
     response = await client.chat.completions.create(**create_kwargs)
     latency  = int((time.time() - start) * 1000)
@@ -212,9 +210,6 @@ async def real_generate_stream(client: AsyncOpenAI, model_info: dict, req: Gener
         "top_p":       req.top_p,
         "stream":      True,
     }
-
-    if provider in ("google", "groq", "openrouter") and req.top_k != 40:
-        create_kwargs["extra_body"] = {"top_k": req.top_k}
 
     full_text = ""
     try:
@@ -316,7 +311,7 @@ async def refine_prompt_with_llm(prompt: str) -> dict:
     client = None
     model_info = None
 
-    for model_id in ["gpt-4o-mini", "llama-3.1-8b", "gemini-2.0-flash", "llama-3.3-70b", "or-mistral-small", "or-gemma-27b"]:
+    for model_id in ["gpt-4o-mini", "llama-3.1-8b", "gemini-2.0-flash", "llama-3.3-70b", "or-mistral-small", "or-gemma-3-27b"]:
         info = AVAILABLE_MODELS.get(model_id)
         if info:
             c = clients.get(info["provider"])

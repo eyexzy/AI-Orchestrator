@@ -20,7 +20,7 @@ async def analyze(request: Request, body: AnalyzeRequest, db: AsyncSession = Dep
     typing_speed = body.metrics.chars_per_second if body.metrics else 0.0
     metrics_dict = body.metrics.model_dump()      if body.metrics else {}
 
-    # ── user_email as PK — survives page reloads and new sessions ──
+    # user_email as PK — survives page reloads and new sessions
     profile_key = body.user_email if body.user_email != "anonymous" else body.session_id
     result = await db.execute(select(UserProfile).where(UserProfile.user_email == profile_key))
     profile = result.scalars().first()
@@ -41,6 +41,10 @@ async def analyze(request: Request, body: AnalyzeRequest, db: AsyncSession = Dep
         final_level = current + 1
     if all_lower and current > 1:
         final_level = current - 1
+
+    # Manual override: if set, force the final level but keep analytics flowing
+    if profile.manual_level_override is not None:
+        final_level = profile.manual_level_override
 
     profile.current_level      = final_level
     profile.level_history_json = json.dumps(history)

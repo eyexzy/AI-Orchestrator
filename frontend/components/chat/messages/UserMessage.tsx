@@ -1,17 +1,24 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import {
   Pencil,
+  Copy,
+  Check,
   X,
   Send,
+  ChevronDown,
+  ChevronUp,
 } from "lucide-react";
 import { useChatStore } from "@/lib/store/chatStore";
+import { useTranslation } from "@/lib/store/i18nStore";
+import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
+import { cn } from "@/lib/utils";
 import { ActionBtn } from "./MessageUI";
 
-/* ─────────────────────────────────────────────────────────────────
- *  User message with inline edit
- * ────────────────────────────────────────────────────────────── */
+const COLLAPSE_HEIGHT = 300;
+
 export function UserMessageBubble({
   id,
   content,
@@ -21,12 +28,22 @@ export function UserMessageBubble({
   content: string;
   isOptimistic?: boolean;
 }) {
+  const { t } = useTranslation();
   const { editAndResend, isSending } = useChatStore();
-  const [editing, setEditing]   = useState(false);
-  const [draft, setDraft]       = useState(content);
-  const textareaRef             = useRef<HTMLTextAreaElement>(null);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(content);
+  const [copied, setCopied] = useState(false);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  // Auto-focus + auto-resize textarea
+  const contentRef = useRef<HTMLDivElement>(null);
+  const [isOverflow, setIsOverflow] = useState(false);
+  const [expanded, setExpanded] = useState(false);
+
+  useEffect(() => {
+    const el = contentRef.current;
+    if (el) setIsOverflow(el.scrollHeight > COLLAPSE_HEIGHT);
+  }, [content]);
+
   useEffect(() => {
     if (editing && textareaRef.current) {
       const el = textareaRef.current;
@@ -61,94 +78,94 @@ export function UserMessageBubble({
     if (e.key === "Escape") handleCancel();
   };
 
+  const handleCopy = useCallback(async () => {
+    try {
+      await navigator.clipboard.writeText(content);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch { /* silent */ }
+  }, [content]);
+
   if (editing) {
     return (
-      <div style={{ maxWidth: "min(78%, 600px)" }}>
-        <textarea
+      <div className="w-full max-w-3xl">
+        <Textarea
           ref={textareaRef}
+          variant="default"
           value={draft}
           onChange={(e) => { setDraft(e.target.value); handleAutoResize(); }}
           onKeyDown={handleKeyDown}
           rows={1}
-          className="chat-input-textarea"
-          style={{
-            width: "100%",
-            resize: "none",
-            border: "1px solid rgba(123,147,255,0.4)",
-            borderRadius: 12,
-            background: "rgb(var(--surface-3))",
-            color: "rgb(var(--text-1))",
-            padding: "10px 14px",
-            fontSize: 14,
-            lineHeight: 1.65,
-            outline: "none",
-            overflowY: "hidden",
-            boxShadow: "0 0 0 3px rgba(123,147,255,0.10)",
-          }}
+          wrapperClassName="rounded-xl"
+          textareaClassName="chat-input-textarea w-full resize-none rounded-xl px-6 py-4 text-base leading-relaxed overflow-hidden"
         />
-        <div className="mt-2 flex items-center justify-end gap-2">
-          <button
-            type="button"
+        <div className="mt-2.5 flex items-center justify-end gap-2.5">
+          <Button
+            variant="secondary"
+            size="sm"
             onClick={handleCancel}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 5,
-              padding: "5px 12px",
-              borderRadius: 8,
-              border: "1px solid rgba(255,255,255,0.1)",
-              background: "transparent",
-              color: "rgb(var(--text-3))",
-              fontSize: 12,
-              cursor: "pointer",
-              transition: "background 0.15s",
-            }}
-            onMouseEnter={(e) => (e.currentTarget.style.background = "rgba(255,255,255,0.06)")}
-            onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+            leftIcon={<X size={14} strokeWidth={2} />}
           >
-            <X size={12} strokeWidth={2.2} />
-            Скасувати
-          </button>
-          <button
-            type="button"
+            {t("msg.cancel")}
+          </Button>
+          <Button
+            variant="default"
+            size="sm"
             onClick={handleSave}
             disabled={!draft.trim() || isSending}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 5,
-              padding: "5px 14px",
-              borderRadius: 8,
-              border: "none",
-              background: "rgb(var(--accent-blue))",
-              color: "#fff",
-              fontSize: 12,
-              fontWeight: 500,
-              cursor: "pointer",
-              opacity: !draft.trim() || isSending ? 0.4 : 1,
-              transition: "opacity 0.15s",
-            }}
+            leftIcon={<Send size={14} strokeWidth={2} />}
           >
-            <Send size={12} strokeWidth={2.2} />
-            Зберегти й надіслати
-          </button>
+            {t("msg.update")}
+          </Button>
         </div>
       </div>
     );
   }
 
+  const collapsed = isOverflow && !expanded;
+
   return (
-    <div className="group flex flex-col items-end">
+    <div className="group flex flex-col items-end w-full">
       <div
-        className={`msg-user px-4 py-2.5 text-[14px] leading-relaxed ${isOptimistic ? "opacity-60" : ""}`}
-        style={{ color: "rgb(var(--text-1))" }}
+        className={`relative max-w-[85%] sm:max-w-[600px] rounded-2xl bg-gray-200 px-5 py-3 text-[15px] leading-relaxed text-foreground ${isOptimistic ? "opacity-60" : ""}`}
       >
-        {content}
+        <div
+          ref={contentRef}
+          className={cn(
+            "whitespace-pre-wrap [word-break:break-word]",
+            collapsed && "line-clamp-[12] overflow-hidden"
+          )}
+          style={collapsed ? { display: '-webkit-box', WebkitBoxOrient: 'vertical' } : {}}
+        >
+          {content}
+        </div>
+
+        {isOverflow && (
+          <div className="mt-4 flex justify-center w-full">
+            <Button
+              variant="secondary"
+              size="sm"
+              shape="rounded"
+              onClick={() => setExpanded(!expanded)}
+              leftIcon={expanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+              className="bg-background-100 border-gray-alpha-400 text-ds-text font-medium"
+            >
+              {expanded ? t("msg.showLess") : t("msg.showMore")}
+            </Button>
+          </div>
+        )}
       </div>
-      {/* Action bar — edit */}
-      <div className="flex items-center gap-0.5 mt-2 opacity-0 group-hover:opacity-100 transition-opacity duration-150">
-        <ActionBtn onClick={() => { setDraft(content); setEditing(true); }} label="Редагувати">
-          <Pencil size={13} strokeWidth={2.2} />
+
+      {/* Action bar */}
+      <div className="flex items-center gap-1 mt-2 opacity-0 group-hover:opacity-100 transition-opacity duration-150">
+        <ActionBtn onClick={handleCopy} label={copied ? t("msg.copied") : t("msg.copy")}>
+          {copied
+            ? <Check size={14} strokeWidth={2} />
+            : <Copy size={14} strokeWidth={2} />
+          }
+        </ActionBtn>
+        <ActionBtn onClick={() => { setDraft(content); setEditing(true); }} label={t("msg.edit")}>
+          <Pencil size={14} strokeWidth={2} />
         </ActionBtn>
       </div>
     </div>

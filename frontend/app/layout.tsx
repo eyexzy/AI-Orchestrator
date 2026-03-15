@@ -1,18 +1,15 @@
 import type { Metadata } from "next";
-import { Inter } from "next/font/google";
+import { GeistSans } from "geist/font/sans";
+import { GeistMono } from "geist/font/mono";
+import { ThemeProvider } from "next-themes";
 import { Toaster } from "sonner";
 import { SessionProvider } from "@/components/SessionProvider";
-import "./globals.css";
-
-const inter = Inter({
-  subsets: ["latin", "cyrillic"],
-  variable: "--font-inter",
-});
+import "@/app/globals.css";
 
 export const metadata: Metadata = {
   title: "AI-Orchestrator — Adaptive AI UX",
   description:
-    "Веб-чат з LLM, який адаптує інтерфейс під рівень досвіду користувача в реальному часі.",
+    "An LLM web chat that adapts the interface to the user's experience level in real time.",
   keywords: ["AI", "LLM", "Adaptive UX", "ChatGPT", "Claude", "Prompt Engineering"],
 };
 
@@ -22,10 +19,12 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="uk" className={`${inter.variable} dark`}>
+    <html lang="en" className={`${GeistSans.variable} ${GeistMono.variable}`} suppressHydrationWarning>
       <body className="font-sans">
-        <Toaster position="bottom-right" theme="dark" />
-        <SessionProvider>{children}</SessionProvider>
+        <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange>
+          <Toaster position="bottom-right" />
+          <SessionProvider>{children}</SessionProvider>
+        </ThemeProvider>
       </body>
     </html>
   );

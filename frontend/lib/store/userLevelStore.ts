@@ -38,15 +38,11 @@ export interface ScoreBreakdown {
   detail: string;
 }
 
-let levelChangeTimer: ReturnType<typeof setTimeout> | null = null;
-
 interface UserLevelState {
   sessionId: string;
-  // FIX #1: store userEmail so analyzePrompt can pass it to /analyze
-  // Without this, hysteresis was keyed by session_id and reset on every reload
   userEmail: string;
   level: UserLevel;
-  levelJustChanged: boolean;
+  lastLevelChangeTs: number;
   confidence: number;
   reasoning: string[];
   score: number;
@@ -57,8 +53,8 @@ interface UserLevelState {
   isAnalyzing: boolean;
   hasAnalyzed: boolean;
   groundTruth: number | null;
+  hiddenTemplates: string[];
   setSessionId: (id: string) => void;
-  // FIX #1: setter called from MainInput when session is available
   setUserEmail: (email: string) => void;
   setLevel: (level: UserLevel) => void;
   setGroundTruth: (level: number) => void;
@@ -69,6 +65,8 @@ interface UserLevelState {
   analyzePrompt: (text: string, currentCps: number) => Promise<void>;
   resetMetrics: () => void;
   restoreFromMessages: (userTexts: string[]) => Promise<void>;
+  hideTemplate: (id: string) => Promise<void>;
+  initProfile: () => Promise<void>;
 }
 
 const initialMetrics: BehavioralMetrics = {
@@ -91,9 +89,9 @@ const initialMetrics: BehavioralMetrics = {
 
 export const useUserLevelStore = create<UserLevelState>((set, get) => ({
   sessionId: generateSessionId(),
-  userEmail: "anonymous",          // FIX #1: default, updated via setUserEmail
+  userEmail: "anonymous",
   level: 1,
-  levelJustChanged: false,
+  lastLevelChangeTs: 0,
   confidence: 0,
   reasoning: [],
   score: 0,
@@ -104,10 +102,10 @@ export const useUserLevelStore = create<UserLevelState>((set, get) => ({
   isAnalyzing: false,
   hasAnalyzed: false,
   groundTruth: null,
+  hiddenTemplates: [],
 
   setSessionId: (id) => set({ sessionId: id }),
 
-  // FIX #1: update userEmail in store whenever NextAuth session resolves
   setUserEmail: (email) => set({ userEmail: email }),
 
   setLevel: (level) => set({ level }),
@@ -157,7 +155,7 @@ export const useUserLevelStore = create<UserLevelState>((set, get) => ({
     })),
 
   analyzePrompt: async (text: string, currentCps: number) => {
-    const { metrics, sessionId, userEmail } = get(); // FIX #1: include userEmail
+    const { metrics, sessionId, userEmail } = get();
     const newLengths = [...metrics.promptLengths, text.length];
     const avg = newLengths.reduce((a, b) => a + b, 0) / newLengths.length;
     const newCount = metrics.sessionMessageCount + 1;
@@ -182,7 +180,7 @@ export const useUserLevelStore = create<UserLevelState>((set, get) => ({
         body: JSON.stringify({
           prompt_text: text,
           session_id: sessionId,
-          user_email: userEmail,       // FIX #1: send user_email so backend uses it as profile key
+          user_email: userEmail,
           metrics: {
             chars_per_second: currentCps,
             session_message_count: newCount,
@@ -203,16 +201,14 @@ export const useUserLevelStore = create<UserLevelState>((set, get) => ({
 
       if (res.ok) {
         const data = await res.json();
-        let shouldResetLevelChanged = false;
 
         set((s) => {
           const finalLevel = Number(data.final_level) as UserLevel;
           const levelChanged = finalLevel !== s.level;
-          if (levelChanged) shouldResetLevelChanged = true;
 
           return {
             level: finalLevel,
-            levelJustChanged: levelChanged,
+            lastLevelChangeTs: levelChanged ? Date.now() : s.lastLevelChangeTs,
             confidence: data.confidence,
             reasoning: data.reasoning,
             score: data.score,
@@ -249,13 +245,6 @@ export const useUserLevelStore = create<UserLevelState>((set, get) => ({
           }).catch(() => {});
           set({ groundTruth: null });
         }
-
-        if (shouldResetLevelChanged) {
-          if (levelChangeTimer) clearTimeout(levelChangeTimer);
-          levelChangeTimer = setTimeout(() => {
-            set({ levelJustChanged: false });
-          }, 3000);
-        }
       } else {
         set({ isAnalyzing: false });
       }
@@ -284,17 +273,13 @@ export const useUserLevelStore = create<UserLevelState>((set, get) => ({
       },
     });
 
-    // FIX #10: use a recency-weighted sample instead of just the longest message.
-    // The longest message ever biased toward outliers (big code paste = L3 forever).
-    // Now: take the last 3 messages and pick the longest among those — recent
-    // messages best reflect the user's current skill level.
     const recent = userTexts.length >= 3 ? userTexts.slice(-3) : userTexts;
     const representativeText = recent.reduce(
       (best, t) => (t.length > best.length ? t : best),
       ""
     );
 
-    const { sessionId, userEmail } = get(); // FIX #1: pass userEmail here too
+    const { sessionId, userEmail } = get();
 
     try {
       const res = await fetch(`${API_URL}/analyze`, {
@@ -303,7 +288,7 @@ export const useUserLevelStore = create<UserLevelState>((set, get) => ({
         body: JSON.stringify({
           prompt_text: representativeText,
           session_id: sessionId,
-          user_email: userEmail,           // FIX #1: hysteresis uses correct profile
+          user_email: userEmail,
           metrics: {
             chars_per_second: 0,
             session_message_count: count,
@@ -321,7 +306,7 @@ export const useUserLevelStore = create<UserLevelState>((set, get) => ({
           suggestedRaw >= 3 ? 3 : suggestedRaw <= 1 ? 1 : 2;
         set({
           level: suggested,
-          levelJustChanged: false,
+          lastLevelChangeTs: 0,
           confidence: data.confidence,
           reasoning: data.reasoning,
           score: data.score,
@@ -333,14 +318,38 @@ export const useUserLevelStore = create<UserLevelState>((set, get) => ({
         });
       }
     } catch {
-      /* silent — non-critical restore */
+    }
+  },
+
+  hideTemplate: async (id: string) => {
+    const next = [...new Set([...get().hiddenTemplates, id])];
+    set({ hiddenTemplates: next });
+    try {
+      await fetch("/api/profile/preferences", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ hidden_templates: next }),
+      });
+    } catch {
+    }
+  },
+
+  initProfile: async () => {
+    try {
+      const res = await fetch("/api/profile/preferences");
+      if (!res.ok) return;
+      const data = await res.json();
+      if (Array.isArray(data.hidden_templates)) {
+        set({ hiddenTemplates: data.hidden_templates });
+      }
+    } catch {
     }
   },
 
   resetMetrics: () =>
     set({
-      metrics: { ...initialMetrics },
-      levelJustChanged: false,
+      metrics: { ...initialMetrics, sessionStartTime: Date.now() },
+      lastLevelChangeTs: 0,
       score: 0,
       normalizedScore: 0,
       breakdown: [],

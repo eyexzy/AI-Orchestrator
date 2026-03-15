@@ -1,11 +1,3 @@
-/**
- * app/api/chats/[id]/route.ts
- *
- * Server-side proxy for FastAPI PATCH /chats/:id and DELETE /chats/:id.
- * Ensures only authenticated users can modify/delete chats,
- * and ADMIN_API_KEY stays server-side.
- */
-
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/auth";
 
@@ -15,7 +7,6 @@ const API_URL =
 
 const ADMIN_API_KEY = process.env.ADMIN_API_KEY ?? "";
 
-// ── PATCH /api/chats/[id] — rename chat ──────────────────────────────────────
 export async function PATCH(
   req: NextRequest,
   { params }: { params: { id: string } },
@@ -35,21 +26,31 @@ export async function PATCH(
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   if (ADMIN_API_KEY) headers["X-Api-Key"] = ADMIN_API_KEY;
 
+  let res: Response;
   try {
-    const res = await fetch(`${API_URL}/chats/${params.id}`, {
+    res = await fetch(`${API_URL}/chats/${params.id}`, {
       method: "PATCH",
       headers,
       body: JSON.stringify(body),
     });
-    const data = await res.json();
-    return NextResponse.json(data, { status: res.status });
   } catch (err) {
     console.error("[/api/chats/[id] PATCH] Backend unreachable:", err);
     return NextResponse.json({ error: "Backend unreachable" }, { status: 502 });
   }
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    try {
+      return NextResponse.json(JSON.parse(text), { status: res.status });
+    } catch {
+      return NextResponse.json({ error: text || res.statusText }, { status: res.status });
+    }
+  }
+
+  const data = await res.json();
+  return NextResponse.json(data, { status: res.status });
 }
 
-// ── DELETE /api/chats/[id] — delete chat ─────────────────────────────────────
 export async function DELETE(
   _req: NextRequest,
   { params }: { params: { id: string } },
@@ -62,15 +63,26 @@ export async function DELETE(
   const headers: Record<string, string> = {};
   if (ADMIN_API_KEY) headers["X-Api-Key"] = ADMIN_API_KEY;
 
+  let res: Response;
   try {
-    const res = await fetch(`${API_URL}/chats/${params.id}`, {
+    res = await fetch(`${API_URL}/chats/${params.id}`, {
       method: "DELETE",
       headers,
     });
-    const data = await res.json();
-    return NextResponse.json(data, { status: res.status });
   } catch (err) {
     console.error("[/api/chats/[id] DELETE] Backend unreachable:", err);
     return NextResponse.json({ error: "Backend unreachable" }, { status: 502 });
   }
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    try {
+      return NextResponse.json(JSON.parse(text), { status: res.status });
+    } catch {
+      return NextResponse.json({ error: text || res.statusText }, { status: res.status });
+    }
+  }
+
+  const data = await res.json();
+  return NextResponse.json(data, { status: res.status });
 }
