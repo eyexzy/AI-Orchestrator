@@ -74,9 +74,11 @@ function ChatItem({
 
   return (
     <>
-      <button
-        type="button"
+      <div
+        role="button"
+        tabIndex={0}
         onClick={onSelect}
+        onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onSelect(); } }}
         className={`group relative flex w-full items-center gap-3 rounded-lg border-none px-3 py-2.5 text-left cursor-pointer transition-all duration-100 ${isActive
           ? "bg-gray-alpha-200 text-ds-text font-medium"
           : "bg-transparent text-ds-text-secondary hover:bg-gray-alpha-200 hover:text-ds-text"
@@ -104,7 +106,7 @@ function ChatItem({
             <MoreHorizontal size={16} strokeWidth={2} />
           </button>
         )}
-      </button>
+      </div>
 
       {menuOpen && (
         <ActionMenu

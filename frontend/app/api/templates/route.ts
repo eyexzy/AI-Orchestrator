@@ -1,12 +1,6 @@
-/**
- * app/api/templates/route.ts
- *
- * Server-side proxy for FastAPI /templates endpoints.
- * Same security model as /api/chats: auth() + X-Api-Key + trusted user_email.
- */
-
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/auth";
+import { createBackendToken } from "@/lib/backendAuth";
 
 const API_URL =
   process.env.NEXT_PUBLIC_API_URL ??
@@ -14,22 +8,20 @@ const API_URL =
 
 const ADMIN_API_KEY = process.env.ADMIN_API_KEY ?? "";
 
-// ── GET /api/templates — list templates for the authenticated user ───────────
+// GET /api/templates — list templates for the authenticated user
 export async function GET() {
   const session = await auth();
   if (!session?.user?.email) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const headers: Record<string, string> = {};
+  const token = await createBackendToken(session.user.email);
+  const headers: Record<string, string> = { Authorization: `Bearer ${token}` };
   if (ADMIN_API_KEY) headers["X-Api-Key"] = ADMIN_API_KEY;
 
   let res: Response;
   try {
-    res = await fetch(
-      `${API_URL}/templates?user_email=${encodeURIComponent(session.user.email)}`,
-      { headers, cache: "no-store" },
-    );
+    res = await fetch(`${API_URL}/templates`, { headers, cache: "no-store" });
   } catch (err) {
     console.error("[/api/templates GET] Backend unreachable:", err);
     return NextResponse.json({ error: "Backend unreachable" }, { status: 502 });
@@ -48,7 +40,7 @@ export async function GET() {
   return NextResponse.json(data, { status: res.status });
 }
 
-// ── POST /api/templates — create a new template ─────────────────────────────
+// POST /api/templates — create a new template
 export async function POST(req: NextRequest) {
   const session = await auth();
   if (!session?.user?.email) {
@@ -62,19 +54,20 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
 
-  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  const token = await createBackendToken(session.user.email);
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    Authorization: `Bearer ${token}`,
+  };
   if (ADMIN_API_KEY) headers["X-Api-Key"] = ADMIN_API_KEY;
 
   let res: Response;
   try {
-    res = await fetch(
-      `${API_URL}/templates?user_email=${encodeURIComponent(session.user.email)}`,
-      {
-        method: "POST",
-        headers,
-        body: JSON.stringify(body),
-      },
-    );
+    res = await fetch(`${API_URL}/templates`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(body),
+    });
   } catch (err) {
     console.error("[/api/templates POST] Backend unreachable:", err);
     return NextResponse.json({ error: "Backend unreachable" }, { status: 502 });

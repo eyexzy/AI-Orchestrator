@@ -6,7 +6,7 @@ from sqlalchemy import select, func, update, case
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import PromptTemplateDB, _uuid
-from dependencies import check_admin_key, get_db
+from dependencies import check_admin_key, get_current_user, get_db
 from schemas.api import (
     TemplateCreate,
     TemplateUpdate,
@@ -37,9 +37,9 @@ def _row_to_response(row: PromptTemplateDB) -> dict:
 
 @router.get("/templates")
 async def list_templates(
-    user_email: str = "anonymous",
     db: AsyncSession = Depends(get_db),
     _api_key: str = Depends(check_admin_key),
+    user_email: str = Depends(get_current_user),
 ):
     result = await db.execute(
         select(PromptTemplateDB)
@@ -55,9 +55,9 @@ async def list_templates(
 @router.post("/templates")
 async def create_template(
     req: TemplateCreate,
-    user_email: str = "anonymous",
     db: AsyncSession = Depends(get_db),
     _api_key: str = Depends(check_admin_key),
+    user_email: str = Depends(get_current_user),
 ):
     row = PromptTemplateDB(
         id=req.id if getattr(req, "id", None) else _uuid(),

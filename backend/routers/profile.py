@@ -1,11 +1,11 @@
 import json
 
-from fastapi import APIRouter, Depends, Request, Query
+from fastapi import APIRouter, Depends, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import UserProfile
-from dependencies import limiter, get_db
+from dependencies import limiter, get_db, get_current_user
 from schemas.api import ProfilePreferencesUpdate, ProfilePreferencesResponse
 
 router = APIRouter()
@@ -15,7 +15,7 @@ router = APIRouter()
 @router.get("/profile/preferences", response_model=ProfilePreferencesResponse)
 async def get_preferences(
     request: Request,
-    user_email: str = Query(default="anonymous"),
+    user_email: str = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     result = await db.execute(select(UserProfile).where(UserProfile.user_email == user_email))
@@ -35,7 +35,7 @@ async def get_preferences(
 async def update_preferences(
     request: Request,
     body: ProfilePreferencesUpdate,
-    user_email: str = Query(default="anonymous"),
+    user_email: str = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     result = await db.execute(select(UserProfile).where(UserProfile.user_email == user_email))

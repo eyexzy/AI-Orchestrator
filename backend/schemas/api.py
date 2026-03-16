@@ -27,7 +27,7 @@ class TrainingFeedback(BaseModel):
 
 
 class AnalyzeRequest(BaseModel):
-    prompt_text: str
+    prompt_text: str = Field(..., max_length=10000)
     metrics:     BehavioralMetrics | None = None
     session_id:  str = "unknown"
     user_email:  str = "anonymous"
@@ -85,6 +85,10 @@ class GenerateResponse(BaseModel):
     usage:    UsageStats
     raw:      dict
     provider: str
+
+
+class RefineRequest(BaseModel):
+    prompt: str = Field(..., max_length=20000)
 
 
 # Chat CRUD schemas

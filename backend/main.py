@@ -39,6 +39,11 @@ def _validate_env():
     if not has_any_llm_key:
         warnings.append("No LLM API keys found — mock responses will be used")
 
+    if not os.getenv("ADMIN_API_KEY"):
+        warnings.append("ADMIN_API_KEY not set — admin/chat/template endpoints have no key protection")
+    if not os.getenv("AUTH_SECRET"):
+        warnings.append("AUTH_SECRET not set — JWT authentication will fail for protected endpoints")
+
     if is_production:
         if not os.getenv("DATABASE_URL"):
             errors.append("DATABASE_URL is required in production")
@@ -99,9 +104,19 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PATCH", "PUT", "DELETE"],
+    allow_headers=["Content-Type", "Authorization", "X-Api-Key"],
 )
+
+
+@app.middleware("http")
+async def add_security_headers(request, call_next):
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    return response
 
 
 # Register routers

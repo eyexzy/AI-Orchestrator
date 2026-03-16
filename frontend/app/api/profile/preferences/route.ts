@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/auth";
+import { createBackendToken } from "@/lib/backendAuth";
 
 const API_URL =
   process.env.NEXT_PUBLIC_API_URL ??
@@ -11,11 +12,13 @@ export async function GET() {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
+  const token = await createBackendToken(session.user.email);
+
   try {
-    const res = await fetch(
-      `${API_URL}/profile/preferences?user_email=${encodeURIComponent(session.user.email)}`,
-      { cache: "no-store" },
-    );
+    const res = await fetch(`${API_URL}/profile/preferences`, {
+      headers: { Authorization: `Bearer ${token}` },
+      cache: "no-store",
+    });
     const data = await res.json();
     return NextResponse.json(data, { status: res.status });
   } catch (err) {
@@ -24,7 +27,6 @@ export async function GET() {
   }
 }
 
-// PATCH /api/profile/preferences
 export async function PATCH(req: NextRequest) {
   const session = await auth();
   if (!session?.user?.email) {
@@ -38,15 +40,17 @@ export async function PATCH(req: NextRequest) {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
 
+  const token = await createBackendToken(session.user.email);
+
   try {
-    const res = await fetch(
-      `${API_URL}/profile/preferences?user_email=${encodeURIComponent(session.user.email)}`,
-      {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
+    const res = await fetch(`${API_URL}/profile/preferences`, {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
       },
-    );
+      body: JSON.stringify(body),
+    });
     const data = await res.json();
     return NextResponse.json(data, { status: res.status });
   } catch (err) {

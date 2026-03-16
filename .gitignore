@@ -38,3 +38,10 @@ Thumbs.db
 *.log
 
 settings.local.json
+
+# Local draft and utility files
+AUDIT_REPORT.md
+collect_code.py
+full_project_context.txt
+Чорнетка для диплому.docx
+README.md
