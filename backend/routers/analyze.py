@@ -28,7 +28,10 @@ async def analyze(request: Request, body: AnalyzeRequest, db: AsyncSession = Dep
         profile = UserProfile(user_email=profile_key)
         db.add(profile)
 
-    history: list[int] = json.loads(profile.level_history_json or "[]")
+    try:
+        history: list[int] = json.loads(profile.level_history_json or "[]")
+    except json.JSONDecodeError:
+        history = []
     history.append(suggested_level)
     history = history[-3:]
 
