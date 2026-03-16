@@ -6,7 +6,7 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import ChatSession, ChatMessage
-from dependencies import check_admin_key, get_db
+from dependencies import check_admin_key, get_current_user, get_db
 from schemas.api import CreateChatRequest, UpdateChatRequest, ChatSearchResult
 
 router = APIRouter()
@@ -14,9 +14,9 @@ router = APIRouter()
 
 @router.get("/chats")
 async def list_chats(
-    user_email: str = "anonymous",
     db: AsyncSession = Depends(get_db),
     _api_key: str = Depends(check_admin_key),
+    user_email: str = Depends(get_current_user),
 ):
     stmt = (
         select(ChatSession, func.count(ChatMessage.id).label("msg_count"))
@@ -44,8 +44,10 @@ async def create_chat(
     req: CreateChatRequest,
     db: AsyncSession = Depends(get_db),
     _api_key: str = Depends(check_admin_key),
+    user_email: str = Depends(get_current_user),
 ):
-    session = ChatSession(user_email=req.user_email, title=req.title)
+    # user_email from JWT overrides anything in the request body
+    session = ChatSession(user_email=user_email, title=req.title)
     db.add(session)
     await db.commit()
     await db.refresh(session)
@@ -61,9 +63,9 @@ async def create_chat(
 @router.get("/chats/search")
 async def search_chats(
     query: str,
-    user_email: str = "anonymous",
     db: AsyncSession = Depends(get_db),
     _api_key: str = Depends(check_admin_key),
+    user_email: str = Depends(get_current_user),
 ):
     pattern = f"%{query}%"
     results: list[dict] = []

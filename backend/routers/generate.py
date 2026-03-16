@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import AsyncSessionLocal, ChatSession, ChatMessage
 from dependencies import limiter, get_db
-from schemas.api import GenerateRequest
+from schemas.api import GenerateRequest, RefineRequest
 from services.llm import (
     get_client_for_model,
     real_generate,
@@ -147,8 +147,8 @@ async def generate(request: Request, body: GenerateRequest, db: AsyncSession = D
 
 @limiter.limit("10/minute")
 @router.post("/refine")
-async def refine(request: Request, body: dict) -> dict:
-    prompt = (body.get("prompt") or "").strip()
+async def refine(request: Request, body: RefineRequest) -> dict:
+    prompt = body.prompt.strip()
     if not prompt:
         raise HTTPException(status_code=422, detail="prompt is required")
     try:

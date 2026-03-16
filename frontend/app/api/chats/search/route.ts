@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/auth";
+import { createBackendToken } from "@/lib/backendAuth";
 
 const API_URL =
   process.env.NEXT_PUBLIC_API_URL ??
@@ -18,13 +19,14 @@ export async function GET(req: NextRequest) {
     return NextResponse.json([]);
   }
 
-  const headers: Record<string, string> = {};
+  const token = await createBackendToken(session.user.email);
+  const headers: Record<string, string> = { Authorization: `Bearer ${token}` };
   if (ADMIN_API_KEY) headers["X-Api-Key"] = ADMIN_API_KEY;
 
   let res: Response;
   try {
     res = await fetch(
-      `${API_URL}/chats/search?query=${encodeURIComponent(q)}&user_email=${encodeURIComponent(session.user.email)}`,
+      `${API_URL}/chats/search?query=${encodeURIComponent(q)}`,
       { headers, cache: "no-store" },
     );
   } catch (err) {

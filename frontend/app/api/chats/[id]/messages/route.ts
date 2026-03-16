@@ -9,8 +9,9 @@ const ADMIN_API_KEY = process.env.ADMIN_API_KEY ?? "";
 
 export async function GET(
   _req: NextRequest,
-  { params }: { params: { id: string } },
+  props: { params: Promise<{ id: string }> },
 ) {
+  const params = await props.params;
   const session = await auth();
   if (!session?.user?.email) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });

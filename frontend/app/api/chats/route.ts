@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/auth";
+import { createBackendToken } from "@/lib/backendAuth";
 
 const API_URL =
   process.env.NEXT_PUBLIC_API_URL ??
@@ -13,15 +14,13 @@ export async function GET() {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const headers: Record<string, string> = {};
+  const token = await createBackendToken(session.user.email);
+  const headers: Record<string, string> = { Authorization: `Bearer ${token}` };
   if (ADMIN_API_KEY) headers["X-Api-Key"] = ADMIN_API_KEY;
 
   let res: Response;
   try {
-    res = await fetch(
-      `${API_URL}/chats?user_email=${encodeURIComponent(session.user.email)}`,
-      { headers, cache: "no-store" },
-    );
+    res = await fetch(`${API_URL}/chats`, { headers, cache: "no-store" });
   } catch (err) {
     console.error("[/api/chats GET] Backend unreachable:", err);
     return NextResponse.json({ error: "Backend unreachable" }, { status: 502 });
@@ -53,7 +52,11 @@ export async function POST(req: NextRequest) {
   } catch {
   }
 
-  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  const token = await createBackendToken(session.user.email);
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    Authorization: `Bearer ${token}`,
+  };
   if (ADMIN_API_KEY) headers["X-Api-Key"] = ADMIN_API_KEY;
 
   let res: Response;
@@ -61,7 +64,7 @@ export async function POST(req: NextRequest) {
     res = await fetch(`${API_URL}/chats`, {
       method: "POST",
       headers,
-      body: JSON.stringify({ user_email: session.user.email, title }),
+      body: JSON.stringify({ title }),
     });
   } catch (err) {
     console.error("[/api/chats POST] Backend unreachable:", err);
