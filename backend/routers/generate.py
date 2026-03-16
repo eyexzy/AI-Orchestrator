@@ -107,6 +107,9 @@ async def generate(request: Request, body: GenerateRequest, db: AsyncSession = D
                                     full_text = data["full_text"]
                             except Exception:
                                 pass
+                except Exception as e:
+                    logger.error(f"[stream] stream_with_save error: {type(e).__name__}: {e}")
+                    yield f"data: {json.dumps({'error': str(e), 'done': True})}\n\n"
                 finally:
                     if body.session_id and full_text:
                         async with AsyncSessionLocal() as db2:
@@ -124,10 +127,17 @@ async def generate(request: Request, body: GenerateRequest, db: AsyncSession = D
         try:
             result = await asyncio.wait_for(real_generate(client, model_info, body), timeout=15.0)
         except asyncio.TimeoutError:
-            result = await mock_generate(body)
+            logger.warning(f"[generate] {model_info['provider']} timeout — attempting mock fallback")
+            try:
+                result = await mock_generate(body)
+            except RuntimeError:
+                raise HTTPException(status_code=504, detail="LLM provider timed out")
         except Exception as e:
             logger.error(f"[generate] {model_info['provider']} FAILED: {type(e).__name__}: {e}")
-            result = await mock_generate(body)
+            try:
+                result = await mock_generate(body)
+            except RuntimeError:
+                raise HTTPException(status_code=502, detail="LLM provider unavailable")
     else:
         result = await mock_generate(body)
 

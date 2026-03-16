@@ -5,11 +5,11 @@ import { Lightbulb, Zap, Download, PieChart } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useUserLevelStore } from "@/lib/store/userLevelStore";
 
-/* Level palette — maps to CSS variables */
+/* Level palette — RGB triplets for use with rgba() */
 const LEVEL_COLORS: Record<1 | 2 | 3, string> = {
-  1: "var(--ds-green-700)",
-  2: "var(--ds-blue-700)",
-  3: "var(--ds-amber-700)",
+  1: "46, 125, 50",
+  2: "0, 100, 245",
+  3: "189, 119, 0",
 };
 
 const LEVEL_NAMES: Record<1 | 2 | 3, string> = {
@@ -178,7 +178,7 @@ export function ScoreDashboard() {
         <div className="flex items-center gap-3">
           <div
             className="flex h-10 w-10 items-center justify-center rounded-xl font-mono text-sm font-bold"
-            style={{ background: `rgb(${accent} / 0.12)`, color: `rgb(${accent})` }}
+            style={{ backgroundColor: `rgba(${accent}, 0.12)`, color: `rgb(${accent})` }}
           >
             {level}
           </div>

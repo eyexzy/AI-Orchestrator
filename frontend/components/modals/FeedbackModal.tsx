@@ -8,16 +8,54 @@ import { Frown, Meh, Smile } from "lucide-react";
 import { toast } from "sonner";
 import { useTranslation } from "@/lib/store/i18nStore";
 
+const MOOD_TO_LEVEL: Record<string, number> = { sad: 1, neutral: 2, smile: 3 };
+
 export function FeedbackModal({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
   const { t } = useTranslation();
   const [mood, setMood] = useState<"sad" | "neutral" | "smile" | null>(null);
   const [text, setText] = useState("");
+  const [sending, setSending] = useState(false);
 
-  const handleSubmit = () => {
-    toast.success(t("feedback.success") ?? "Feedback sent! (UI Dummy)");
-    setText("");
-    setMood(null);
-    onOpenChange(false);
+  const handleSubmit = async () => {
+    if (!text.trim() && !mood) return;
+
+    setSending(true);
+    try {
+      const res = await fetch("/api/ml/feedback", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          prompt_text: text.trim() || "(mood only)",
+          metrics: {
+            chars_per_second: 0,
+            session_message_count: 0,
+            avg_prompt_length: 0,
+            advanced_feature_usage: 0,
+            suggestion_click_count: 0,
+            cancel_action_count: 0,
+            session_duration_seconds: 0,
+          },
+          actual_level: MOOD_TO_LEVEL[mood ?? "neutral"],
+        }),
+      });
+
+      if (!res.ok) {
+        const data = await res.json().catch(() => null);
+        throw new Error(data?.error ?? `HTTP ${res.status}`);
+      }
+
+      toast.success(t("feedback.success") ?? "Feedback sent!");
+      setText("");
+      setMood(null);
+      onOpenChange(false);
+    } catch (err) {
+      toast.error(
+        t("feedback.error") ??
+          `Failed to send feedback: ${err instanceof Error ? err.message : "Unknown error"}`,
+      );
+    } finally {
+      setSending(false);
+    }
   };
 
   const handleCancel = () => {
@@ -33,7 +71,7 @@ export function FeedbackModal({ open, onOpenChange }: { open: boolean; onOpenCha
           <DialogTitle>{t("feedback.title")}</DialogTitle>
           <DialogDescription>{t("feedback.description")}</DialogDescription>
         </DialogHeader>
-        
+
         <div className="p-6 pt-2 pb-4">
           <Textarea
             variant="default"
@@ -44,7 +82,7 @@ export function FeedbackModal({ open, onOpenChange }: { open: boolean; onOpenCha
             wrapperClassName="rounded-xl"
             textareaClassName="min-h-[120px] resize-none p-3 text-[14px]"
           />
-          
+
           <div className="mt-4 flex items-center justify-between">
             <div className="flex items-center gap-1.5 rounded-full border border-gray-alpha-200 bg-gray-alpha-100 p-1">
               {[
@@ -61,20 +99,26 @@ export function FeedbackModal({ open, onOpenChange }: { open: boolean; onOpenCha
                   leftIcon={<Icon size={16} strokeWidth={2} />}
                   onClick={() => setMood(id as any)}
                   className={`h-8 w-8 rounded-full p-0 shadow-none ${
-                    mood === id 
-                      ? "bg-background shadow-sm text-ds-text" 
+                    mood === id
+                      ? "bg-background shadow-sm text-ds-text"
                       : "text-ds-text-tertiary hover:text-ds-text-secondary hover:bg-gray-alpha-200"
                   }`}
                 >
                 </Button>
               ))}
             </div>
-            
+
             <div className="flex items-center gap-2">
               <Button variant="secondary" size="sm" onClick={handleCancel}>
                 {t("feedback.cancel")}
               </Button>
-              <Button variant="default" size="sm" onClick={handleSubmit} disabled={!text.trim() && !mood}>
+              <Button
+                variant="default"
+                size="sm"
+                onClick={handleSubmit}
+                disabled={(!text.trim() && !mood) || sending}
+                isLoading={sending}
+              >
                 {t("feedback.submit")}
               </Button>
             </div>

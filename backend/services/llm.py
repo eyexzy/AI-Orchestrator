@@ -225,8 +225,19 @@ async def real_generate_stream(client: AsyncOpenAI, model_info: dict, req: Gener
     yield f"data: {json.dumps({'text': '', 'done': True, 'full_text': full_text}, ensure_ascii=False)}\n\n"
 
 
+def _has_real_api_keys() -> bool:
+    """Check if at least one real LLM provider API key is configured."""
+    return bool(OPENAI_API_KEY or GOOGLE_API_KEY or GROQ_API_KEY or OPENROUTER_API_KEY)
+
+
 async def mock_generate(req: GenerateRequest) -> GenerateResponse:
     """Fallback mock when no API key is present."""
+    if _has_real_api_keys() and os.getenv("ALLOW_MOCK", "").lower() not in ("1", "true"):
+        raise RuntimeError(
+            "Mocks disabled: real API keys are configured but the provider call failed. "
+            "Set ALLOW_MOCK=1 to allow mock fallback in development."
+        )
+
     base = random.choice(MOCK_RESPONSES)
 
     if req.temperature < 0.3:
@@ -355,7 +366,7 @@ async def refine_prompt_with_llm(prompt: str) -> dict:
     content = (response.choices[0].message.content or "").strip()
     content = re.sub(r"^```(?:json)?\s*", "", content)
     content = re.sub(r"\s*```$", "", content)
-    json_match = re.search(r'\{[\s\S]*\}', content)
+    json_match = re.search(r'\{[\s\S]*?\}', content)
     if json_match:
         content = json_match.group(0)
 
