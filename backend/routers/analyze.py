@@ -51,7 +51,6 @@ async def analyze(request: Request, body: AnalyzeRequest, db: AsyncSession = Dep
 
     profile.current_level      = final_level
     profile.level_history_json = json.dumps(history)
-    profile.consecutive_high   = ((profile.consecutive_high or 0) + 1 if suggested_level > current else 0)
     await db.commit()
 
     await save_interaction(

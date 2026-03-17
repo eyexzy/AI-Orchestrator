@@ -52,8 +52,8 @@ class InteractionLog(Base):
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
     session_id = Column(String(64), index=True, default="unknown")
     user_email = Column(String(255), index=True, default="anonymous")
-    timestamp = Column(DateTime, default=_now)
-    user_level = Column(Integer, default=1)
+    timestamp = Column(DateTime, default=_now, index=True)
+    user_level = Column(Integer, default=1, index=True)
     prompt_text = Column(Text, default="")
     score_awarded = Column(Float, default=0.0)
     normalized_score = Column(Float, default=0.0)
@@ -82,7 +82,6 @@ class UserProfile(Base):
     user_email = Column(String(255), primary_key=True)
     current_level = Column(Integer, default=1)
     level_history_json = Column(Text, default="[]")
-    consecutive_high = Column(Integer, default=0)
     theme = Column(String(32), default="system")
     language = Column(String(8), default="en")
     manual_level_override = Column(Integer, nullable=True)
@@ -116,7 +115,7 @@ class ChatMessage(Base):
     session_id = Column(String(36), ForeignKey("chat_sessions.id", ondelete="CASCADE"), index=True, nullable=False)
     role = Column(String(16), nullable=False)
     content = Column(Text, default="")
-    created_at = Column(DateTime, default=_now)
+    created_at = Column(DateTime, default=_now, index=True)
     metadata_json = Column(Text, default="{}")
 
     session = relationship("ChatSession", back_populates="messages")
@@ -177,8 +176,12 @@ class MLModelCache(Base):
 # DB helpers
 
 async def init_db():
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+    """Initialize database connection. Schema is managed by Alembic migrations.
+    Run: cd backend && alembic upgrade head
+    """
+    # Verify the engine can connect
+    async with engine.begin():
+        pass
 
 
 async def get_db():
