@@ -126,7 +126,7 @@ function LevelUpNotification() {
 
 /* Active chat title in header */
 function ActiveChatTitle() {
-  const { chats, activeChatId, renameChat, deleteChat } = useChatStore();
+  const { chats, activeChatId, renameChat, deleteChat, toggleFavorite } = useChatStore();
   const { t } = useTranslation();
   const activeChat = chats.find((c) => c.id === activeChatId);
   const title = activeChat?.title ?? "New Chat";
@@ -161,9 +161,9 @@ function ActiveChatTitle() {
           onClose={() => setMenuOpen(false)}
           items={[
             {
-              label: t("sidebar.star"),
-              icon: <Star size={14} strokeWidth={2} />,
-              onClick: () => { },
+              label: activeChat?.is_favorite ? t("sidebar.unstar") : t("sidebar.star"),
+              icon: <Star size={14} strokeWidth={2} className={activeChat?.is_favorite ? "fill-current text-amber-500" : ""} />,
+              onClick: () => { if (activeChatId) toggleFavorite(activeChatId); },
             },
             {
               label: t("sidebar.rename"),

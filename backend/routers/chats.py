@@ -35,6 +35,7 @@ async def list_chats(
         {
             "id":            s.id,
             "title":         s.title,
+            "is_favorite":   s.is_favorite or False,
             "created_at":    s.created_at.isoformat() if s.created_at else None,
             "updated_at":    s.updated_at.isoformat() if s.updated_at else None,
             "message_count": msg_count,
@@ -58,6 +59,7 @@ async def create_chat(
     return {
         "id":            session.id,
         "title":         session.title,
+        "is_favorite":   session.is_favorite or False,
         "created_at":    session.created_at.isoformat() if session.created_at else None,
         "updated_at":    session.updated_at.isoformat() if session.updated_at else None,
         "message_count": 0,
@@ -173,7 +175,10 @@ async def update_chat(
     session = result.scalars().first()
     if not session:
         return JSONResponse(status_code=404, content={"error": "Chat not found"})
-    session.title = req.title
+    if req.title is not None:
+        session.title = req.title
+    if req.is_favorite is not None:
+        session.is_favorite = req.is_favorite
     await db.commit()
     return {"ok": True}
 

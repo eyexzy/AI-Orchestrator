@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef, memo } from "react";
 import { useSession } from "next-auth/react";
 import {
   SquarePen,
@@ -55,20 +55,22 @@ function groupChatsByDate(chats: ChatSession[], labels: { today: string; yesterd
 }
 
 /* Chat item */
-function ChatItem({
+const ChatItem = memo(function ChatItem({
   chat,
   isActive,
   onSelect,
   onDelete,
   onOpenRename,
+  onToggleFavorite,
 }: {
   chat: ChatSession;
   isActive: boolean;
   onSelect: () => void;
   onDelete: () => void;
   onOpenRename: () => void;
+  onToggleFavorite: () => void;
 }) {
-  const { t } = useTranslation();
+  const { t }: { t: (key: string) => string } = useTranslation();
   const dotsRef = useRef<HTMLButtonElement>(null);
   const [menuOpen, setMenuOpen] = useState(false);
 
@@ -115,9 +117,9 @@ function ChatItem({
           onClose={() => setMenuOpen(false)}
           items={[
             {
-              label: t("sidebar.star"),
-              icon: <Star size={14} strokeWidth={2} />,
-              onClick: () => { },
+              label: chat.is_favorite ? t("sidebar.unstar") : t("sidebar.star"),
+              icon: <Star size={14} strokeWidth={2} className={chat.is_favorite ? "fill-current text-amber-500" : ""} />,
+              onClick: () => { setMenuOpen(false); onToggleFavorite(); },
             },
             {
               label: t("sidebar.rename"),
@@ -138,16 +140,16 @@ function ChatItem({
       )}
     </>
   );
-}
+});
 
 /* Main sidebar */
 export function ChatSidebar() {
-  const { t } = useTranslation();
+  const { t }: { t: (key: string) => string } = useTranslation();
   const { data: session } = useSession();
   const {
     chats, activeChatId, isLoadingChats, sidebarOpen,
     setSidebarOpen, toggleSidebar, loadChats,
-    selectChat, createNewChat, deleteChat, renameChat,
+    selectChat, createNewChat, deleteChat, renameChat, toggleFavorite,
   } = useChatStore(useShallow((s) => ({
     chats: s.chats,
     activeChatId: s.activeChatId,
@@ -160,6 +162,7 @@ export function ChatSidebar() {
     createNewChat: s.createNewChat,
     deleteChat: s.deleteChat,
     renameChat: s.renameChat,
+    toggleFavorite: s.toggleFavorite,
   })));
 
   const [isSearchOpen, setIsSearchOpen] = useState(false);
@@ -303,6 +306,7 @@ export function ChatSidebar() {
                       onSelect={() => selectChat(chat.id)}
                       onDelete={() => deleteChat(chat.id)}
                       onOpenRename={() => handleOpenRenameModal(chat)}
+                      onToggleFavorite={() => toggleFavorite(chat.id)}
                     />
                   ))}
                 </div>

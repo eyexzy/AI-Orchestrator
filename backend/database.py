@@ -97,6 +97,7 @@ class ChatSession(Base):
     id = Column(String(36), primary_key=True, default=_uuid)
     user_email = Column(String(255), index=True, default="anonymous")
     title = Column(String(255), default="Новий чат")
+    is_favorite = Column(Boolean, default=False)
     created_at = Column(DateTime, default=_now)
     updated_at = Column(DateTime, default=_now, onupdate=_now)
 

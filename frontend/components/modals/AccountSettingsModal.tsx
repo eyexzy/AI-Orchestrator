@@ -23,7 +23,7 @@ export function AccountSettingsModal({ open, onOpenChange }: { open: boolean; on
   const { t } = useTranslation();
   const setLevel = useUserLevelStore((s) => s.setLevel);
   
-  const [activeTab, setActiveTab] = useState<"general" | "advanced">("general");
+  const [activeTab, setActiveTab] = useState<"general">("general");
   const [override, setOverride] = useState<"auto" | 1 | 2 | 3>("auto");
   const [isLoading, setIsLoading] = useState(false);
 
@@ -83,19 +83,6 @@ export function AccountSettingsModal({ open, onOpenChange }: { open: boolean; on
             >
               {t("settings.general")}
             </Button>
-            <Button
-              type="button"
-              variant="tertiary"
-              size="sm"
-              onClick={() => setActiveTab("advanced")}
-              className={`w-full justify-start rounded-lg px-3 text-[14px] font-medium text-left shadow-none ${
-                activeTab === "advanced"
-                  ? "bg-gray-alpha-200 text-ds-text"
-                  : "text-ds-text-secondary hover:bg-gray-alpha-200"
-              }`}
-            >
-              {t("settings.advanced")}
-            </Button>
           </nav>
         </div>
 
@@ -151,11 +138,6 @@ export function AccountSettingsModal({ open, onOpenChange }: { open: boolean; on
             </div>
           )}
           
-          {activeTab === "advanced" && (
-            <div className="animate-fade-in flex h-[200px] items-center justify-center">
-              <p className="text-[14px] text-ds-text-tertiary">Advanced settings coming soon.</p>
-            </div>
-          )}
         </div>
       </DialogContent>
     </Dialog>
