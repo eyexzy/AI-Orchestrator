@@ -73,12 +73,20 @@ async def lifespan(app: FastAPI):
         result = await db.execute(select(MLModelCache).where(MLModelCache.id == 1))
         cache_row = result.scalar_one_or_none()
         if cache_row:
-            ml_classifier.get_classifier().from_dict(json.loads(cache_row.weights_json))
-            logger.info("[ml] Model loaded from database")
+            try:
+                ml_classifier.get_classifier().from_dict(json.loads(cache_row.weights_json))
+                logger.info(f"[ml] Model loaded from database (type={cache_row.model_type}, f1={cache_row.f1_score})")
+            except Exception as e:
+                logger.warning(f"[ml] Failed to load cached model: {e} — retraining from scratch")
+                ml_classifier._train_fresh()
+                weights_json = json.dumps(ml_classifier.get_classifier().to_dict())
+                cache_row.weights_json = weights_json
+                cache_row.model_type = "LogisticRegression"
+                await db.commit()
         else:
             ml_classifier._train_fresh()
             weights_json = json.dumps(ml_classifier.get_classifier().to_dict())
-            db.add(MLModelCache(id=1, weights_json=weights_json))
+            db.add(MLModelCache(id=1, weights_json=weights_json, model_type="LogisticRegression"))
             await db.commit()
             logger.info("[ml] Synthetic model trained and saved to database")
 

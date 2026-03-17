@@ -79,7 +79,7 @@ class InteractionLog(Base):
 class UserProfile(Base):
     __tablename__ = "user_profiles"
 
-    user_email = Column(String(255), primary_key=True)   # ← changed from session_id
+    user_email = Column(String(255), primary_key=True)
     current_level = Column(Integer, default=1)
     level_history_json = Column(Text, default="[]")
     consecutive_high = Column(Integer, default=0)
@@ -128,6 +128,7 @@ class MLFeedback(Base):
     __tablename__ = "ml_feedback"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
+    prompt_text = Column(Text, default="")
     prompt_length = Column(Float, default=0.0)
     word_count = Column(Float, default=0.0)
     tech_term_count = Column(Float, default=0.0)
@@ -165,6 +166,11 @@ class MLModelCache(Base):
 
     id = Column(Integer, primary_key=True, default=1)
     weights_json = Column(Text, nullable=False)
+    model_type = Column(String(64), default="LogisticRegression")
+    accuracy = Column(Float, default=0.0)
+    f1_score = Column(Float, default=0.0)
+    classification_report_json = Column(Text, default="{}")
+    samples_used = Column(Integer, default=0)
     updated_at = Column(DateTime, default=_now, onupdate=_now)
 
 

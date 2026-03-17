@@ -107,8 +107,15 @@ class UpdateChatRequest(BaseModel):
 class RetrainResponse(BaseModel):
     ok:             bool
     message:        str
-    samples_used:   int  = 0
+    samples_used:   int   = 0
     train_accuracy: float = 0.0
+    test_accuracy:  float = 0.0
+    f1_macro:       float = 0.0
+    cv_f1_mean:     float = 0.0
+    cv_f1_std:      float = 0.0
+    model_type:     str   = "LogisticRegression"
+    confusion_matrix: list[list[int]] = []
+    classification_report: dict = {}
 
 
 # Template schemas
