@@ -1,18 +1,30 @@
 """
-Simple ML classifier for user experience level detection.
-Uses LogisticRegression trained on synthetic + accumulated data.
-Complements the rule-based scoring system.
+ML classifier for user experience level detection.
+Uses scikit-learn models (LogisticRegression, RandomForest, SVC) with
+TF-IDF text features combined with behavioral features.
 """
-import numpy as np
+import base64
 import logging
+import pickle
+from typing import Literal
+
+import numpy as np
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.linear_model import LogisticRegression
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.svm import SVC
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import StandardScaler
+from scipy.sparse import hstack, issparse, csr_matrix
 
 logger = logging.getLogger("ml-classifier")
 
-# Feature names (must match extract_features output)
-FEATURE_NAMES = [
+ModelType = Literal["LogisticRegression", "RandomForest", "SVC"]
+
+# Behavioral feature names (text features are handled by TF-IDF separately)
+BEHAVIORAL_FEATURE_NAMES = [
     "prompt_length",
     "word_count",
-    "tech_term_count",
     "has_structure",
     "chars_per_second",
     "session_message_count",
@@ -21,185 +33,208 @@ FEATURE_NAMES = [
     "tooltip_click_count",
 ]
 
+# Kept for backwards-compat with admin.py imports
+FEATURE_NAMES = BEHAVIORAL_FEATURE_NAMES
 
-def extract_features(prompt_text: str, metrics: dict, count_tech_fn=None, has_structure_fn=None) -> np.ndarray:
-    """Extract feature vector from prompt and behavioral metrics."""
+
+def _make_sklearn_model(model_type: ModelType = "LogisticRegression"):
+    """Create a fresh sklearn estimator by name."""
+    if model_type == "RandomForest":
+        return RandomForestClassifier(
+            n_estimators=100, max_depth=10, class_weight="balanced", random_state=42,
+        )
+    if model_type == "SVC":
+        return SVC(
+            kernel="rbf", probability=True, class_weight="balanced", random_state=42,
+        )
+    # Default: LogisticRegression
+    return LogisticRegression(
+        max_iter=1000, class_weight="balanced", random_state=42,
+    )
+
+
+def extract_behavioral_features(prompt_text: str, metrics: dict, has_structure_fn=None) -> np.ndarray:
+    """Extract behavioral (non-text) feature vector."""
     text = prompt_text.strip()
 
-    # Import here to avoid circular imports, or use passed functions
-    if count_tech_fn is None or has_structure_fn is None:
+    if has_structure_fn is None:
         try:
-            from services.scoring import count_technical_terms, has_structured_patterns
-            count_tech_fn = count_technical_terms
+            from services.scoring import has_structured_patterns
             has_structure_fn = has_structured_patterns
         except ImportError:
-            # Fallback implementations if main not available
-            TECHNICAL_TERMS = {
-                "api", "json", "token", "llm", "gpt", "transformer", "embedding",
-                "fine-tune", "fine-tuning", "rag", "vector", "prompt engineering",
-                "chain-of-thought", "few-shot", "zero-shot", "temperature", "top-p",
-            }
-            def _count_technical_terms(text: str) -> int:
-                lower = text.lower()
-                return sum(1 for term in TECHNICAL_TERMS if term in lower)
+            import re
 
-            def _has_structured_patterns(text: str) -> bool:
-                import re
+            def has_structure_fn(t: str) -> bool:
                 patterns = [
-                    r"\{\{.*?\}\}",
-                    r"```",
-                    r"system\s*(?:message|prompt|:)",
-                    r"step\s*\d",
-                    r"\bif\b.*\bthen\b",
-                    r"(?:^|\n)\s*[-*]\s+",
-                    r"\brole\s*:",
+                    r"\{\{.*?\}\}", r"```", r"system\s*(?:message|prompt|:)",
+                    r"step\s*\d", r"\bif\b.*\bthen\b", r"(?:^|\n)\s*[-*]\s+", r"\brole\s*:",
                 ]
-                return any(re.search(p, text, re.IGNORECASE) for p in patterns)
+                return any(re.search(p, t, re.IGNORECASE) for p in patterns)
 
-            count_tech_fn = _count_technical_terms
-            has_structure_fn = _has_structured_patterns
-
-    features = [
+    return np.array([
         len(text), # prompt_length
         len(text.split()), # word_count
-        count_tech_fn(text), # tech_term_count
         1.0 if has_structure_fn(text) else 0.0, # has_structure
         float(metrics.get("chars_per_second", 0)),
         float(metrics.get("session_message_count", 0)),
         float(metrics.get("avg_prompt_length", 0)),
         float(metrics.get("used_advanced_features_count", 0)),
         float(metrics.get("tooltip_click_count", 0)),
-    ]
-    return np.array(features, dtype=float)
+    ], dtype=float)
 
 
-def _create_synthetic_training_data():
-    """Generate synthetic training data when no real data exists."""
-    # L1 users: short prompts, no tech terms, low speed
-    l1_samples = [
-        ([20, 4, 0, 0, 1.5, 1, 20, 0, 2], 1),
-        ([35, 6, 0, 0, 2.0, 2, 30, 0, 1], 1),
-        ([15, 3, 0, 0, 1.0, 1, 15, 0, 3], 1),
-        ([45, 8, 0, 0, 2.5, 3, 35, 0, 0], 1),
-        ([30, 5, 0, 0, 1.8, 2, 28, 0, 2], 1),
-    ]
-    # L2 users: medium prompts, some tech terms
-    l2_samples = [
-        ([120, 22, 1, 0, 4.0, 5, 110, 1, 0], 2),
-        ([95, 18, 2, 0, 5.0, 4, 100, 2, 0], 2),
-        ([150, 28, 1, 1, 4.5, 6, 130, 1, 1], 2),
-        ([85, 16, 2, 0, 5.5, 5, 90, 3, 0], 2),
-        ([110, 20, 1, 1, 4.2, 7, 105, 2, 0], 2),
-    ]
-    # L3 users: long prompts, many tech terms, fast, uses advanced features
-    l3_samples = [
-        ([280, 55, 5, 1, 8.0, 12, 250, 4, 0], 3),
-        ([350, 70, 7, 1, 9.5, 15, 300, 5, 0], 3),
-        ([220, 45, 4, 1, 7.5, 10, 220, 3, 0], 3),
-        ([400, 80, 8, 1, 10.0, 18, 380, 6, 0], 3),
-        ([310, 62, 6, 1, 8.8, 14, 290, 4, 0], 3),
-    ]
-
-    X = np.array([s[0] for s in l1_samples + l2_samples + l3_samples], dtype=float)
-    y = np.array([s[1] for s in l1_samples + l2_samples + l3_samples])
-    return X, y
+# Legacy alias used by admin.py feedback endpoint
+def extract_features(prompt_text: str, metrics: dict, count_tech_fn=None, has_structure_fn=None) -> np.ndarray:
+    """Legacy wrapper — returns behavioral features only (no TF-IDF).
+    The tech_term_count slot is kept as 0.0 for DB-row backward compat."""
+    beh = extract_behavioral_features(prompt_text, metrics, has_structure_fn)
+    # Insert a zero at index 2 for old tech_term_count position
+    return np.insert(beh, 2, 0.0)
 
 
-class SimpleLogisticClassifier:
-    """Hand-implemented logistic regression for 3-class classification.
-    Avoids scikit-learn dependency — pure numpy."""
+class SklearnClassifier:
+    """Wrapper around sklearn estimator + TfidfVectorizer for serialization to DB."""
 
-    def __init__(self):
-        self.weights = None
-        self.bias = None
-        self.feature_mean = None
-        self.feature_std = None
-        self.classes = [1, 2, 3]
+    def __init__(self, model_type: ModelType = "LogisticRegression"):
+        self.model_type = model_type
+        self.tfidf = TfidfVectorizer(max_features=200, ngram_range=(1, 2), sublinear_tf=True)
+        self.scaler = StandardScaler()
+        self.model = _make_sklearn_model(model_type)
         self.is_trained = False
+        self.classes = [1, 2, 3]
 
-    def _normalize(self, X: np.ndarray) -> np.ndarray:
-        return (X - self.feature_mean) / (self.feature_std + 1e-8)
+    def _build_features(self, texts: list[str], behavioral_X: np.ndarray, fit: bool = False):
+        """Combine TF-IDF text features with behavioral features."""
+        if fit:
+            tfidf_matrix = self.tfidf.fit_transform(texts)
+            behavioral_scaled = self.scaler.fit_transform(behavioral_X)
+        else:
+            tfidf_matrix = self.tfidf.transform(texts)
+            behavioral_scaled = self.scaler.transform(behavioral_X)
 
-    def _softmax(self, z: np.ndarray) -> np.ndarray:
-        e = np.exp(z - z.max(axis=1, keepdims=True))
-        return e / e.sum(axis=1, keepdims=True)
+        behavioral_sparse = csr_matrix(behavioral_scaled)
+        return hstack([tfidf_matrix, behavioral_sparse])
 
-    def fit(self, X: np.ndarray, y: np.ndarray, lr=0.01, epochs=500):
-        self.feature_mean = X.mean(axis=0)
-        self.feature_std = X.std(axis=0)
-        X_norm = self._normalize(X)
-
-        n_samples, n_features = X_norm.shape
-        n_classes = 3
-        self.weights = np.zeros((n_features, n_classes))
-        self.bias = np.zeros(n_classes)
-
-        # One-hot encode y (1,2,3 → 0,1,2)
-        Y = np.zeros((n_samples, n_classes))
-        for i, label in enumerate(y):
-            Y[i, label - 1] = 1
-
-        for _ in range(epochs):
-            z = X_norm @ self.weights + self.bias
-            probs = self._softmax(z)
-            error = probs - Y
-            self.weights -= lr * (X_norm.T @ error) / n_samples
-            self.bias -= lr * error.mean(axis=0)
-
+    def fit(self, texts: list[str], behavioral_X: np.ndarray, y: np.ndarray):
+        """Train on text + behavioral features."""
+        X_combined = self._build_features(texts, behavioral_X, fit=True)
+        self.model.fit(X_combined, y)
         self.is_trained = True
 
-    def predict_proba(self, X: np.ndarray) -> np.ndarray:
-        X_norm = self._normalize(X)
-        z = X_norm @ self.weights + self.bias
-        return self._softmax(z)
+    def predict_proba(self, texts: list[str], behavioral_X: np.ndarray) -> np.ndarray:
+        """Return probability matrix (n_samples, 3)."""
+        X_combined = self._build_features(texts, behavioral_X, fit=False)
+        return self.model.predict_proba(X_combined)
 
-    def predict(self, X: np.ndarray) -> int:
-        proba = self.predict_proba(X)
-        return int(proba.argmax()) + 1 # +1 because classes are 1,2,3
+    def predict(self, text: str, behavioral_features: np.ndarray) -> int:
+        """Predict single sample — returns class label (1, 2, or 3)."""
+        proba = self.predict_proba([text], behavioral_features.reshape(1, -1))
+        return int(proba.argmax()) + 1 if proba[0].argmax() == proba[0].argmax() else int(self.model.predict(self._build_features([text], behavioral_features.reshape(1, -1), fit=False))[0])
 
     def to_dict(self) -> dict:
-        """Serialize model state to a JSON-compatible dict."""
+        """Serialize entire classifier (model + tfidf + scaler) to base64 string in a dict."""
+        blob = pickle.dumps({
+            "model": self.model,
+            "tfidf": self.tfidf,
+            "scaler": self.scaler,
+            "model_type": self.model_type,
+        })
         return {
-            "weights": self.weights.tolist(),
-            "bias": self.bias.tolist(),
-            "feature_mean": self.feature_mean.tolist(),
-            "feature_std": self.feature_std.tolist(),
+            "pickle_b64": base64.b64encode(blob).decode("ascii"),
+            "model_type": self.model_type,
         }
 
     def from_dict(self, data: dict):
-        """Restore model state from a dict."""
-        self.weights = np.array(data["weights"])
-        self.bias = np.array(data["bias"])
-        self.feature_mean = np.array(data["feature_mean"])
-        self.feature_std = np.array(data["feature_std"])
+        """Restore from serialized dict."""
+        blob = base64.b64decode(data["pickle_b64"])
+        state = pickle.loads(blob)  # noqa: S301 — trusted data from our own DB
+        self.model = state["model"]
+        self.tfidf = state["tfidf"]
+        self.scaler = state["scaler"]
+        self.model_type = state.get("model_type", "LogisticRegression")
         self.is_trained = True
 
 
+# Synthetic training data (used when no real feedback exists)
+
+def _create_synthetic_training_data():
+    """Generate synthetic data for cold-start.
+    Returns (texts, behavioral_X, y).
+    """
+    samples = [
+        # L1: short, vague, no structure
+        ("напиши про штучний інтелект", [20, 4, 0, 1.5, 1, 20, 0, 2], 1),
+        ("що таке машинне навчання", [35, 6, 0, 2.0, 2, 30, 0, 1], 1),
+        ("розкажи про нейронні мережі", [15, 3, 0, 1.0, 1, 15, 0, 3], 1),
+        ("як працює chatgpt", [45, 8, 0, 2.5, 3, 35, 0, 0], 1),
+        ("що можна зробити з ai", [30, 5, 0, 1.8, 2, 28, 0, 2], 1),
+        # L2: medium, some technical terms, some structure
+        ("Поясни як працює fine-tuning моделей GPT. Які є підходи до transfer learning?",
+         [120, 22, 0, 4.0, 5, 110, 1, 0], 2),
+        ("Порівняй RAG та fine-tuning для побудови чат-бота з власними даними у форматі таблиці",
+         [95, 18, 0, 5.0, 4, 100, 2, 0], 2),
+        ("Напиши приклад використання LangChain з vector store для пошуку по документах",
+         [150, 28, 1, 4.5, 6, 130, 1, 1], 2),
+        ("Як налаштувати temperature та top-p параметри для різних задач генерації тексту?",
+         [85, 16, 0, 5.5, 5, 90, 3, 0], 2),
+        ("Поясни різницю між embedding моделями та генеративними LLM. Наведи приклади використання",
+         [110, 20, 1, 4.2, 7, 105, 2, 0], 2),
+        # L3: long, structured, heavy technical vocabulary
+        ("Act as a senior ML engineer. Compare transformer attention mechanisms: "
+         "self-attention vs cross-attention vs multi-head attention. "
+         "Provide code examples in PyTorch and analyze computational complexity O(n²d).",
+         [280, 55, 1, 8.0, 12, 250, 4, 0], 3),
+        ("Ти — експерт з NLP. Розроби pipeline для класифікації тексту: "
+         "1) TF-IDF vectorization 2) Feature engineering 3) Model selection (LogReg vs SVM vs RF) "
+         "4) Hyperparameter tuning з GridSearchCV 5) Evaluation з confusion matrix та ROC-AUC.",
+         [350, 70, 1, 9.5, 15, 300, 5, 0], 3),
+        ("Design a RAG system architecture using ChromaDB as vector store, "
+         "OpenAI embeddings for retrieval, and implement chain-of-thought prompting "
+         "with few-shot examples. Include error handling and streaming.",
+         [220, 45, 1, 7.5, 10, 220, 3, 0], 3),
+        ("Реалізуй REST API на FastAPI з WebSocket streaming для LLM inference. "
+         "Використай async/await, connection pooling для PostgreSQL, "
+         "Redis кеш для embeddings, та Docker compose для деплою. "
+         "Покажи Dockerfile та CI/CD pipeline.",
+         [400, 80, 1, 10.0, 18, 380, 6, 0], 3),
+        ("Implement ablation study: train Random Forest classifier, "
+         "compute SHAP values for feature importance, plot learning curves, "
+         "and compare precision/recall/F1 across 5-fold cross-validation. "
+         "Use scikit-learn Pipeline with StandardScaler.",
+         [310, 62, 1, 8.8, 14, 290, 4, 0], 3),
+    ]
+
+    texts = [s[0] for s in samples]
+    behavioral_X = np.array([s[1] for s in samples], dtype=float)
+    y = np.array([s[2] for s in samples])
+    return texts, behavioral_X, y
+
+
 # Global classifier instance
-_classifier = SimpleLogisticClassifier()
+
+_classifier = SklearnClassifier()
 
 
-def get_classifier() -> SimpleLogisticClassifier:
-    """Return the global classifier instance."""
+def get_classifier() -> SklearnClassifier:
     return _classifier
 
 
 def _train_fresh():
-    """Train the classifier on synthetic data."""
+    """Train on synthetic data for cold-start."""
     global _classifier
-    X, y = _create_synthetic_training_data()
-    _classifier.fit(X, y)
-    logger.info("[ml] Model trained on synthetic data")
+    texts, behavioral_X, y = _create_synthetic_training_data()
+    _classifier.fit(texts, behavioral_X, y)
+    logger.info("[ml] Model trained on synthetic data (sklearn)")
 
 
 def ml_predict(prompt_text: str, metrics: dict, count_tech_fn=None, has_structure_fn=None) -> tuple[int, float]:
-    """
-    Returns (predicted_level: int, confidence: float)
-    """
+    """Returns (predicted_level, confidence)."""
     try:
         clf = get_classifier()
-        features = extract_features(prompt_text, metrics, count_tech_fn, has_structure_fn)
-        proba = clf.predict_proba(features.reshape(1, -1))[0]
+        if not clf.is_trained:
+            return 1, 0.0
+        behavioral = extract_behavioral_features(prompt_text, metrics, has_structure_fn)
+        proba = clf.predict_proba([prompt_text], behavioral.reshape(1, -1))[0]
         predicted_class = int(proba.argmax()) + 1
         confidence = float(proba.max())
         return predicted_class, confidence
