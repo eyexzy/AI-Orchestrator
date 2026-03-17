@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import remarkGfm from "remark-gfm";
@@ -312,7 +312,7 @@ function TaskListItem({ checked, children }: { checked?: boolean; children: Reac
 
 /* MarkdownRenderer */
 export function MarkdownRenderer({ content }: { content: string }) {
-  const components: Components = {
+  const components: Components = useMemo(() => ({
     code({ className, children }) {
       const match = /language-(\w+)/.exec(className || "");
       const code = String(children).replace(/\n$/, "");
@@ -345,7 +345,7 @@ export function MarkdownRenderer({ content }: { content: string }) {
       }
       return <li>{children}</li>;
     },
-  };
+  }), []);
 
   return (
     <div className="md text-[15px] leading-7">

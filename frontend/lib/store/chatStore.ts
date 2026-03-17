@@ -10,6 +10,7 @@ export type Role = "user" | "assistant";
 export interface ChatSession {
   id: string;
   title: string;
+  is_favorite: boolean;
   created_at: string;
   updated_at: string;
   message_count: number;
@@ -83,6 +84,7 @@ interface ChatState {
   createNewChat: (userEmail: string) => Promise<string | null>;
   deleteChat: (id: string) => Promise<void>;
   renameChat: (id: string, title: string) => Promise<void>;
+  toggleFavorite: (id: string) => Promise<void>;
   sendMessage: (text: string, opts: SendMessageOpts) => Promise<ChatMessage | null>;
   clearMessages: () => void;
 
@@ -395,6 +397,29 @@ export const useChatStore = create<ChatState>((set, get) => ({
       }));
     } catch {
       toast.error("Failed to rename chat");
+    }
+  },
+
+  toggleFavorite: async (id) => {
+    const chat = get().chats.find((c) => c.id === id);
+    if (!chat) return;
+    const newValue = !chat.is_favorite;
+    // Optimistic update
+    set((s) => ({
+      chats: s.chats.map((c) => (c.id === id ? { ...c, is_favorite: newValue } : c)),
+    }));
+    try {
+      await fetch(`/api/chats/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ is_favorite: newValue }),
+      });
+    } catch {
+      // Revert on failure
+      set((s) => ({
+        chats: s.chats.map((c) => (c.id === id ? { ...c, is_favorite: !newValue } : c)),
+      }));
+      toast.error("Failed to update favorite");
     }
   },
 

@@ -12,41 +12,42 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { useUserLevelStore } from "@/lib/store/userLevelStore";
+import { useTranslation } from "@/lib/store/i18nStore";
 
 type Step = 1 | 2 | 3;
 
 const STORAGE_KEY = "ai_orchestrator_onboarded";
 
 interface Option {
-  label: string;
+  key: string;
   score: number;
 }
 
 const STEP_OPTIONS: Record<Step, Option[]> = {
   1: [
-    { label: "Never heard of it", score: 0 },
-    { label: "Tried a few times", score: 1 },
-    { label: "Use it regularly", score: 2 },
-    { label: "It's part of my daily work", score: 3 },
+    { key: "onboarding.q1a0", score: 0 },
+    { key: "onboarding.q1a1", score: 1 },
+    { key: "onboarding.q1a2", score: 2 },
+    { key: "onboarding.q1a3", score: 3 },
   ],
   2: [
-    { label: "I just type questions like Google", score: 0 },
-    { label: "I try to be more specific", score: 1 },
-    { label: "I know about roles, context, format", score: 2 },
-    { label: "I use system prompts, chain-of-thought", score: 3 },
+    { key: "onboarding.q2a0", score: 0 },
+    { key: "onboarding.q2a1", score: 1 },
+    { key: "onboarding.q2a2", score: 2 },
+    { key: "onboarding.q2a3", score: 3 },
   ],
   3: [
-    { label: "Learn to write better prompts", score: 0 },
-    { label: "Chat comfortably with AI", score: 1 },
-    { label: "Test different models and parameters", score: 2 },
-    { label: "Full control: JSON, system prompts, comparison", score: 3 },
+    { key: "onboarding.q3a0", score: 0 },
+    { key: "onboarding.q3a1", score: 1 },
+    { key: "onboarding.q3a2", score: 2 },
+    { key: "onboarding.q3a3", score: 3 },
   ],
 };
 
-const STEP_TITLES: Record<Step, string> = {
-  1: "How often do you work with AI tools?",
-  2: "What best describes your prompt experience?",
-  3: "What do you want from this app?",
+const STEP_TITLE_KEYS: Record<Step, string> = {
+  1: "onboarding.q1",
+  2: "onboarding.q2",
+  3: "onboarding.q3",
 };
 
 function computeStartLevel(s1: number, s2: number, s3: number): 1 | 2 | 3 {
@@ -56,6 +57,7 @@ function computeStartLevel(s1: number, s2: number, s3: number): 1 | 2 | 3 {
 }
 
 export function OnboardingModal() {
+  const { t }: { t: (key: string) => string } = useTranslation();
   const [open, setOpen] = useState(false);
   const [step, setStep] = useState<Step>(1);
   const [step1, setStep1] = useState<number | null>(null);
@@ -131,10 +133,10 @@ export function OnboardingModal() {
             <div>
               <DialogTitle className="flex items-center gap-2 text-base">
                 <Sparkles size={18} strokeWidth={2} className="text-blue-700" />
-                <span>Welcome to AI-Orchestrator</span>
+                <span>{t("onboarding.welcome")}</span>
               </DialogTitle>
               <DialogDescription className="mt-1 text-sm">
-                Your answers will help us pick the right starting interface level.
+                {t("onboarding.description")}
               </DialogDescription>
             </div>
             <span className="rounded-full border border-gray-alpha-200 bg-gray-alpha-100 px-2 py-1 text-xs font-mono text-ds-text-tertiary">
@@ -162,7 +164,7 @@ export function OnboardingModal() {
                       : "border-gray-alpha-200 bg-gray-alpha-50 text-ds-text-tertiary"
                     }`}
                 >
-                  Step {s}
+                  {t("onboarding.step")} {s}
                 </div>
               );
             })}
@@ -172,14 +174,14 @@ export function OnboardingModal() {
         {/* Question & options */}
         <div className="px-6 py-5 space-y-4">
           <p className="text-[15px] font-medium text-ds-text">
-            {STEP_TITLES[step]}
+            {t(STEP_TITLE_KEYS[step])}
           </p>
           <div className="grid gap-2">
             {options.map((opt) => {
               const isSelected = selectedScore === opt.score;
               return (
                 <button
-                  key={opt.label}
+                  key={opt.key}
                   type="button"
                   onClick={() => {
                     if (step === 1) setStep1(opt.score);
@@ -191,7 +193,7 @@ export function OnboardingModal() {
                     : "border-gray-alpha-200 bg-gray-alpha-100 text-ds-text-secondary hover:border-gray-alpha-300 hover:bg-gray-alpha-200"
                     }`}
                 >
-                  <span>{opt.label}</span>
+                  <span>{t(opt.key)}</span>
                   <span
                     className={`h-4 w-4 shrink-0 rounded-full border-2 transition-colors ${isSelected
                       ? "border-foreground bg-foreground"
@@ -213,7 +215,7 @@ export function OnboardingModal() {
               onClick={handleSkip}
               className="h-auto px-0 text-sm text-ds-text-tertiary hover:text-ds-text-secondary"
             >
-              Skip
+              {t("onboarding.skip")}
             </Button>
           ) : (
             <div />
@@ -226,7 +228,7 @@ export function OnboardingModal() {
                 disabled={!canProceed}
                 rightIcon={<ChevronRight size={14} strokeWidth={2} />}
               >
-                Next
+                {t("onboarding.next")}
               </Button>
             )}
             {isLastStep && (
@@ -235,7 +237,7 @@ export function OnboardingModal() {
                 disabled={!canProceed}
                 rightIcon={<ArrowRight size={14} strokeWidth={2} />}
               >
-                Get started
+                {t("onboarding.getStarted")}
               </Button>
             )}
           </div>

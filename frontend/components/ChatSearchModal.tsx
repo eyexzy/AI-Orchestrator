@@ -7,6 +7,7 @@ import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useChatStore, type ChatSession } from "@/lib/store/chatStore";
+import { useTranslation } from "@/lib/store/i18nStore";
 
 interface SearchResult {
   chat_id: string;
@@ -24,6 +25,7 @@ export function ChatSearchModal({
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
+  const { t } = useTranslation();
   const { data: session } = useSession();
   const userEmail = session?.user?.email ?? "anonymous";
   const inputRef = useRef<HTMLInputElement>(null);
@@ -98,7 +100,7 @@ export function ChatSearchModal({
             size="md"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search across all workspaces..."
+            placeholder={t("search.placeholder")}
             className="flex-1"
             inputClassName="text-lg"
           />
@@ -123,7 +125,7 @@ export function ChatSearchModal({
                   className="flex w-full items-center gap-3 rounded-lg px-4 py-2.5 text-sm text-ds-text transition-colors hover:bg-gray-alpha-200 hover:text-ds-text bg-transparent border-none cursor-pointer"
                 >
                   <Plus size={16} strokeWidth={2} className="text-ds-text-secondary" />
-                  New Chat
+                  {t("search.newChat")}
                 </button>
                 <button
                   type="button"
@@ -131,7 +133,7 @@ export function ChatSearchModal({
                   className="flex w-full items-center gap-3 rounded-lg px-4 py-2.5 text-sm text-ds-text transition-colors hover:bg-gray-alpha-200 hover:text-ds-text bg-transparent border-none cursor-pointer"
                 >
                   <Clock size={16} strokeWidth={2} className="text-ds-text-secondary" />
-                  All Recent Chats
+                  {t("search.allRecent")}
                 </button>
                 <button
                   type="button"
@@ -139,14 +141,14 @@ export function ChatSearchModal({
                   className="flex w-full items-center gap-3 rounded-lg px-4 py-2.5 text-sm text-ds-text transition-colors hover:bg-gray-alpha-200 hover:text-ds-text bg-transparent border-none cursor-pointer"
                 >
                   <Folder size={16} strokeWidth={2} className="text-ds-text-secondary" />
-                  Projects
+                  {t("search.projects")}
                 </button>
               </div>
 
               {chats.length > 0 && (
                 <>
                   <div className="px-4 py-2 mt-2 text-xs font-semibold uppercase tracking-wider text-ds-text-tertiary">
-                    Recent Chats
+                    {t("search.recentChats")}
                   </div>
                   <div className="space-y-0.5">
                     {chats.slice(0, 5).map((chat) => (
@@ -172,7 +174,7 @@ export function ChatSearchModal({
                        
                         className="w-full text-left text-sm text-ds-text-secondary px-4 py-2 hover:text-ds-text bg-transparent border-none cursor-pointer"
                       >
-                        View All...
+                        {t("search.viewAll")}
                       </button>
                     )}
                   </div>
@@ -218,7 +220,7 @@ export function ChatSearchModal({
           ) : (
             /* No results */
             <p className="px-4 py-6 text-center text-sm text-ds-text-tertiary">
-              No chats found
+              {t("search.noResults")}
             </p>
           )}
         </div>

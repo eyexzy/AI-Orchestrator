@@ -48,7 +48,19 @@ export function ChatLayout() {
     }
   }, []);
 
-  const [model, setModel] = useState("llama-3.3-70b");
+  const defaultModel = useMemo(() => {
+    const available = models.filter((m) => m.available);
+    const gemini = available.find((m) => m.value === "gemini-2.0-flash");
+    return gemini?.value ?? available[0]?.value ?? "gemini-2.0-flash";
+  }, [models]);
+
+  const secondModel = useMemo(() => {
+    const available = models.filter((m) => m.available);
+    const other = available.find((m) => m.value !== defaultModel);
+    return other?.value ?? defaultModel;
+  }, [models, defaultModel]);
+
+  const [model, setModel] = useState(defaultModel);
   const [temperature, setTemperature] = useState(0.7);
   const [maxTokens, setMaxTokens] = useState(1024);
   const [system, setSystem] = useState(() => getDefaultSystem());
@@ -57,14 +69,25 @@ export function ChatLayout() {
   const [topP, setTopP] = useState(1.0);
   const [fewShotExamples, setFewShotExamples] = useState<FewShotExample[]>([]);
   const [compareEnabled, setCompareEnabled] = useState(false);
-  const [compareModelA, setCompareModelA] = useState("llama-3.3-70b");
-  const [compareModelB, setCompareModelB] = useState("gemini-2.0-flash");
+  const [compareModelA, setCompareModelA] = useState(defaultModel);
+  const [compareModelB, setCompareModelB] = useState(secondModel);
   const [rawJsonEnabled, setRawJsonEnabled] = useState(false);
   const [selfConsistencyEnabled, setSelfConsistencyEnabled] = useState(false);
   const [mobileConfigOpen, setMobileConfigOpen] = useState(false);
   const [templatePrompt, setTemplatePrompt] = useState<string | null>(null);
   const [inputVariableNames, setInputVariableNames] = useState<string[]>([]);
   const prevVarCountRef = useRef(0);
+
+  // Sync model selection when models load from backend
+  const modelsInitialized = useRef(false);
+  useEffect(() => {
+    if (!modelsInitialized.current && models.length > 0) {
+      modelsInitialized.current = true;
+      setModel(defaultModel);
+      setCompareModelA(defaultModel);
+      setCompareModelB(secondModel);
+    }
+  }, [models, defaultModel, secondModel]);
 
   const handleInputVariableNamesChange = useCallback((names: string[]) => {
     setInputVariableNames((prev) => (sameNames(prev, names) ? prev : names));

@@ -99,7 +99,8 @@ class CreateChatRequest(BaseModel):
 
 
 class UpdateChatRequest(BaseModel):
-    title: str
+    title: Optional[str] = None
+    is_favorite: Optional[bool] = None
 
 
 # ML retrain schema
