@@ -3,16 +3,15 @@ import io
 import json
 import logging
 import time
-from typing import Optional
 
 import numpy as np
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import ml_classifier
-from ml_classifier import FEATURE_NAMES, extract_behavioral_features
+from ml_classifier import FEATURE_NAMES
 from database import InteractionLog, MLFeedback, MLModelCache
 from dependencies import limiter, check_admin_key, get_db
 from schemas.api import TrainingFeedback, RetrainResponse
@@ -27,10 +26,16 @@ router = APIRouter()
 # Health & models
 
 @router.get("/health")
-async def health():
+async def health(db: AsyncSession = Depends(get_db)):
+    try:
+        await db.execute(text("SELECT 1"))
+        db_status = "connected"
+    except Exception:
+        raise HTTPException(status_code=503, detail="Database unavailable")
     return {
         "status":           "ok",
         "version":          "0.9.0",
+        "db":               db_status,
         "providers":        {name: True for name in clients},
         "available_models": len(AVAILABLE_MODELS),
     }
@@ -78,33 +83,33 @@ async def test_providers(request: Request):
 @limiter.limit("20/minute")
 @router.post("/ml/feedback", dependencies=[Depends(check_admin_key)])
 async def ml_feedback(request: Request, data: TrainingFeedback, db: AsyncSession = Depends(get_db)):
+    metrics_dict = {
+        "chars_per_second":             data.metrics.chars_per_second,
+        "session_message_count":        data.metrics.session_message_count,
+        "avg_prompt_length":            data.metrics.avg_prompt_length,
+        "used_advanced_features_count": getattr(data.metrics, "used_advanced_features_count", 0),
+        "tooltip_click_count":          getattr(data.metrics, "tooltip_click_count", 0),
+    }
     try:
-        metrics_dict = {
-            "chars_per_second":             data.metrics.chars_per_second,
-            "session_message_count":        data.metrics.session_message_count,
-            "avg_prompt_length":            data.metrics.avg_prompt_length,
-            "used_advanced_features_count": getattr(data.metrics, "used_advanced_features_count", 0),
-            "tooltip_click_count":          getattr(data.metrics, "tooltip_click_count", 0),
-        }
         features = ml_classifier.extract_features(data.prompt_text, metrics_dict, count_technical_terms, has_structured_patterns)
-        row = MLFeedback(
-            prompt_text=data.prompt_text,
-            prompt_length=float(features[0]),
-            word_count=float(features[1]),
-            tech_term_count=float(features[2]),
-            has_structure=float(features[3]),
-            chars_per_second=float(features[4]),
-            session_message_count=float(features[5]),
-            avg_prompt_length=float(features[6]),
-            used_advanced_features_count=float(features[7]),
-            tooltip_click_count=float(features[8]),
-            actual_level=data.actual_level,
-        )
-        db.add(row)
-        await db.commit()
-        return {"ok": True, "message": "Feedback saved"}
     except Exception as e:
-        return {"ok": False, "error": str(e)}
+        raise HTTPException(status_code=400, detail=f"Feature extraction failed: {e}")
+    row = MLFeedback(
+        prompt_text=data.prompt_text,
+        prompt_length=float(features[0]),
+        word_count=float(features[1]),
+        tech_term_count=float(features[2]),
+        has_structure=float(features[3]),
+        chars_per_second=float(features[4]),
+        session_message_count=float(features[5]),
+        avg_prompt_length=float(features[6]),
+        used_advanced_features_count=float(features[7]),
+        tooltip_click_count=float(features[8]),
+        actual_level=data.actual_level,
+    )
+    db.add(row)
+    await db.commit()
+    return {"ok": True, "message": "Feedback saved"}
 
 
 @router.post("/ml/retrain", response_model=RetrainResponse, dependencies=[Depends(check_admin_key)])
@@ -182,7 +187,7 @@ async def ml_retrain(
 
     except Exception as e:
         logger.error(f"[retrain] {e}")
-        return RetrainResponse(ok=False, message=f"Retrain failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Retrain failed: {e}")
 
 
 # Export / stats

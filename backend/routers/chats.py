@@ -1,6 +1,6 @@
 import json
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from fastapi.responses import JSONResponse
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -17,6 +17,8 @@ async def list_chats(
     db: AsyncSession = Depends(get_db),
     _api_key: str = Depends(check_admin_key),
     user_email: str = Depends(get_current_user),
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
 ):
     stmt = (
         select(ChatSession, func.count(ChatMessage.id).label("msg_count"))
@@ -24,6 +26,8 @@ async def list_chats(
         .where(ChatSession.user_email == user_email)
         .group_by(ChatSession.id)
         .order_by(ChatSession.updated_at.desc())
+        .limit(limit)
+        .offset(offset)
     )
     result = await db.execute(stmt)
     rows = result.all()
@@ -62,10 +66,12 @@ async def create_chat(
 
 @router.get("/chats/search")
 async def search_chats(
-    query: str,
+    query: str = Query(..., max_length=200),
     db: AsyncSession = Depends(get_db),
     _api_key: str = Depends(check_admin_key),
     user_email: str = Depends(get_current_user),
+    limit: int = Query(default=20, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
 ):
     pattern = f"%{query}%"
     results: list[dict] = []
@@ -80,7 +86,7 @@ async def search_chats(
             ChatMessage.content.ilike(pattern),
         )
         .order_by(ChatMessage.created_at.desc())
-        .limit(20)
+        .limit(limit)
     )
     msg_rows = (await db.execute(msg_stmt)).all()
     for msg, chat in msg_rows:
@@ -105,7 +111,7 @@ async def search_chats(
             ChatSession.title.ilike(pattern),
         )
         .order_by(ChatSession.updated_at.desc())
-        .limit(20)
+        .limit(limit)
     )
     title_rows = (await db.execute(title_stmt)).scalars().all()
     for chat in title_rows:
@@ -119,9 +125,9 @@ async def search_chats(
                 "updated_at":      chat.updated_at.isoformat() if chat.updated_at else "",
             })
 
-    # Sort combined results by updated_at desc, limit to 20
+    # Sort combined results by updated_at desc, apply offset/limit
     results.sort(key=lambda r: r["updated_at"], reverse=True)
-    return results[:20]
+    return results[offset:offset + limit]
 
 
 @router.get("/chats/{chat_id}/messages")
