@@ -4,24 +4,31 @@ import json
 import logging
 import time
 
-import numpy as np
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-import ml_classifier
-from ml_classifier import FEATURE_NAMES
 from database import InteractionLog, MLFeedback, MLModelCache
-from dependencies import limiter, check_admin_key, get_db
-from schemas.api import TrainingFeedback, RetrainResponse
+from dependencies import check_admin_key, get_db, limiter
+from schemas.api import RetrainResponse
+from services.cache import cache
 from services.llm import clients, AVAILABLE_MODELS
-from services.scoring import count_technical_terms, has_structured_patterns
-from retrain import train_and_evaluate, _load_data_from_rows
+from retrain import retrain_from_db
 
 logger = logging.getLogger("ai-orchestrator")
 
 router = APIRouter()
+
+MODELS_CACHE_KEY = "public:models"
+MODELS_CACHE_TTL_SECONDS = 60
+ADMIN_STATS_CACHE_KEY = "admin:stats"
+ADMIN_ML_STATS_CACHE_KEY = "admin:stats:ml"
+ADMIN_STATS_CACHE_TTL_SECONDS = 30
+
+
+async def _invalidate_admin_stats_cache() -> None:
+    await cache.delete_many([ADMIN_STATS_CACHE_KEY, ADMIN_ML_STATS_CACHE_KEY])
 
 # Health & models
 
@@ -43,12 +50,19 @@ async def health(db: AsyncSession = Depends(get_db)):
 
 @router.get("/models")
 async def list_models():
-    result = {}
-    for model_id, info in AVAILABLE_MODELS.items():
-        provider  = info["provider"]
-        available = provider in clients
-        result[model_id] = {**info, "available": available}
-    return {"models": result}
+    async def build_models_payload():
+        result = {}
+        for model_id, info in AVAILABLE_MODELS.items():
+            provider = info["provider"]
+            available = provider in clients
+            result[model_id] = {**info, "available": available}
+        return {"models": result, "cache_backend": cache.backend_name}
+
+    return await cache.get_or_set_json(
+        MODELS_CACHE_KEY,
+        MODELS_CACHE_TTL_SECONDS,
+        build_models_payload,
+    )
 
 
 # Provider test
@@ -74,102 +88,28 @@ async def test_providers(request: Request):
             text   = resp.choices[0].message.content or ""
             results[name] = {"status": "ok", "model": test_model, "response": text[:50], "latency_ms": latency}
         except Exception as e:
-            results[name] = {"status": "error", "model": test_model, "error": f"{type(e).__name__}: {e}"}
+            logger.error(f"[test-providers] {name} failed: {type(e).__name__}: {e}")
+            results[name] = {"status": "error", "model": test_model, "error": "Provider test failed"}
     return {"providers": results}
-
-
-# ML feedback & retrain
-
-@limiter.limit("20/minute")
-@router.post("/ml/feedback", dependencies=[Depends(check_admin_key)])
-async def ml_feedback(request: Request, data: TrainingFeedback, db: AsyncSession = Depends(get_db)):
-    metrics_dict = {
-        "chars_per_second":             data.metrics.chars_per_second,
-        "session_message_count":        data.metrics.session_message_count,
-        "avg_prompt_length":            data.metrics.avg_prompt_length,
-        "used_advanced_features_count": getattr(data.metrics, "used_advanced_features_count", 0),
-        "tooltip_click_count":          getattr(data.metrics, "tooltip_click_count", 0),
-    }
-    try:
-        features = ml_classifier.extract_features(data.prompt_text, metrics_dict, count_technical_terms, has_structured_patterns)
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Feature extraction failed: {e}")
-    row = MLFeedback(
-        prompt_text=data.prompt_text,
-        prompt_length=float(features[0]),
-        word_count=float(features[1]),
-        tech_term_count=float(features[2]),
-        has_structure=float(features[3]),
-        chars_per_second=float(features[4]),
-        session_message_count=float(features[5]),
-        avg_prompt_length=float(features[6]),
-        used_advanced_features_count=float(features[7]),
-        tooltip_click_count=float(features[8]),
-        actual_level=data.actual_level,
-    )
-    db.add(row)
-    await db.commit()
-    return {"ok": True, "message": "Feedback saved"}
 
 
 @router.post("/ml/retrain", response_model=RetrainResponse, dependencies=[Depends(check_admin_key)])
 async def ml_retrain(
     request: Request,
     model_type: str = Query(default="LogisticRegression", regex="^(LogisticRegression|RandomForest|SVC)$"),
-    db: AsyncSession = Depends(get_db),
+    min_samples: int = Query(default=10, ge=0),
+    use_tuning: bool = Query(default=True),
 ):
-    """Retrain the ML classifier with proper train/test split and cross-validation."""
+    """Retrain the ML classifier with optional tuning for supported models."""
     try:
-        result = await db.execute(select(MLFeedback))
-        rows = result.scalars().all()
-
-        # Combine with synthetic data if not enough real data
-        syn_texts, syn_beh, syn_y = ml_classifier._create_synthetic_training_data()
-
-        if len(rows) >= 10:
-            texts, behavioral_X, y = _load_data_from_rows(rows)
-        elif rows:
-            real_texts, real_beh, real_y = _load_data_from_rows(rows)
-            texts = list(syn_texts) + list(real_texts)
-            behavioral_X = np.vstack([syn_beh, real_beh])
-            y = np.concatenate([syn_y, real_y])
-        else:
-            return RetrainResponse(
-                ok=False,
-                message=f"No feedback samples. Collect at least 10.",
-                samples_used=0,
-            )
-
-        eval_result = train_and_evaluate(texts, behavioral_X, y, model_type=model_type)
+        eval_result = await retrain_from_db(
+            min_samples=min_samples,
+            model_type=model_type,
+            use_tuning=use_tuning,
+        )
         clf = eval_result["classifier"]
-
-        # Persist model to DB
-        weights_json = json.dumps(clf.to_dict())
-        report_json = json.dumps(eval_result["classification_report"], ensure_ascii=False)
-
-        existing = await db.execute(select(MLModelCache).where(MLModelCache.id == 1))
-        cache_row = existing.scalar_one_or_none()
-        if cache_row:
-            cache_row.weights_json = weights_json
-            cache_row.model_type = model_type
-            cache_row.accuracy = eval_result["accuracy"]
-            cache_row.f1_score = eval_result["f1_macro"]
-            cache_row.classification_report_json = report_json
-            cache_row.samples_used = eval_result["samples_total"]
-        else:
-            db.add(MLModelCache(
-                id=1,
-                weights_json=weights_json,
-                model_type=model_type,
-                accuracy=eval_result["accuracy"],
-                f1_score=eval_result["f1_macro"],
-                classification_report_json=report_json,
-                samples_used=eval_result["samples_total"],
-            ))
-        await db.commit()
-
-        # Update in-memory classifier
         ml_classifier._classifier.from_dict(clf.to_dict())
+        await _invalidate_admin_stats_cache()
 
         return RetrainResponse(
             ok=True,
@@ -181,13 +121,15 @@ async def ml_retrain(
             cv_f1_mean=eval_result["cv_f1_mean"],
             cv_f1_std=eval_result["cv_f1_std"],
             model_type=model_type,
+            model_params=eval_result.get("model_params", {}),
+            tuning=eval_result.get("tuning"),
             confusion_matrix=eval_result["confusion_matrix"],
             classification_report=eval_result["classification_report"],
         )
 
     except Exception as e:
-        logger.error(f"[retrain] {e}")
-        raise HTTPException(status_code=500, detail=f"Retrain failed: {e}")
+        logger.error(f"[retrain] Retrain failed: {type(e).__name__}: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 # Export / stats
@@ -216,77 +158,114 @@ async def export_csv(db: AsyncSession = Depends(get_db)):
 
 @router.get("/stats", dependencies=[Depends(check_admin_key)])
 async def stats(db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(func.count(InteractionLog.id)))
-    total = result.scalar() or 0
-    return {"total_interactions": total}
+    async def build_stats_payload():
+        result = await db.execute(select(func.count(InteractionLog.id)))
+        total = result.scalar() or 0
+        return {
+            "total_interactions": total,
+            "cache_backend": cache.backend_name,
+        }
+
+    return await cache.get_or_set_json(
+        ADMIN_STATS_CACHE_KEY,
+        ADMIN_STATS_CACHE_TTL_SECONDS,
+        build_stats_payload,
+    )
 
 
 @router.get("/stats/ml", dependencies=[Depends(check_admin_key)])
 async def ml_stats(db: AsyncSession = Depends(get_db)):
-    # Fetch saved model metadata
-    model_meta = {}
-    model_row = await db.execute(select(MLModelCache).where(MLModelCache.id == 1))
-    cached = model_row.scalar_one_or_none()
-    if cached:
-        model_meta = {
-            "model_type": cached.model_type or "LogisticRegression",
-            "accuracy": cached.accuracy or 0.0,
-            "f1_score": cached.f1_score or 0.0,
-            "samples_used": cached.samples_used or 0,
-            "updated_at": cached.updated_at.isoformat() if cached.updated_at else None,
-            "classification_report": json.loads(cached.classification_report_json or "{}"),
-        }
+    async def build_ml_stats_payload():
+        model_meta = {}
+        model_row = await db.execute(
+            select(MLModelCache)
+            .order_by(MLModelCache.updated_at.desc(), MLModelCache.id.desc())
+            .limit(1)
+        )
+        cached = model_row.scalars().first()
+        if cached:
+            model_meta = {
+                "model_type": cached.model_type or "LogisticRegression",
+                "accuracy": cached.accuracy or 0.0,
+                "f1_score": cached.f1_score or 0.0,
+                "samples_used": cached.samples_used or 0,
+                "updated_at": cached.updated_at.isoformat() if cached.updated_at else None,
+                "classification_report": json.loads(cached.classification_report_json or "{}"),
+            }
 
-    # Feedback stats
-    fb_result = await db.execute(select(func.count(MLFeedback.id)))
-    feedback_count = fb_result.scalar() or 0
+        fb_result = await db.execute(select(func.count(MLFeedback.id)))
+        feedback_count = fb_result.scalar() or 0
 
-    # Interaction log stats
-    result = await db.execute(
-        select(InteractionLog).order_by(InteractionLog.timestamp.asc())
-    )
-    logs = result.scalars().all()
-    if not logs:
-        return {
-            "total": 0,
-            "feedback_samples": feedback_count,
-            "level_distribution": {1: 0, 2: 0, 3: 0},
-            "avg_score_by_level": {1: 0.0, 2: 0.0, 3: 0.0},
-            "avg_normalized_by_level": {1: 0.0, 2: 0.0, 3: 0.0},
-            "confusion_matrix": [[0, 0, 0], [0, 0, 0], [0, 0, 0]],
-            "ml_accuracy": 0.0,
-            "model_info": model_meta,
-        }
+        result = await db.execute(
+            select(InteractionLog).order_by(InteractionLog.timestamp.asc())
+        )
+        logs = result.scalars().all()
+        if not logs:
+            return {
+                "total": 0,
+                "feedback_samples": feedback_count,
+                "level_distribution": {1: 0, 2: 0, 3: 0},
+                "avg_score_by_level": {1: 0.0, 2: 0.0, 3: 0.0},
+                "avg_normalized_by_level": {1: 0.0, 2: 0.0, 3: 0.0},
+                "confusion_matrix": [[0, 0, 0], [0, 0, 0], [0, 0, 0]],
+                "ml_accuracy": 0.0,
+                "model_info": model_meta,
+                "cache_backend": cache.backend_name,
+            }
 
-    level_dist = {1: 0, 2: 0, 3: 0}
-    score_by_level = {1: [], 2: [], 3: []}
-    norm_by_level = {1: [], 2: [], 3: []}
-    confusion = [[0, 0, 0], [0, 0, 0], [0, 0, 0]]
-    ml_correct = 0
+        level_dist = {1: 0, 2: 0, 3: 0}
+        score_by_level = {1: [], 2: [], 3: []}
+        norm_by_level = {1: [], 2: [], 3: []}
+        confusion = [[0, 0, 0], [0, 0, 0], [0, 0, 0]]
+        ml_correct = 0
+        actual_levels: list[int] = []
+        prompt_texts: list[str] = []
+        metrics_list: list[dict] = []
 
-    for log in logs:
-        lvl = max(1, min(3, log.user_level))
-        level_dist[lvl] += 1
-        score_by_level[lvl].append(log.score_awarded or 0)
-        norm_by_level[lvl].append(log.normalized_score or 0)
-        try:
-            metrics_dict = json.loads(log.metrics_json or "{}")
-            ml_level, _ = ml_classifier.ml_predict(log.prompt_text or "", metrics_dict)
+        for log in logs:
+            lvl = max(1, min(3, log.user_level))
+            actual_levels.append(lvl)
+            level_dist[lvl] += 1
+            score_by_level[lvl].append(log.score_awarded or 0)
+            norm_by_level[lvl].append(log.normalized_score or 0)
+            try:
+                metrics_dict = json.loads(log.metrics_json or "{}")
+                if not isinstance(metrics_dict, dict):
+                    metrics_dict = {}
+            except (TypeError, json.JSONDecodeError):
+                metrics_dict = {}
+            prompt_texts.append(log.prompt_text or "")
+            metrics_list.append(metrics_dict)
+
+        ml_predictions = ml_classifier.ml_predict_batch(
+            prompt_texts,
+            metrics_list,
+            has_structured_patterns,
+        )
+        if len(ml_predictions) < len(actual_levels):
+            ml_predictions.extend([(1, 0.0)] * (len(actual_levels) - len(ml_predictions)))
+
+        for actual_level, (ml_level, _) in zip(actual_levels, ml_predictions):
             ml_level = max(1, min(3, ml_level))
-            confusion[lvl - 1][ml_level - 1] += 1
-            if ml_level == lvl:
+            confusion[actual_level - 1][ml_level - 1] += 1
+            if ml_level == actual_level:
                 ml_correct += 1
-        except Exception:
-            pass
 
-    return {
-        "total": len(logs),
-        "feedback_samples": feedback_count,
-        "level_distribution": level_dist,
-        "avg_score_by_level": {k: round(sum(v) / len(v), 3) if v else 0.0 for k, v in score_by_level.items()},
-        "avg_normalized_by_level": {k: round(sum(v) / len(v), 3) if v else 0.0 for k, v in norm_by_level.items()},
-        "confusion_matrix": confusion,
-        "ml_accuracy": round(ml_correct / len(logs), 3) if logs else 0.0,
-        "model_info": model_meta,
-        "note": "confusion_matrix[actual_level-1][ml_predicted_level-1]",
-    }
+        return {
+            "total": len(logs),
+            "feedback_samples": feedback_count,
+            "level_distribution": level_dist,
+            "avg_score_by_level": {k: round(sum(v) / len(v), 3) if v else 0.0 for k, v in score_by_level.items()},
+            "avg_normalized_by_level": {k: round(sum(v) / len(v), 3) if v else 0.0 for k, v in norm_by_level.items()},
+            "confusion_matrix": confusion,
+            "ml_accuracy": round(ml_correct / len(logs), 3) if logs else 0.0,
+            "model_info": model_meta,
+            "note": "confusion_matrix[actual_level-1][ml_predicted_level-1]",
+            "cache_backend": cache.backend_name,
+        }
+
+    return await cache.get_or_set_json(
+        ADMIN_ML_STATS_CACHE_KEY,
+        ADMIN_STATS_CACHE_TTL_SECONDS,
+        build_ml_stats_payload,
+    )

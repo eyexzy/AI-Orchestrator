@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { Lightbulb, Zap, Download, PieChart } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Note } from "@/components/ui/note";
 import { useUserLevelStore } from "@/lib/store/userLevelStore";
 
 /* Level palette — RGB triplets for use with rgba() */
@@ -362,9 +363,9 @@ function ExportButton() {
         {loading ? "Exporting..." : "Export CSV"}
       </Button>
       {error && (
-        <p className="text-center text-xs text-red-700">
+        <Note variant="error" size="sm" className="py-2 text-center">
           {error}
-        </p>
+        </Note>
       )}
     </div>
   );

@@ -6,22 +6,23 @@ from pydantic import BaseModel, Field
 # Analyze endpoint schemas
 
 class BehavioralMetrics(BaseModel):
-    chars_per_second:            float = Field(default=0, ge=0)
-    session_message_count:       int   = Field(default=0, ge=0)
-    avg_prompt_length:           float = Field(default=0, ge=0)
+    chars_per_second:            float = Field(default=0, ge=0, le=50.0)
+    session_message_count:       int   = Field(default=0, ge=0, le=10000)
+    avg_prompt_length:           float = Field(default=0, ge=0, le=10000)
     changed_temperature:         bool  = False
     changed_model:               bool  = False
     used_system_prompt:          bool  = False
     used_variables:              bool  = False
-    used_advanced_features_count: int  = Field(default=0, ge=0)
-    tooltip_click_count:         int   = Field(default=0, ge=0)
-    suggestion_click_count:      int   = Field(default=0, ge=0)
-    cancel_action_count:         int   = Field(default=0, ge=0)
-    session_duration_seconds:    float = Field(default=0, ge=0)
+    used_advanced_features_count: int  = Field(default=0, ge=0, le=1000)
+    tooltip_click_count:         int   = Field(default=0, ge=0, le=10000)
+    suggestion_click_count:      int   = Field(default=0, ge=0, le=10000)
+    cancel_action_count:         int   = Field(default=0, ge=0, le=10000)
+    level_transition_count:      int   = Field(default=0, ge=0, le=1000)
+    session_duration_seconds:    float = Field(default=0, ge=0, le=86400)
 
 
 class TrainingFeedback(BaseModel):
-    prompt_text:  str
+    prompt_text:  str = Field(..., max_length=10000)
     metrics:      BehavioralMetrics
     actual_level: int = Field(ge=1, le=3)
 
@@ -71,6 +72,26 @@ class GenerateRequest(BaseModel):
     history_limit:  int = Field(default=20, ge=0, le=100)
 
 
+MultiGenerateMode = Literal["compare", "self_consistency"]
+
+
+class MultiGenerateRequest(BaseModel):
+    prompt:              str
+    system_message:      str = ""
+    model:               str = "gemini-2.0-flash"
+    model_label:         str | None = None
+    compare_model:       str | None = None
+    compare_model_label: str | None = None
+    temperature:         float = Field(default=0.7, ge=0.0, le=2.0)
+    max_tokens:          int   = Field(default=1024, ge=1, le=4096)
+    top_p:               float = Field(default=1.0, ge=0.0, le=1.0)
+    session_id:          str
+    history:             list[HistoryMessage] = Field(default_factory=list)
+    history_limit:       int = Field(default=20, ge=0, le=100)
+    mode:                MultiGenerateMode
+    run_count:           int = Field(default=3, ge=2, le=5)
+
+
 class UsageStats(BaseModel):
     prompt_tokens:     int
     completion_tokens: int
@@ -115,6 +136,8 @@ class RetrainResponse(BaseModel):
     cv_f1_mean:     float = 0.0
     cv_f1_std:      float = 0.0
     model_type:     str   = "LogisticRegression"
+    model_params:   dict = Field(default_factory=dict)
+    tuning:         dict | None = None
     confusion_matrix: list[list[int]] = []
     classification_report: dict = {}
 
@@ -185,5 +208,6 @@ class ProfilePreferencesUpdate(BaseModel):
 class ProfilePreferencesResponse(BaseModel):
     theme:                str
     language:             str
+    current_level:        int = Field(default=1, ge=1, le=3)
     manual_level_override: Optional[int] = None
     hidden_templates:     list[str] = Field(default_factory=list)

@@ -1,10 +1,32 @@
 "use client";
 
-import { useCallback, useMemo, useRef, useState } from "react";
+import React, { useCallback, useMemo, useRef, useState } from "react";
+import { useTheme } from "next-themes";
 import ReactMarkdown from "react-markdown";
-import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
+import {
+  PrismAsyncLight as SyntaxHighlighter,
+  type SyntaxHighlighterProps,
+} from "react-syntax-highlighter";
+import bashLanguage from "react-syntax-highlighter/dist/esm/languages/prism/bash";
+import cLanguage from "react-syntax-highlighter/dist/esm/languages/prism/c";
+import cppLanguage from "react-syntax-highlighter/dist/esm/languages/prism/cpp";
+import cssLanguage from "react-syntax-highlighter/dist/esm/languages/prism/css";
+import goLanguage from "react-syntax-highlighter/dist/esm/languages/prism/go";
+import javaLanguage from "react-syntax-highlighter/dist/esm/languages/prism/java";
+import javascriptLanguage from "react-syntax-highlighter/dist/esm/languages/prism/javascript";
+import jsonLanguage from "react-syntax-highlighter/dist/esm/languages/prism/json";
+import jsxLanguage from "react-syntax-highlighter/dist/esm/languages/prism/jsx";
+import markdownLanguage from "react-syntax-highlighter/dist/esm/languages/prism/markdown";
+import markupLanguage from "react-syntax-highlighter/dist/esm/languages/prism/markup";
+import pythonLanguage from "react-syntax-highlighter/dist/esm/languages/prism/python";
+import rustLanguage from "react-syntax-highlighter/dist/esm/languages/prism/rust";
+import sqlLanguage from "react-syntax-highlighter/dist/esm/languages/prism/sql";
+import tsxLanguage from "react-syntax-highlighter/dist/esm/languages/prism/tsx";
+import typescriptLanguage from "react-syntax-highlighter/dist/esm/languages/prism/typescript";
+import yamlLanguage from "react-syntax-highlighter/dist/esm/languages/prism/yaml";
 import remarkGfm from "remark-gfm";
 import { Copy, Check, FileCode, ExternalLink, CheckSquare, Square } from "lucide-react";
+import type { Element } from "hast";
 import type { Components } from "react-markdown";
 import { Button } from "@/components/ui/button";
 import { Tooltip } from "@/components/ui/tooltip";
@@ -26,47 +48,248 @@ function formatLanguageName(lang: string): string {
   return map[lang.toLowerCase()] || lang;
 }
 
-/* Syntax Highlighting Palette */
-export const CODE_THEME: Record<string, React.CSSProperties> = {
-  'code[class*="language-"]': { color: "var(--ds-gray-1000)", background: "none", fontFamily: "var(--font-geist-mono), monospace", fontSize: "13px", lineHeight: "24px", fontStyle: "normal" },
-  'pre[class*="language-"]': { color: "var(--ds-gray-1000)", background: "none", margin: 0, padding: 0, overflow: "auto", fontStyle: "normal" },
-  tag: { color: "var(--ds-green-900)", fontStyle: "normal" },
-  keyword: { color: "var(--ds-pink-900)", fontStyle: "normal" },
-  boolean: { color: "var(--ds-pink-900)", fontStyle: "normal" },
-  operator: { color: "var(--ds-gray-1000)", fontStyle: "normal" },
-  constant: { color: "var(--ds-purple-900)", fontStyle: "normal" },
-  function: { color: "var(--ds-purple-900)", fontStyle: "normal" },
-  "class-name": { color: "var(--ds-purple-900)", fontStyle: "normal" },
-  "attr-name": { color: "var(--ds-blue-900)", fontStyle: "normal" },
-  property: { color: "var(--ds-blue-900)", fontStyle: "normal" },
-  url: { color: "var(--ds-blue-900)", fontStyle: "normal" },
-  string: { color: "var(--ds-green-900)", fontStyle: "normal" },
-  char: { color: "var(--ds-green-900)", fontStyle: "normal" },
-  "attr-value": { color: "var(--ds-green-900)", fontStyle: "normal" },
-  regex: { color: "var(--ds-green-900)", fontStyle: "normal" },
-  selector: { color: "var(--ds-green-900)", fontStyle: "normal" },
-  builtin: { color: "var(--ds-green-900)", fontStyle: "normal" },
-  inserted: { color: "var(--ds-green-900)", fontStyle: "normal" },
-  atrule: { color: "var(--ds-green-900)", fontStyle: "normal" },
-  "template-string": { color: "var(--ds-green-900)", fontStyle: "normal" },
-  punctuation: { color: "var(--ds-gray-1000)", fontStyle: "normal" },
-  entity: { color: "var(--ds-gray-1000)", fontStyle: "normal", cursor: "help" },
-  variable: { color: "var(--ds-gray-1000)", fontStyle: "normal" },
-  number: { color: "var(--ds-amber-900)", fontStyle: "normal" },
-  symbol: { color: "var(--ds-amber-900)", fontStyle: "normal" },
-  comment: { color: "var(--ds-gray-900)", fontStyle: "normal" },
-  prolog: { color: "var(--ds-gray-900)", fontStyle: "normal" },
-  doctype: { color: "var(--ds-gray-900)", fontStyle: "normal" },
-  cdata: { color: "var(--ds-gray-900)", fontStyle: "normal" },
-  deleted: { color: "var(--ds-pink-900)", fontStyle: "normal" },
-  important: { color: "var(--ds-pink-900)", fontWeight: "bold", fontStyle: "normal" },
-  bold: { fontWeight: "bold" },
-  italic: { fontStyle: "normal" },
-};
+type SyntaxTheme = NonNullable<SyntaxHighlighterProps["style"]>;
+type SyntaxLanguageDefinition = Parameters<typeof SyntaxHighlighter.registerLanguage>[1];
+type ResolvedThemeMode = "light" | "dark";
+
+const CODE_FONT_FAMILY = "var(--font-geist-mono), monospace";
+
+const REGISTERED_LANGUAGES: Array<[string, SyntaxLanguageDefinition]> = [
+  ["bash", bashLanguage],
+  ["sh", bashLanguage],
+  ["shell", bashLanguage],
+  ["c", cLanguage],
+  ["cpp", cppLanguage],
+  ["css", cssLanguage],
+  ["go", goLanguage],
+  ["java", javaLanguage],
+  ["javascript", javascriptLanguage],
+  ["js", javascriptLanguage],
+  ["json", jsonLanguage],
+  ["jsx", jsxLanguage],
+  ["markdown", markdownLanguage],
+  ["md", markdownLanguage],
+  ["markup", markupLanguage],
+  ["html", markupLanguage],
+  ["xml", markupLanguage],
+  ["python", pythonLanguage],
+  ["py", pythonLanguage],
+  ["rust", rustLanguage],
+  ["rs", rustLanguage],
+  ["sql", sqlLanguage],
+  ["tsx", tsxLanguage],
+  ["typescript", typescriptLanguage],
+  ["ts", typescriptLanguage],
+  ["yaml", yamlLanguage],
+  ["yml", yamlLanguage],
+];
+
+let syntaxLanguagesRegistered = false;
+
+function ensureSyntaxLanguagesRegistered() {
+  if (syntaxLanguagesRegistered) return;
+
+  for (const [alias, definition] of REGISTERED_LANGUAGES) {
+    SyntaxHighlighter.registerLanguage(alias, definition);
+  }
+
+  syntaxLanguagesRegistered = true;
+}
+
+function createCodeTheme(mode: ResolvedThemeMode): SyntaxTheme {
+  const commentColor =
+    mode === "dark" ? "var(--ds-gray-700)" : "var(--ds-gray-900)";
+
+  return {
+    'code[class*="language-"]': {
+      color: "var(--ds-gray-1000)",
+      background: "none",
+      fontFamily: CODE_FONT_FAMILY,
+      fontSize: "inherit",
+      lineHeight: "inherit",
+      fontStyle: "normal",
+    },
+    'pre[class*="language-"]': {
+      color: "var(--ds-gray-1000)",
+      background: "none",
+      margin: 0,
+      padding: 0,
+      overflow: "auto",
+      fontStyle: "normal",
+    },
+    tag: { color: "var(--ds-green-900)", fontStyle: "normal" },
+    keyword: { color: "var(--ds-pink-900)", fontStyle: "normal" },
+    boolean: { color: "var(--ds-pink-900)", fontStyle: "normal" },
+    operator: { color: "var(--ds-gray-1000)", fontStyle: "normal" },
+    constant: { color: "var(--ds-purple-900)", fontStyle: "normal" },
+    function: { color: "var(--ds-purple-900)", fontStyle: "normal" },
+    "class-name": { color: "var(--ds-purple-900)", fontStyle: "normal" },
+    "attr-name": { color: "var(--ds-blue-900)", fontStyle: "normal" },
+    property: { color: "var(--ds-blue-900)", fontStyle: "normal" },
+    url: { color: "var(--ds-blue-900)", fontStyle: "normal" },
+    string: { color: "var(--ds-green-900)", fontStyle: "normal" },
+    char: { color: "var(--ds-green-900)", fontStyle: "normal" },
+    "attr-value": { color: "var(--ds-green-900)", fontStyle: "normal" },
+    regex: { color: "var(--ds-green-900)", fontStyle: "normal" },
+    selector: { color: "var(--ds-green-900)", fontStyle: "normal" },
+    builtin: { color: "var(--ds-green-900)", fontStyle: "normal" },
+    inserted: { color: "var(--ds-green-900)", fontStyle: "normal" },
+    atrule: { color: "var(--ds-green-900)", fontStyle: "normal" },
+    "template-string": { color: "var(--ds-green-900)", fontStyle: "normal" },
+    punctuation: { color: "var(--ds-gray-1000)", fontStyle: "normal" },
+    entity: {
+      color: "var(--ds-gray-1000)",
+      fontStyle: "normal",
+      cursor: "help",
+    },
+    variable: { color: "var(--ds-gray-1000)", fontStyle: "normal" },
+    number: { color: "var(--ds-amber-900)", fontStyle: "normal" },
+    symbol: { color: "var(--ds-amber-900)", fontStyle: "normal" },
+    comment: { color: commentColor, fontStyle: "normal" },
+    prolog: { color: commentColor, fontStyle: "normal" },
+    doctype: { color: commentColor, fontStyle: "normal" },
+    cdata: { color: commentColor, fontStyle: "normal" },
+    deleted: { color: "var(--ds-pink-900)", fontStyle: "normal" },
+    important: {
+      color: "var(--ds-pink-900)",
+      fontWeight: "bold",
+      fontStyle: "normal",
+    },
+    bold: { fontWeight: "bold" },
+    italic: { fontStyle: "normal" },
+  };
+}
+
+ensureSyntaxLanguagesRegistered();
+
+export function CodeSurface({
+  language,
+  code,
+  showLineNumbers = true,
+  selectableLines = showLineNumbers,
+  padding = "1.25rem 0",
+}: {
+  language: string;
+  code: string;
+  showLineNumbers?: boolean;
+  selectableLines?: boolean;
+  padding?: string;
+}) {
+  const { resolvedTheme } = useTheme();
+  const [selectedLines, setSelectedLines] = useState<number[]>([]);
+  const isDark = resolvedTheme === "dark";
+  const codeTheme = useMemo(
+    () => createCodeTheme(isDark ? "dark" : "light"),
+    [isDark],
+  );
+
+  const handleToggleLine = useCallback(
+    (lineNumber: number) => {
+      if (!selectableLines) return;
+      setSelectedLines((previous) =>
+        previous.includes(lineNumber)
+          ? previous.filter((value) => value !== lineNumber)
+          : [...previous, lineNumber],
+      );
+    },
+    [selectableLines],
+  );
+
+  const lineNumberStyle = useMemo<
+    NonNullable<SyntaxHighlighterProps["lineNumberStyle"]>
+  >(
+    () => ({
+      minWidth: "3em",
+      paddingRight: "1em",
+      textAlign: "right",
+      userSelect: "none",
+      color: isDark ? "var(--ds-gray-700)" : "var(--ds-gray-900)",
+      fontFamily: CODE_FONT_FAMILY,
+      fontSize: "inherit",
+      lineHeight: "inherit",
+      fontStyle: "normal",
+    }),
+    [isDark],
+  );
+
+  const lineProps = useCallback(
+    (lineNumber: number): React.HTMLProps<HTMLElement> => {
+      const isSelected = selectableLines && selectedLines.includes(lineNumber);
+
+      return {
+        style: {
+          display: "block",
+          padding: "0 16px",
+          cursor: selectableLines ? "pointer" : "default",
+          borderLeft: selectableLines
+            ? isSelected
+              ? `2px solid ${isDark ? "var(--ds-blue-700)" : "var(--ds-blue-900)"}`
+              : "2px solid transparent"
+            : undefined,
+          background: isSelected
+            ? isDark
+              ? "var(--ds-blue-200)"
+              : "var(--ds-blue-300)"
+            : "transparent",
+          transition: selectableLines
+            ? "background 0.1s ease, border-color 0.1s ease"
+            : undefined,
+        },
+        onClick: selectableLines ? () => handleToggleLine(lineNumber) : undefined,
+        onMouseEnter: selectableLines
+          ? (event) => {
+              if (!isSelected) {
+                event.currentTarget.style.background = "var(--ds-gray-alpha-100)";
+              }
+            }
+          : undefined,
+        onMouseLeave: selectableLines
+          ? (event) => {
+              if (!isSelected) {
+                event.currentTarget.style.background = "transparent";
+              }
+            }
+          : undefined,
+      };
+    },
+    [handleToggleLine, isDark, selectableLines, selectedLines],
+  );
+
+  return (
+    <div className="md-code-surface">
+      <SyntaxHighlighter
+        language={language}
+        style={codeTheme}
+        PreTag="div"
+        showLineNumbers={showLineNumbers}
+        wrapLines
+        lineNumberStyle={showLineNumbers ? lineNumberStyle : undefined}
+        lineProps={lineProps}
+        customStyle={{
+          margin: 0,
+          padding,
+          background: "transparent",
+          fontSize: "inherit",
+          fontWeight: 500,
+          lineHeight: "inherit",
+          fontStyle: "normal",
+        }}
+        codeTagProps={{
+          style: {
+            fontFamily: CODE_FONT_FAMILY,
+            fontWeight: 500,
+            fontStyle: "normal",
+          },
+        }}
+      >
+        {code}
+      </SyntaxHighlighter>
+    </div>
+  );
+}
 
 function CodeBlock({ language, code }: { language: string; code: string }) {
   const [copied, setCopied] = useState(false);
-  const [selectedLines, setSelectedLines] = useState<number[]>([]);
 
   /* Copy handler */
   const handleCopy = useCallback(async () => {
@@ -77,15 +300,6 @@ function CodeBlock({ language, code }: { language: string; code: string }) {
     } catch {
     }
   }, [code]);
-
-  /* Line selection toggle */
-  const toggleLine = useCallback((lineNum: number) => {
-    setSelectedLines((prev) =>
-      prev.includes(lineNum)
-        ? prev.filter((n) => n !== lineNum)
-        : [...prev, lineNum],
-    );
-  }, []);
 
   const lang = language || "text";
 
@@ -116,70 +330,7 @@ function CodeBlock({ language, code }: { language: string; code: string }) {
       </div>
 
       {/* Code body */}
-      <SyntaxHighlighter
-        language={lang}
-        style={CODE_THEME as any}
-        PreTag="div"
-        showLineNumbers={true}
-        wrapLines={true}
-        lineNumberStyle={{
-          minWidth: "3em",
-          paddingRight: "1em",
-          textAlign: "right" as const,
-          userSelect: "none" as const,
-          color: "var(--ds-gray-900)",
-          fontFamily: "var(--font-geist-mono), monospace",
-          fontSize: "13px",
-          lineHeight: "24px",
-          fontStyle: "normal",
-        }}
-        lineProps={(lineNumber: number) => {
-          const isSelected = selectedLines.includes(lineNumber);
-          return {
-            style: {
-              display: "block",
-              padding: "0 16px",
-              cursor: "pointer",
-              borderLeft: isSelected
-                ? "2px solid var(--ds-blue-900)"
-                : "2px solid transparent",
-              background: isSelected
-                ? "var(--ds-blue-300)"
-                : "transparent",
-              transition: "background 0.1s ease, border-color 0.1s ease",
-            },
-            onClick: () => toggleLine(lineNumber),
-            onMouseEnter: (e: React.MouseEvent<HTMLElement>) => {
-              if (!isSelected) {
-                e.currentTarget.style.background = "var(--ds-gray-alpha-100)";
-              }
-            },
-            onMouseLeave: (e: React.MouseEvent<HTMLElement>) => {
-              if (!isSelected) {
-                e.currentTarget.style.background = "transparent";
-              }
-            },
-          };
-        }}
-        customStyle={{
-          margin: 0,
-          padding: "20px 0",
-          background: "transparent",
-          fontSize: "13px",
-          fontWeight: 500,
-          lineHeight: "24px",
-          fontStyle: "normal",
-        }}
-        codeTagProps={{
-          style: {
-            fontFamily: "var(--font-geist-mono), monospace",
-            fontWeight: 500,
-            fontStyle: "normal",
-          },
-        }}
-      >
-        {code}
-      </SyntaxHighlighter>
+      <CodeSurface language={lang} code={code} />
     </div>
   );
 }
@@ -214,16 +365,38 @@ function ReActParagraph({
 
 /* Helper to extract raw text from react-markdown children */
 function extractText(children: React.ReactNode): string {
-  if (typeof children === "string") return children;
+  if (typeof children === "string" || typeof children === "number") {
+    return String(children);
+  }
   if (Array.isArray(children)) return children.map(extractText).join("");
-  if (
-    children &&
-    typeof children === "object" &&
-    "props" in (children as any)
-  ) {
-    return extractText((children as any).props.children);
+  if (React.isValidElement<{ children?: React.ReactNode }>(children)) {
+    return extractText(children.props.children);
   }
   return "";
+}
+
+function isTaskListCheckboxNode(
+  value: unknown,
+): value is Element {
+  if (!value || typeof value !== "object") return false;
+
+  const candidate = value as {
+    type?: unknown;
+    tagName?: unknown;
+    properties?: { type?: unknown; checked?: unknown };
+  };
+
+  return (
+    candidate.type === "element" &&
+    candidate.tagName === "input" &&
+    candidate.properties?.type === "checkbox"
+  );
+}
+
+function isInputElement(
+  child: React.ReactNode,
+): child is React.ReactElement<React.InputHTMLAttributes<HTMLInputElement>, "input"> {
+  return React.isValidElement(child) && child.type === "input";
 }
 
 /* Custom components for enhanced rendering */
@@ -330,17 +503,16 @@ export function MarkdownRenderer({ content }: { content: string }) {
       return <LinkRenderer href={href}>{children}</LinkRenderer>;
     },
     li({ children, node }) {
-      const inputChild = node?.children?.find(
-        (child: any) => child.tagName === "input" && child.properties?.type === "checkbox"
-      );
+      const inputChild = Array.isArray(node?.children)
+        ? node.children.find(isTaskListCheckboxNode)
+        : undefined;
+
       if (inputChild) {
-        const checked = !!(inputChild as any).properties?.checked;
+        const checked = Boolean(inputChild.properties?.checked);
         const filteredChildren = Array.isArray(children)
-          ? children.filter((child: any) => {
-              if (typeof child === "object" && child?.type === "input") return false;
-              return true;
-            })
+          ? children.filter((child) => !isInputElement(child))
           : children;
+
         return <TaskListItem checked={checked}>{filteredChildren}</TaskListItem>;
       }
       return <li>{children}</li>;

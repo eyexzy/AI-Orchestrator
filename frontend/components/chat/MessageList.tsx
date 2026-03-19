@@ -1,11 +1,13 @@
 "use client";
 
-import { memo, useRef, useEffect } from "react";
+import { memo, useEffect, useRef } from "react";
 import { useChatStore } from "@/lib/store/chatStore";
+import { useTranslation } from "@/lib/store/i18nStore";
 import { UserMessageBubble } from "@/components/chat/messages/UserMessage";
 import { AssistantMessage } from "@/components/chat/messages/AssistantMessage";
 import { CompareTabs } from "@/components/chat/messages/CompareTabs";
 import { SelfConsistencyTabs } from "@/components/chat/messages/SelfConsistencyTabs";
+import { ErrorState } from "@/components/ui/error-state";
 
 interface MessageListProps {
   showRaw?: boolean;
@@ -22,6 +24,13 @@ const MessageListComponent = ({
   const scrollRef = useRef<HTMLDivElement>(null);
   const messages = useChatStore((s) => s.messages);
   const isSending = useChatStore((s) => s.isSending);
+  const activeChatId = useChatStore((s) => s.activeChatId);
+  const messagesError = useChatStore((s) => s.messagesError);
+  const pendingFocusMessageId = useChatStore((s) => s.pendingFocusMessageId);
+  const clearPendingFocusMessageId = useChatStore((s) => s.clearPendingFocusMessageId);
+  const selectChat = useChatStore((s) => s.selectChat);
+  const { t } = useTranslation();
+  const messageRefs = useRef(new Map<string | number, HTMLDivElement>());
 
   useEffect(() => {
     scrollRef.current?.scrollTo({
@@ -30,6 +39,21 @@ const MessageListComponent = ({
     });
   }, [messages, isSending]);
 
+  useEffect(() => {
+    if (pendingFocusMessageId == null) {
+      return;
+    }
+
+    const target = messageRefs.current.get(pendingFocusMessageId);
+    if (!target) {
+      clearPendingFocusMessageId();
+      return;
+    }
+
+    target.scrollIntoView({ behavior: "smooth", block: "center" });
+    clearPendingFocusMessageId();
+  }, [pendingFocusMessageId, messages, clearPendingFocusMessageId]);
+
   return (
     <div ref={scrollRef} className="message-scroll">
       <div
@@ -37,7 +61,7 @@ const MessageListComponent = ({
         style={floatingInputOffset > 0 ? { paddingBottom: floatingInputOffset } : undefined}
       >
         {/* Empty hint */}
-        {messages.length === 0 && !isSending && emptyHint && (
+        {messages.length === 0 && !isSending && emptyHint && !messagesError && (
           <div className="flex h-40 items-center justify-center">
             <p
               className="text-center text-[15px] text-ds-text-tertiary"
@@ -46,10 +70,27 @@ const MessageListComponent = ({
           </div>
         )}
 
+        {messagesError && (
+          <ErrorState
+            centered
+            title={t("chat.loadErrorTitle")}
+            description={messagesError}
+            actionLabel={activeChatId ? t("common.retry") : undefined}
+            onAction={activeChatId ? () => void selectChat(activeChatId) : undefined}
+            className="rounded-2xl"
+          />
+        )}
+
         {messages.map((m) => (
           <div
             key={m.id}
-            id={`msg-${m.id}`}
+            ref={(node) => {
+              if (node) {
+                messageRefs.current.set(m.id, node);
+                return;
+              }
+              messageRefs.current.delete(m.id);
+            }}
             className={`flex ${m.role === "user" ? "justify-end" : "justify-start"} animate-in`}
           >
             {m.role === "user" ? (
@@ -86,6 +127,7 @@ const MessageListComponent = ({
                 content={m.content}
                 metadata={m.metadata}
                 showRaw={showRaw}
+                isError={m.isError}
               />
             )}
           </div>

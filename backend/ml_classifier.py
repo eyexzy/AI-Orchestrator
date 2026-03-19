@@ -4,8 +4,10 @@ Uses scikit-learn models (LogisticRegression, RandomForest, SVC) with
 TF-IDF text features combined with behavioral features.
 """
 import base64
+import json
 import logging
 import pickle
+from collections.abc import Mapping
 from typing import Literal
 
 import numpy as np
@@ -37,20 +39,50 @@ BEHAVIORAL_FEATURE_NAMES = [
 FEATURE_NAMES = BEHAVIORAL_FEATURE_NAMES
 
 
-def _make_sklearn_model(model_type: ModelType = "LogisticRegression"):
+def _is_invalid_proba_vector(proba: np.ndarray) -> bool:
+    """Validate probability vector before argmax-based class selection."""
+    if proba is None:
+        return True
+
+    arr = np.asarray(proba, dtype=float).ravel()
+    if arr.size == 0:
+        return True
+    if np.isnan(arr).any() or np.isinf(arr).any():
+        return True
+    if np.allclose(arr, 0.0):
+        return True
+    return False
+
+
+def _make_sklearn_model(
+    model_type: ModelType = "LogisticRegression",
+    model_params: Mapping[str, object] | None = None,
+):
     """Create a fresh sklearn estimator by name."""
+    params = dict(model_params or {})
     if model_type == "RandomForest":
-        return RandomForestClassifier(
-            n_estimators=100, max_depth=10, class_weight="balanced", random_state=42,
-        )
+        default_params = {
+            "n_estimators": 100,
+            "max_depth": 10,
+            "class_weight": "balanced",
+            "random_state": 42,
+        }
+        return RandomForestClassifier(**{**default_params, **params})
     if model_type == "SVC":
-        return SVC(
-            kernel="rbf", probability=True, class_weight="balanced", random_state=42,
-        )
+        default_params = {
+            "kernel": "rbf",
+            "probability": True,
+            "class_weight": "balanced",
+            "random_state": 42,
+        }
+        return SVC(**{**default_params, **params})
     # Default: LogisticRegression
-    return LogisticRegression(
-        max_iter=1000, class_weight="balanced", random_state=42,
-    )
+    default_params = {
+        "max_iter": 1000,
+        "class_weight": "balanced",
+        "random_state": 42,
+    }
+    return LogisticRegression(**{**default_params, **params})
 
 
 def extract_behavioral_features(prompt_text: str, metrics: dict, has_structure_fn=None) -> np.ndarray:
@@ -84,22 +116,33 @@ def extract_behavioral_features(prompt_text: str, metrics: dict, has_structure_f
 
 
 # Legacy alias used by admin.py feedback endpoint
-def extract_features(prompt_text: str, metrics: dict, count_tech_fn=None, has_structure_fn=None) -> np.ndarray:
+def extract_features(prompt_text: str, metrics: dict, get_score_fn=None, has_structure_fn=None) -> np.ndarray:
     """Legacy wrapper — returns behavioral features only (no TF-IDF).
-    The tech_term_count slot is kept as 0.0 for DB-row backward compat."""
+    Inserts semantic_tech_score at index 2 for DB-row backward compat."""
     beh = extract_behavioral_features(prompt_text, metrics, has_structure_fn)
-    # Insert a zero at index 2 for old tech_term_count position
-    return np.insert(beh, 2, 0.0)
+    if get_score_fn is None:
+        try:
+            from services.scoring import get_semantic_score
+            get_score_fn = get_semantic_score
+        except ImportError:
+            get_score_fn = lambda t: 0.0
+    semantic_score = get_score_fn(prompt_text)
+    return np.insert(beh, 2, semantic_score)
 
 
 class SklearnClassifier:
     """Wrapper around sklearn estimator + TfidfVectorizer for serialization to DB."""
 
-    def __init__(self, model_type: ModelType = "LogisticRegression"):
+    def __init__(
+        self,
+        model_type: ModelType = "LogisticRegression",
+        model_params: Mapping[str, object] | None = None,
+    ):
         self.model_type = model_type
+        self.model_params = dict(model_params or {})
         self.tfidf = TfidfVectorizer(max_features=200, ngram_range=(1, 2), sublinear_tf=True)
         self.scaler = StandardScaler()
-        self.model = _make_sklearn_model(model_type)
+        self.model = _make_sklearn_model(model_type, self.model_params)
         self.is_trained = False
         self.classes = [1, 2, 3]
 
@@ -128,8 +171,18 @@ class SklearnClassifier:
 
     def predict(self, text: str, behavioral_features: np.ndarray) -> int:
         """Predict single sample — returns class label (1, 2, or 3)."""
-        proba = self.predict_proba([text], behavioral_features.reshape(1, -1))
-        return int(proba.argmax()) + 1 if proba[0].argmax() == proba[0].argmax() else int(self.model.predict(self._build_features([text], behavioral_features.reshape(1, -1), fit=False))[0])
+        proba_matrix = self.predict_proba([text], behavioral_features.reshape(1, -1))
+        if proba_matrix is None or proba_matrix.size == 0:
+            return 1
+
+        proba = np.asarray(proba_matrix[0], dtype=float)
+        if _is_invalid_proba_vector(proba):
+            return 1
+
+        pred_idx = int(np.argmax(proba))
+        if pred_idx < 0 or pred_idx >= len(self.classes):
+            return 1
+        return int(self.classes[pred_idx])
 
     def to_dict(self) -> dict:
         """Serialize entire classifier (model + tfidf + scaler) to base64 string in a dict."""
@@ -142,6 +195,7 @@ class SklearnClassifier:
         return {
             "pickle_b64": base64.b64encode(blob).decode("ascii"),
             "model_type": self.model_type,
+            "model_params": self.model_params,
         }
 
     def from_dict(self, data: dict):
@@ -152,6 +206,7 @@ class SklearnClassifier:
         self.tfidf = state["tfidf"]
         self.scaler = state["scaler"]
         self.model_type = state.get("model_type", "LogisticRegression")
+        self.model_params = dict(state.get("model_params", {}))
         self.is_trained = True
 
 
@@ -227,7 +282,7 @@ def _train_fresh():
     logger.info("[ml] Model trained on synthetic data (sklearn)")
 
 
-def ml_predict(prompt_text: str, metrics: dict, count_tech_fn=None, has_structure_fn=None) -> tuple[int, float]:
+def ml_predict(prompt_text: str, metrics: dict, *, has_structure_fn=None) -> tuple[int, float]:
     """Returns (predicted_level, confidence)."""
     try:
         clf = get_classifier()
@@ -235,9 +290,86 @@ def ml_predict(prompt_text: str, metrics: dict, count_tech_fn=None, has_structur
             return 1, 0.0
         behavioral = extract_behavioral_features(prompt_text, metrics, has_structure_fn)
         proba = clf.predict_proba([prompt_text], behavioral.reshape(1, -1))[0]
+        if _is_invalid_proba_vector(proba):
+            return 1, 0.0
         predicted_class = int(proba.argmax()) + 1
         confidence = float(proba.max())
         return predicted_class, confidence
     except Exception as e:
         logger.error(f"[ml] Prediction failed: {e}")
         return 1, 0.0
+
+
+def ml_predict_batch(
+    prompt_texts: list[str],
+    metrics_list: list[dict],
+    has_structure_fn=None,
+) -> list[tuple[int, float]]:
+    """Batch prediction helper for analytics endpoints."""
+    if not prompt_texts:
+        return []
+
+    if len(prompt_texts) != len(metrics_list):
+        logger.error(
+            "[ml] Batch prediction input mismatch: prompt_texts=%s metrics_list=%s",
+            len(prompt_texts),
+            len(metrics_list),
+        )
+        size = min(len(prompt_texts), len(metrics_list))
+        prompt_texts = prompt_texts[:size]
+        metrics_list = metrics_list[:size]
+
+    try:
+        clf = get_classifier()
+        if not clf.is_trained:
+            return [(1, 0.0) for _ in prompt_texts]
+
+        behavioral_rows = [
+            extract_behavioral_features(
+                prompt_texts[i],
+                metrics_list[i] if isinstance(metrics_list[i], dict) else {},
+                has_structure_fn,
+            )
+            for i in range(len(prompt_texts))
+        ]
+        behavioral_X = np.vstack(behavioral_rows)
+        proba_matrix = clf.predict_proba(prompt_texts, behavioral_X)
+
+        results: list[tuple[int, float]] = []
+        for row in np.asarray(proba_matrix):
+            if _is_invalid_proba_vector(row):
+                results.append((1, 0.0))
+                continue
+            level = int(np.argmax(row)) + 1
+            conf = float(np.max(row))
+            results.append((level, conf))
+        return results
+    except Exception as e:
+        logger.error(f"[ml] Batch prediction failed: {e}")
+        return [(1, 0.0) for _ in prompt_texts]
+
+
+async def load_latest_model_from_db(db) -> dict | None:
+    """Load latest model version from DB into global classifier."""
+    from sqlalchemy import select
+    from database import MLModelCache
+
+    result = await db.execute(
+        select(MLModelCache)
+        .order_by(MLModelCache.updated_at.desc(), MLModelCache.id.desc())
+        .limit(1)
+    )
+    cache_row = result.scalars().first()
+    if not cache_row or not cache_row.weights_json:
+        return None
+
+    payload = json.loads(cache_row.weights_json)
+    get_classifier().from_dict(payload)
+    return {
+        "id": cache_row.id,
+        "model_type": cache_row.model_type,
+        "accuracy": cache_row.accuracy,
+        "f1_score": cache_row.f1_score,
+        "samples_used": cache_row.samples_used,
+        "updated_at": cache_row.updated_at.isoformat() if cache_row.updated_at else None,
+    }

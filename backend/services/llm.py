@@ -12,9 +12,7 @@ from schemas.api import GenerateRequest, GenerateResponse, UsageStats
 
 logger = logging.getLogger("ai-orchestrator")
 
-# ---------------------------------------------------------------------------
 # LLM Provider clients (all OpenAI-compatible)
-# ---------------------------------------------------------------------------
 
 OPENAI_API_KEY     = os.getenv("OPENAI_API_KEY")
 GOOGLE_API_KEY     = os.getenv("GOOGLE_API_KEY")
@@ -23,8 +21,28 @@ OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 
 clients: dict[str, AsyncOpenAI] = {}
 
-API_TIMEOUT    = 10.0
+def _get_env_float(name: str, default: float) -> float:
+    raw = os.getenv(name)
+    if raw is None or not str(raw).strip():
+        return default
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return default
+
+
+API_TIMEOUT    = _get_env_float("LLM_API_TIMEOUT", 15.0)
 API_MAX_RETRIES = 0
+VALID_MOCK_MODES = {"off", "when_no_provider", "fallback", "always"}
+
+
+def get_mock_mode() -> str:
+    configured_mode = os.getenv("LLM_MOCK_MODE", "").strip().lower()
+    if configured_mode in VALID_MOCK_MODES:
+        return configured_mode
+
+    legacy_allow_mock = os.getenv("ALLOW_MOCK", "").strip().lower() in ("1", "true")
+    return "fallback" if legacy_allow_mock else "when_no_provider"
 
 if OPENAI_API_KEY:
     clients["openai"] = AsyncOpenAI(api_key=OPENAI_API_KEY, timeout=API_TIMEOUT, max_retries=API_MAX_RETRIES)
@@ -61,10 +79,7 @@ if OPENROUTER_API_KEY:
     )
     logger.info("OpenRouter client initialized")
 
-
-# ---------------------------------------------------------------------------
 # Available models registry
-# ---------------------------------------------------------------------------
 
 AVAILABLE_MODELS = {
     "gpt-4o":           {"provider": "openai",      "label": "GPT-4o",                     "api_name": "gpt-4o"},
@@ -82,10 +97,7 @@ AVAILABLE_MODELS = {
     "or-qwen3-4b":      {"provider": "openrouter",  "label": "Qwen3 4B Fast (Free)",       "api_name": "qwen/qwen3-4b:free"},
 }
 
-
-# ---------------------------------------------------------------------------
 # Helpers
-# ---------------------------------------------------------------------------
 
 def estimate_tokens(text: str) -> int:
     return max(1, len(text) // 4)
@@ -129,9 +141,7 @@ def build_messages(req: GenerateRequest) -> list[dict]:
     return messages
 
 
-# ---------------------------------------------------------------------------
 # Real LLM generation
-# ---------------------------------------------------------------------------
 
 MOCK_RESPONSES = [
     "Це чудове запитання! Ось що я можу сказати з цього приводу.\n\n"
@@ -230,12 +240,32 @@ def _has_real_api_keys() -> bool:
     return bool(OPENAI_API_KEY or GOOGLE_API_KEY or GROQ_API_KEY or OPENROUTER_API_KEY)
 
 
-async def mock_generate(req: GenerateRequest) -> GenerateResponse:
-    """Fallback mock when no API key is present."""
-    if _has_real_api_keys() and os.getenv("ALLOW_MOCK", "").lower() not in ("1", "true"):
+def _is_mock_allowed(reason: str) -> bool:
+    mode = get_mock_mode()
+    if mode == "always":
+        return True
+    if mode == "fallback":
+        return True
+    if mode == "when_no_provider":
+        return reason == "no_provider"
+    return False
+
+
+async def mock_generate(
+    req: GenerateRequest,
+    *,
+    reason: str = "no_provider",
+) -> GenerateResponse:
+    """Fallback mock based on explicit mock-mode configuration."""
+    if not _is_mock_allowed(reason):
+        if reason == "provider_failure":
+            raise RuntimeError(
+                "Mock fallback disabled for provider failures. "
+                "Set LLM_MOCK_MODE=fallback or always to allow it."
+            )
         raise RuntimeError(
-            "Mocks disabled: real API keys are configured but the provider call failed. "
-            "Set ALLOW_MOCK=1 to allow mock fallback in development."
+            "Mock generation disabled because no provider is available. "
+            "Set LLM_MOCK_MODE=when_no_provider, fallback, or always."
         )
 
     base = random.choice(MOCK_RESPONSES)
@@ -282,6 +312,8 @@ async def mock_generate(req: GenerateRequest) -> GenerateResponse:
         "created": int(time.time()),
         "model":   req.model,
         "_mock":   True,
+        "_mock_reason": reason,
+        "_mock_mode": get_mock_mode(),
         "choices": [{"index": 0, "message": {"role": "assistant", "content": base}, "finish_reason": "stop"}],
         "usage":   {"prompt_tokens": prompt_tokens, "completion_tokens": completion_tokens, "total_tokens": prompt_tokens + completion_tokens},
     }
@@ -289,9 +321,13 @@ async def mock_generate(req: GenerateRequest) -> GenerateResponse:
     return GenerateResponse(text=base, usage=usage, raw=raw, provider="mock")
 
 
-async def mock_generate_stream(req: GenerateRequest):
+async def mock_generate_stream(
+    req: GenerateRequest,
+    *,
+    reason: str = "no_provider",
+):
     """Mock streaming for dev/no-key environments."""
-    result = await mock_generate(req)
+    result = await mock_generate(req, reason=reason)
     words  = result.text.split(" ")
     for word in words:
         payload = json.dumps({"text": word + " ", "done": False}, ensure_ascii=False)
@@ -300,9 +336,7 @@ async def mock_generate_stream(req: GenerateRequest):
     yield f"data: {json.dumps({'text': '', 'done': True, 'full_text': result.text}, ensure_ascii=False)}\n\n"
 
 
-# ---------------------------------------------------------------------------
 # Refine prompt with LLM
-# ---------------------------------------------------------------------------
 
 PROMPT_TUTOR_SYSTEM = """You are an expert Prompt Engineer helping a beginner improve their prompt.
 The user may write in Ukrainian or English — respond in the SAME language they used.
@@ -360,7 +394,7 @@ async def refine_prompt_with_llm(prompt: str) -> dict:
 
     response = await asyncio.wait_for(
         client.chat.completions.create(**create_kwargs),
-        timeout=10.0,
+        timeout=API_TIMEOUT,
     )
 
     content = (response.choices[0].message.content or "").strip()

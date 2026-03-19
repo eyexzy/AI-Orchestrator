@@ -2,26 +2,51 @@
 
 import { useChatStore } from "@/lib/store/chatStore";
 import { useUserLevelStore } from "@/lib/store/userLevelStore";
-import { MarkdownRenderer, CODE_THEME } from "@/components/chat/MarkdownRenderer";
+import { useTranslation } from "@/lib/store/i18nStore";
+import { CodeSurface, MarkdownRenderer } from "@/components/chat/MarkdownRenderer";
+import { Note } from "@/components/ui/note";
 import { AssistantActionBar } from "./MessageUI";
-import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
+import { Button } from "@/components/ui/button";
+import { RotateCcw } from "lucide-react";
 
 /* Normal assistant message */
 export function AssistantMessage({
   content,
   metadata,
   showRaw,
+  isError = false,
 }: {
   content: string;
   metadata?: Record<string, unknown>;
   showRaw: boolean;
+  isError?: boolean;
 }) {
   const { regenerateLastResponse } = useChatStore();
   const level = useUserLevelStore((s) => s.level);
+  const { t } = useTranslation();
 
   return (
     <div className="group min-w-0 max-w-[min(85%,680px)]">
-      <MarkdownRenderer content={content} />
+      {isError ? (
+        <Note variant="error" size="sm" className="rounded-2xl">
+          <MarkdownRenderer content={content} />
+        </Note>
+      ) : (
+        <MarkdownRenderer content={content} />
+      )}
+
+      {isError && (
+        <Button
+          type="button"
+          variant="secondary"
+          size="sm"
+          className="mt-3"
+          leftIcon={<RotateCcw size={14} strokeWidth={2} />}
+          onClick={regenerateLastResponse}
+        >
+          {t("chat.retrySend")}
+        </Button>
+      )}
 
       {level >= 2 && metadata && (
         <div className="mt-2.5 flex flex-wrap gap-2.5 font-mono text-[12px] text-ds-text-tertiary">
@@ -37,20 +62,13 @@ export function AssistantMessage({
             json
           </summary>
           <div className="overflow-hidden rounded-md border border-gray-alpha-400 bg-background-100">
-            <SyntaxHighlighter
+            <CodeSurface
               language="json"
-              style={CODE_THEME as any}
-              PreTag="div"
+              code={JSON.stringify(metadata, null, 2)}
               showLineNumbers={false}
-              wrapLines={false}
-              customStyle={{
-                margin: 0,
-                padding: "16px 20px",
-                backgroundColor: "transparent",
-              }}
-            >
-              {JSON.stringify(metadata, null, 2)}
-            </SyntaxHighlighter>
+              selectableLines={false}
+              padding="16px 20px"
+            />
           </div>
         </details>
       )}

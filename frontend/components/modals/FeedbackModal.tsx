@@ -7,11 +7,13 @@ import { Textarea } from "@/components/ui/textarea";
 import { Frown, Meh, Smile } from "lucide-react";
 import { toast } from "sonner";
 import { useTranslation } from "@/lib/store/i18nStore";
+import { toBehavioralMetricsPayload, useUserLevelStore } from "@/lib/store/userLevelStore";
 
 const MOOD_TO_LEVEL: Record<string, number> = { sad: 1, neutral: 2, smile: 3 };
 
 export function FeedbackModal({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
   const { t } = useTranslation();
+  const metrics = useUserLevelStore((state) => state.metrics);
   const [mood, setMood] = useState<"sad" | "neutral" | "smile" | null>(null);
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
@@ -26,15 +28,7 @@ export function FeedbackModal({ open, onOpenChange }: { open: boolean; onOpenCha
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           prompt_text: text.trim() || "(mood only)",
-          metrics: {
-            chars_per_second: 0,
-            session_message_count: 0,
-            avg_prompt_length: 0,
-            advanced_feature_usage: 0,
-            suggestion_click_count: 0,
-            cancel_action_count: 0,
-            session_duration_seconds: 0,
-          },
+          metrics: toBehavioralMetricsPayload(metrics),
           actual_level: MOOD_TO_LEVEL[mood ?? "neutral"],
         }),
       });
@@ -97,7 +91,7 @@ export function FeedbackModal({ open, onOpenChange }: { open: boolean; onOpenCha
                   size="sm"
                   iconOnly
                   leftIcon={<Icon size={16} strokeWidth={2} />}
-                  onClick={() => setMood(id as any)}
+                  onClick={() => setMood(id as "sad" | "neutral" | "smile")}
                   className={`h-8 w-8 rounded-full p-0 shadow-none ${
                     mood === id
                       ? "bg-background shadow-sm text-ds-text"

@@ -17,7 +17,7 @@ import { Select } from "@/components/ui/select";
 import { Slider } from "@/components/ui/slider";
 import { Note } from "@/components/ui/note";
 import { Textarea } from "@/components/ui/textarea";
-import { Badge } from "@/components/ui/badge";
+import { Badge, type BadgeProps } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tooltip } from "@/components/ui/tooltip";
 import { SegmentedControl } from "@/components/ui/segmented-control";
@@ -31,6 +31,31 @@ export type { SidebarConfig };
 export type { FewShotExample } from "./sidebar/config";
 
 const SIDEBAR_WIDTH_CSS = "clamp(280px, 25vw, 340px)";
+
+const TEMPLATE_BADGE_VARIANTS = {
+  gray: "gray-subtle",
+  blue: "blue-subtle",
+  purple: "purple-subtle",
+  pink: "pink-subtle",
+  red: "red-subtle",
+  amber: "amber-subtle",
+  green: "green-subtle",
+  teal: "teal-subtle",
+} satisfies Record<string, NonNullable<BadgeProps["variant"]>>;
+
+function isTemplateBadgeColor(
+  value: string,
+): value is keyof typeof TEMPLATE_BADGE_VARIANTS {
+  return value in TEMPLATE_BADGE_VARIANTS;
+}
+
+function getTemplateBadgeVariant(
+  color: string,
+): NonNullable<BadgeProps["variant"]> {
+  return isTemplateBadgeColor(color)
+    ? TEMPLATE_BADGE_VARIANTS[color]
+    : "gray-subtle";
+}
 
 function SidebarTemplateItem({ tpl, config }: { tpl: PromptTemplate; config: SidebarConfig }) {
   return (
@@ -68,7 +93,7 @@ function SidebarTemplateItem({ tpl, config }: { tpl: PromptTemplate; config: Sid
       </div>
 
       <div className="pointer-events-none absolute right-3 top-3">
-        <Badge variant={`${tpl.category_color}-subtle` as any}>
+        <Badge variant={getTemplateBadgeVariant(tpl.category_color)}>
           <span className="max-w-[120px] truncate">{tpl.category_name}</span>
         </Badge>
       </div>
@@ -121,11 +146,11 @@ const ConfigSidebarComponent = ({ config, forceVisible }: { config: SidebarConfi
   const compareOn = level === 3 && (config.compareEnabled ?? false);
   const fallbackModelB = models?.[1]?.value ?? models?.[0]?.value ?? config.model;
 
-  const presets = [
+  const presets = useMemo(() => ([
     { id: "precise", label: t("config.precise"), t: 0.1, m: 1024, p: 0.9 },
     { id: "balanced", label: t("config.balanced"), t: 0.4, m: 2048, p: 0.95 },
     { id: "creative", label: t("config.creative"), t: 0.9, m: 4096, p: 0.99 },
-  ];
+  ]), [t]);
 
   const activePresetId = useMemo(() => {
     const matched = presets.find((p) => {
@@ -509,7 +534,7 @@ const ConfigSidebarComponent = ({ config, forceVisible }: { config: SidebarConfi
               size="sm"
               iconOnly
               onClick={() => scrollRef.current?.scrollTo({ top: 0, behavior: "smooth" })}
-              className="shadow-geist-md"
+              className="shadow-elevated-panel"
               aria-label="Scroll to top"
             >
               <ChevronUp size={16} strokeWidth={2} />

@@ -24,7 +24,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { Badge } from "@/components/ui/badge";
+import { Badge, type BadgeProps } from "@/components/ui/badge";
 import { useTemplatesStore, getMergedTemplates, isVirtualTemplate, type PromptTemplate } from "@/lib/store/templatesStore";
 import { useUserLevelStore } from "@/lib/store/userLevelStore";
 import { useTranslation } from "@/lib/store/i18nStore";
@@ -46,6 +46,31 @@ const COLOR_BG: Record<string, string> = {
   green: "bg-[var(--ds-green-800)]",
   teal: "bg-[var(--ds-teal-800)]",
 };
+
+const TEMPLATE_BADGE_VARIANTS = {
+  gray: "gray-subtle",
+  blue: "blue-subtle",
+  purple: "purple-subtle",
+  pink: "pink-subtle",
+  red: "red-subtle",
+  amber: "amber-subtle",
+  green: "green-subtle",
+  teal: "teal-subtle",
+} satisfies Record<string, NonNullable<BadgeProps["variant"]>>;
+
+function isTemplateBadgeColor(
+  value: string,
+): value is keyof typeof TEMPLATE_BADGE_VARIANTS {
+  return value in TEMPLATE_BADGE_VARIANTS;
+}
+
+function getTemplateBadgeVariant(
+  color: string,
+): NonNullable<BadgeProps["variant"]> {
+  return isTemplateBadgeColor(color)
+    ? TEMPLATE_BADGE_VARIANTS[color]
+    : "gray-subtle";
+}
 
 function ColorPicker({
   value,
@@ -190,7 +215,7 @@ function SortableTemplateItem({
           <span className="truncate text-[14px] font-medium text-ds-text">
             {tpl.title}
           </span>
-          <Badge variant={`${tpl.category_color}-subtle` as any} size="sm">
+          <Badge variant={getTemplateBadgeVariant(tpl.category_color)} size="sm">
             <span className="max-w-[120px] truncate">{tpl.category_name}</span>
           </Badge>
           {isVirtualTemplate(tpl.id) && (

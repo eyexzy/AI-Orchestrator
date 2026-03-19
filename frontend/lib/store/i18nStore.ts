@@ -1,5 +1,6 @@
 ﻿import { create } from "zustand";
 
+import { useCallback } from "react";
 export type Language = "en" | "uk";
 
 /* Translation dictionary */
@@ -28,6 +29,9 @@ const translations: Record<Language, Record<string, string>> = {
     "input.analyzing": "Analyzing...",
     "input.enhance": "Enhance",
     "input.enhanceTitle": "AI tutor will enhance your prompt",
+    "input.enhanceError": "Failed to enhance the prompt. Please try again.",
+    "input.strategy.cot": "Let's think step by step. Explain your reasoning.",
+    "input.strategy.stepBack": "Identify the core abstract principles or laws underlying this request before answering. ",
 
     // L1 Chips
     "chips.role": "Role",
@@ -180,6 +184,8 @@ const translations: Record<Language, Record<string, string>> = {
     "sidebar.delete": "Delete",
     "sidebar.openSidebar": "Open sidebar",
     "sidebar.collapse": "Collapse",
+    "sidebar.loadErrorTitle": "Chat history is unavailable",
+    "sidebar.loadErrorDescription": "We couldn't load your chats right now.",
 
     // UserMenuDropdown
     "menu.profile": "Profile",
@@ -191,6 +197,7 @@ const translations: Record<Language, Record<string, string>> = {
     "menu.signOut": "Sign Out",
     "menu.langEnglish": "English",
     "menu.langUkrainian": "Українська",
+    "menu.preferenceSaveError": "Preference wasn't saved. Please try again.",
 
     // Tooltips
     "tooltip.compare": "Sends your prompt to two models in parallel. You see both responses side-by-side and pick the better one. Useful for choosing the right model for your task or spotting differences in reasoning quality.",
@@ -229,6 +236,8 @@ const translations: Record<Language, Record<string, string>> = {
     "feedback.placeholder": "Your feedback",
     "feedback.cancel": "Cancel",
     "feedback.submit": "Submit",
+    "feedback.success": "Feedback sent!",
+    "feedback.error": "Failed to send feedback.",
     // Onboarding
     "onboarding.welcome": "Welcome to AI-Orchestrator",
     "onboarding.description": "Your answers will help us pick the right starting interface level.",
@@ -260,6 +269,11 @@ const translations: Record<Language, Record<string, string>> = {
     "search.recentChats": "Recent Chats",
     "search.viewAll": "View All...",
     "search.noResults": "No chats found",
+    "search.noRecent": "No recent chats yet",
+    "search.errorTitle": "Search is unavailable",
+    "search.errorDescription": "We couldn't complete the search request.",
+    "search.roleUser": "User: ",
+    "search.roleAssistant": "AI: ",
 
     "settings.title": "Account Settings",
     "settings.general": "General",
@@ -270,6 +284,15 @@ const translations: Record<Language, Record<string, string>> = {
     "settings.levelL1": "L1 - Guided",
     "settings.levelL2": "L2 - Constructor",
     "settings.levelL3": "L3 - Engineer",
+    "settings.loadError": "Failed to load account settings.",
+    "settings.saveError": "Failed to save account settings.",
+
+    "chat.loadErrorTitle": "Chat is unavailable",
+    "chat.loadErrorDescription": "We couldn't load this conversation.",
+    "chat.sendError": "Failed to generate a response. Check your connection and try again.",
+    "chat.retrySend": "Retry send",
+
+    "common.retry": "Retry",
   },
 
   uk: {
@@ -296,6 +319,9 @@ const translations: Record<Language, Record<string, string>> = {
     "input.analyzing": "Аналізую...",
     "input.enhance": "Покращити",
     "input.enhanceTitle": "AI-тьютор покращить ваш промпт",
+    "input.enhanceError": "Не вдалося покращити промпт. Спробуйте ще раз.",
+    "input.strategy.cot": "Давай міркувати крок за кроком. Поясни свою логіку.",
+    "input.strategy.stepBack": "Спочатку визнач основні абстрактні принципи або правила, що лежать в основі цього запиту, а потім відповідай. ",
 
     // L1 Chips
     "chips.role": "Роль",
@@ -448,6 +474,8 @@ const translations: Record<Language, Record<string, string>> = {
     "sidebar.delete": "Видалити",
     "sidebar.openSidebar": "Відкрити бічну панель",
     "sidebar.collapse": "Згорнути",
+    "sidebar.loadErrorTitle": "Історія чатів недоступна",
+    "sidebar.loadErrorDescription": "Зараз не вдалося завантажити ваші чати.",
 
     // UserMenuDropdown
     "menu.profile": "Профіль",
@@ -459,6 +487,7 @@ const translations: Record<Language, Record<string, string>> = {
     "menu.signOut": "Вийти",
     "menu.langEnglish": "English",
     "menu.langUkrainian": "Українська",
+    "menu.preferenceSaveError": "Налаштування не збережено. Спробуйте ще раз.",
 
     // Tooltips
     "tooltip.compare": "Надсилає ваш промпт двом моделям паралельно. Ви бачите обидві відповіді поруч і обираєте кращу. Корисно для вибору оптимальної моделі або порівняння якості міркувань.",
@@ -497,6 +526,8 @@ const translations: Record<Language, Record<string, string>> = {
     "feedback.placeholder": "Ваш відгук",
     "feedback.cancel": "Скасувати",
     "feedback.submit": "Надіслати",
+    "feedback.success": "Відгук надіслано!",
+    "feedback.error": "Не вдалося надіслати відгук.",
     // Onboarding
     "onboarding.welcome": "Ласкаво просимо до AI-Orchestrator",
     "onboarding.description": "Ваші відповіді допоможуть обрати правильний початковий рівень інтерфейсу.",
@@ -528,6 +559,11 @@ const translations: Record<Language, Record<string, string>> = {
     "search.recentChats": "Останні чати",
     "search.viewAll": "Показати всі...",
     "search.noResults": "Чатів не знайдено",
+    "search.noRecent": "Останніх чатів поки немає",
+    "search.errorTitle": "Пошук недоступний",
+    "search.errorDescription": "Не вдалося виконати пошуковий запит.",
+    "search.roleUser": "Користувач: ",
+    "search.roleAssistant": "AI: ",
 
     "settings.title": "Налаштування акаунту",
     "settings.general": "Загальні",
@@ -538,6 +574,15 @@ const translations: Record<Language, Record<string, string>> = {
     "settings.levelL1": "L1 - Керований",
     "settings.levelL2": "L2 - Конструктор",
     "settings.levelL3": "L3 - Інженер",
+    "settings.loadError": "Не вдалося завантажити налаштування акаунту.",
+    "settings.saveError": "Не вдалося зберегти налаштування акаунту.",
+
+    "chat.loadErrorTitle": "Чат недоступний",
+    "chat.loadErrorDescription": "Не вдалося завантажити цю розмову.",
+    "chat.sendError": "Не вдалося згенерувати відповідь. Перевірте з'єднання і спробуйте ще раз.",
+    "chat.retrySend": "Повторити надсилання",
+
+    "common.retry": "Повторити",
   },
 };
 
@@ -556,9 +601,9 @@ export const useI18nStore = create<I18nState>((set) => ({
 export function useTranslation() {
   const language = useI18nStore((s) => s.language);
 
-  const t = (key: string): string => {
+  const t = useCallback((key: string): string => {
     return translations[language]?.[key] ?? translations.en[key] ?? key;
-  };
+  }, [language]);
 
   return { t, language };
 }

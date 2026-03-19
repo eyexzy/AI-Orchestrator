@@ -59,7 +59,7 @@ export function ChatInputBox({
       {/* The floating pill */}
       <div
         ref={wrapperRef}
-        className="flex flex-col rounded-xl border border-gray-alpha-400 bg-background overflow-hidden transition-all duration-150 shadow-geist-md hover:border-gray-alpha-500 focus-within:border-gray-alpha-500"
+        className="shadow-elevated-panel flex flex-col overflow-hidden rounded-xl border border-gray-alpha-400 bg-background transition-all duration-150 hover:border-gray-alpha-500 focus-within:border-gray-alpha-500"
       >
         {topSlot && <div className="px-5 pt-4">{topSlot}</div>}
 

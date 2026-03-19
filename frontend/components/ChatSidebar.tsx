@@ -19,6 +19,7 @@ import { useChatStore, type ChatSession } from "@/lib/store/chatStore";
 import { ChatSearchModal } from "@/components/ChatSearchModal";
 import { ActionMenu } from "@/components/ui/action-menu";
 import { Button } from "@/components/ui/button";
+import { ErrorState } from "@/components/ui/error-state";
 import { RenameChatModal } from "@/components/modals/RenameChatModal";
 import { useTranslation } from "@/lib/store/i18nStore";
 
@@ -147,15 +148,15 @@ export function ChatSidebar() {
   const { t }: { t: (key: string) => string } = useTranslation();
   const { data: session } = useSession();
   const {
-    chats, activeChatId, isLoadingChats, sidebarOpen,
-    setSidebarOpen, toggleSidebar, loadChats,
+    chats, activeChatId, isLoadingChats, chatListError, sidebarOpen,
+    toggleSidebar, loadChats,
     selectChat, createNewChat, deleteChat, renameChat, toggleFavorite,
   } = useChatStore(useShallow((s) => ({
     chats: s.chats,
     activeChatId: s.activeChatId,
     isLoadingChats: s.isLoadingChats,
+    chatListError: s.chatListError,
     sidebarOpen: s.sidebarOpen,
-    setSidebarOpen: s.setSidebarOpen,
     toggleSidebar: s.toggleSidebar,
     loadChats: s.loadChats,
     selectChat: s.selectChat,
@@ -169,8 +170,12 @@ export function ChatSidebar() {
   const [renameModalOpen, setRenameModalOpen] = useState(false);
   const [renameTarget, setRenameTarget] = useState<ChatSession | null>(null);
 
-  const userEmail = session?.user?.email ?? "anonymous";
-  useEffect(() => { if (userEmail) loadChats(userEmail); }, [userEmail, loadChats]);
+  const userEmail = session?.user?.email ?? null;
+  useEffect(() => {
+    if (userEmail) {
+      void loadChats(userEmail);
+    }
+  }, [userEmail, loadChats]);
 
   // Cmd+K / Ctrl+K to toggle search
   useEffect(() => {
@@ -185,6 +190,7 @@ export function ChatSidebar() {
   }, []);
 
   const handleNew = async () => {
+    if (!userEmail) return;
     const activeChat = chats.find((c) => c.id === activeChatId);
     if (activeChat && activeChat.message_count === 0) return;
     await createNewChat(userEmail);
@@ -273,6 +279,18 @@ export function ChatSidebar() {
             <div className="h-4 w-4 animate-spin rounded-full border-2 border-gray-alpha-200 border-t-gray-alpha-400" />
             <span className="text-sm text-ds-text-tertiary">{t("sidebar.loading")}</span>
           </div>
+        ) : chatListError && chats.length === 0 ? (
+          <ErrorState
+            centered
+            title={t("sidebar.loadErrorTitle")}
+            description={chatListError}
+            actionLabel={t("common.retry")}
+            onAction={() => {
+              if (userEmail) {
+                void loadChats(userEmail);
+              }
+            }}
+          />
         ) : chats.length === 0 ? (
           <div className="px-2 py-10 text-center">
             <div className="mb-3 flex justify-center opacity-[0.15]">
@@ -292,6 +310,17 @@ export function ChatSidebar() {
           </div>
         ) : (
           <div className="space-y-4">
+            {chatListError && (
+              <ErrorState
+                description={chatListError}
+                actionLabel={t("common.retry")}
+                onAction={() => {
+                  if (userEmail) {
+                    void loadChats(userEmail);
+                  }
+                }}
+              />
+            )}
             {groups.map((g) => (
               <div key={g.label}>
                 <p className="mb-2 px-3 text-xs font-semibold uppercase tracking-widest font-mono text-ds-text-tertiary whitespace-nowrap">
