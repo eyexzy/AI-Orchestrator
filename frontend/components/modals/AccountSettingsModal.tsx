@@ -1,66 +1,94 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
+import { ErrorState } from "@/components/ui/error-state";
 import { Input } from "@/components/ui/input";
 import { useTranslation } from "@/lib/store/i18nStore";
-import { useUserLevelStore, type UserLevel } from "@/lib/store/userLevelStore";
+import { useUserLevelStore } from "@/lib/store/userLevelStore";
+import {
+  fetchProfilePreferences,
+  patchProfilePreferences,
+} from "@/lib/profilePreferences";
+import { getErrorMessage } from "@/lib/request";
 
-async function patchPreferences(body: Record<string, any>) {
-  try {
-    await fetch("/api/profile/preferences", {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-  } catch {
-    /* silent */
-  }
+function parseManualLevelOverride(value: unknown): "auto" | 1 | 2 | 3 {
+  return value === 1 || value === 2 || value === 3 ? value : "auto";
+}
+
+function parseCurrentLevel(value: unknown): 1 | 2 | 3 | null {
+  return value === 1 || value === 2 || value === 3 ? value : null;
 }
 
 export function AccountSettingsModal({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
   const { t } = useTranslation();
   const setLevel = useUserLevelStore((s) => s.setLevel);
+  const currentLevel = useUserLevelStore((s) => s.level);
   
   const [activeTab, setActiveTab] = useState<"general">("general");
   const [override, setOverride] = useState<"auto" | 1 | 2 | 3>("auto");
   const [isLoading, setIsLoading] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
+
+  const loadPreferences = useCallback(async () => {
+    setIsLoading(true);
+    setLoadError(null);
+
+    try {
+      const data = await fetchProfilePreferences();
+      setOverride(parseManualLevelOverride(data.manual_level_override));
+    } catch (error) {
+      setOverride("auto");
+      setLoadError(getErrorMessage(error, t("settings.loadError")));
+    } finally {
+      setIsLoading(false);
+    }
+  }, [t]);
 
   useEffect(() => {
     if (open) {
-      setIsLoading(true);
-      fetch("/api/profile/preferences")
-        .then((res) => {
-          if (!res.ok) throw new Error("Failed to fetch preferences");
-          return res.json();
-        })
-        .then((data) => {
-          if (data.manual_level_override !== undefined && data.manual_level_override !== null) {
-            setOverride(data.manual_level_override as 1 | 2 | 3);
-          } else {
-            setOverride("auto");
-          }
-        })
-        .catch(() => {
-          setOverride("auto");
-        })
-        .finally(() => {
-          setIsLoading(false);
-        });
+      void loadPreferences();
     }
-  }, [open]);
+  }, [loadPreferences, open]);
 
-  const handleOverrideChange = (val: "auto" | 1 | 2 | 3) => {
+  const handleOverrideChange = async (val: "auto" | 1 | 2 | 3) => {
+    const previousOverride = override;
+    const previousLevel = currentLevel;
     setOverride(val);
-    
+    setSaveError(null);
+
     if (val !== "auto") {
-      setLevel(val as UserLevel);
+      setLevel(val);
     }
-    
-    patchPreferences({
-      manual_level_override: val === "auto" ? null : val,
-    });
+
+    setIsSaving(true);
+
+    try {
+      const data = await patchProfilePreferences({
+        manual_level_override: val === "auto" ? null : val,
+      });
+      const persistedOverride = parseManualLevelOverride(data.manual_level_override);
+      setOverride(persistedOverride);
+      const persistedLevel = parseCurrentLevel(data.current_level);
+      if (persistedLevel !== null) {
+        setLevel(persistedLevel);
+      } else if (persistedOverride !== "auto") {
+        setLevel(persistedOverride);
+      }
+    } catch (error) {
+      setOverride(previousOverride);
+      if (previousOverride !== "auto") {
+        setLevel(previousOverride);
+      } else {
+        setLevel(previousLevel);
+      }
+      setSaveError(getErrorMessage(error, t("settings.saveError")));
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   return (
@@ -95,6 +123,19 @@ export function AccountSettingsModal({ open, onOpenChange }: { open: boolean; on
                 {t("settings.levelDescription")}
               </p>
 
+              {loadError && (
+                <ErrorState
+                  className="mb-4"
+                  description={loadError}
+                  actionLabel={t("common.retry")}
+                  onAction={() => { void loadPreferences(); }}
+                />
+              )}
+
+              {saveError && (
+                <ErrorState className="mb-4" description={saveError} />
+              )}
+
               {isLoading ? (
                 <div className="animate-pulse flex flex-col gap-3">
                   {[...Array(4)].map((_, i) => (
@@ -128,8 +169,9 @@ export function AccountSettingsModal({ open, onOpenChange }: { open: boolean; on
                         variant="ghost"
                         className="hidden"
                         inputClassName="hidden"
+                        disabled={isSaving}
                         checked={override === option.value}
-                        onChange={() => handleOverrideChange(option.value)}
+                        onChange={() => { void handleOverrideChange(option.value); }}
                       />
                     </label>
                   ))}

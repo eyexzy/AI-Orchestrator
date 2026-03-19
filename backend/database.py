@@ -6,7 +6,17 @@ from datetime import datetime, timezone
 from dotenv import load_dotenv
 load_dotenv()
 
-from sqlalchemy import Boolean, Column, Integer, Float, String, DateTime, Text, ForeignKey
+from sqlalchemy import (
+    Boolean,
+    Column,
+    DateTime,
+    Float,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+)
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase, relationship
 
@@ -38,7 +48,7 @@ def _uuid() -> str:
 
 
 def _now() -> datetime:
-    return datetime.now(timezone.utc).replace(tzinfo=None)
+    return datetime.now(timezone.utc)
 
 
 class Base(DeclarativeBase):
@@ -50,9 +60,9 @@ class InteractionLog(Base):
     __tablename__ = "interaction_logs"
 
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
-    session_id = Column(String(64), index=True, default="unknown")
+    session_id = Column(String(64), ForeignKey("chat_sessions.id", ondelete="SET NULL"), index=True, nullable=True, default="unknown")
     user_email = Column(String(255), index=True, default="anonymous")
-    timestamp = Column(DateTime, default=_now, index=True)
+    timestamp = Column(DateTime(timezone=True), default=_now, index=True)
     user_level = Column(Integer, default=1, index=True)
     prompt_text = Column(Text, default="")
     score_awarded = Column(Float, default=0.0)
@@ -86,20 +96,23 @@ class UserProfile(Base):
     language = Column(String(8), default="en")
     manual_level_override = Column(Integer, nullable=True)
     hidden_templates_json = Column(Text, default="[]")
-    updated_at = Column(DateTime, default=_now, onupdate=_now)
+    updated_at = Column(DateTime(timezone=True), default=_now, onupdate=_now)
 
 
 # Chat history
 
 class ChatSession(Base):
     __tablename__ = "chat_sessions"
+    __table_args__ = (
+        Index("ix_chat_sessions_user_email_updated_at", "user_email", "updated_at"),
+    )
 
     id = Column(String(36), primary_key=True, default=_uuid)
     user_email = Column(String(255), index=True, default="anonymous")
     title = Column(String(255), default="Новий чат")
     is_favorite = Column(Boolean, default=False)
-    created_at = Column(DateTime, default=_now)
-    updated_at = Column(DateTime, default=_now, onupdate=_now)
+    created_at = Column(DateTime(timezone=True), default=_now)
+    updated_at = Column(DateTime(timezone=True), default=_now, onupdate=_now)
 
     messages = relationship(
         "ChatMessage",
@@ -111,12 +124,15 @@ class ChatSession(Base):
 
 class ChatMessage(Base):
     __tablename__ = "chat_messages"
+    __table_args__ = (
+        Index("ix_chat_messages_session_id_created_at", "session_id", "created_at"),
+    )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     session_id = Column(String(36), ForeignKey("chat_sessions.id", ondelete="CASCADE"), index=True, nullable=False)
     role = Column(String(16), nullable=False)
     content = Column(Text, default="")
-    created_at = Column(DateTime, default=_now, index=True)
+    created_at = Column(DateTime(timezone=True), default=_now, index=True)
     metadata_json = Column(Text, default="{}")
 
     session = relationship("ChatSession", back_populates="messages")
@@ -128,6 +144,7 @@ class MLFeedback(Base):
     __tablename__ = "ml_feedback"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
+    user_email = Column(String(255), index=True, nullable=False, default="anonymous")
     prompt_text = Column(Text, default="")
     prompt_length = Column(Float, default=0.0)
     word_count = Column(Float, default=0.0)
@@ -139,39 +156,45 @@ class MLFeedback(Base):
     used_advanced_features_count = Column(Float, default=0.0)
     tooltip_click_count = Column(Float, default=0.0)
     actual_level = Column(Integer, nullable=False)
-    created_at = Column(DateTime, default=_now)
+    created_at = Column(DateTime(timezone=True), default=_now)
 
 
 # ML model cache (replaces ml_model.json)
 
 class PromptTemplateDB(Base):
     __tablename__ = "prompt_templates"
+    __table_args__ = (
+        Index("ix_prompt_templates_user_email_order_index", "user_email", "order_index"),
+    )
 
     id = Column(String(36), primary_key=True, default=_uuid)
-    user_email = Column(String(255), index=True, default="anonymous")
+    user_email = Column(String(255), primary_key=True, index=True, nullable=False, default="anonymous")
     title = Column(String(255), default="")
     description = Column(Text, default="")
-    category_name = Column(String(64), default="")
+    category_name = Column(String(64), default="", index=True)
     category_color = Column(String(32), default="blue")
     prompt = Column(Text, default="")
     system_message = Column(Text, default="")
     variables_json = Column(Text, default="[]")
     is_favorite = Column(Boolean, default=False)
     order_index = Column(Integer, default=0)
-    created_at = Column(DateTime, default=_now)
+    created_at = Column(DateTime(timezone=True), default=_now, index=True)
 
 
 class MLModelCache(Base):
     __tablename__ = "ml_model_cache"
+    __table_args__ = (
+        Index("ix_ml_model_cache_updated_at_id", "updated_at", "id"),
+    )
 
-    id = Column(Integer, primary_key=True, default=1)
+    id = Column(Integer, primary_key=True, autoincrement=True)
     weights_json = Column(Text, nullable=False)
     model_type = Column(String(64), default="LogisticRegression")
     accuracy = Column(Float, default=0.0)
     f1_score = Column(Float, default=0.0)
     classification_report_json = Column(Text, default="{}")
     samples_used = Column(Integer, default=0)
-    updated_at = Column(DateTime, default=_now, onupdate=_now)
+    updated_at = Column(DateTime(timezone=True), default=_now, onupdate=_now)
 
 
 # DB helpers

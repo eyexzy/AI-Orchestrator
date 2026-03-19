@@ -29,6 +29,10 @@ import {
   SheetDescription,
 } from "@/components/ui/sheet";
 
+function parseCurrentLevel(value: unknown): 1 | 2 | 3 | null {
+  return value === 1 || value === 2 || value === 3 ? value : null;
+}
+
 const LEVEL_META: Record<1 | 2 | 3, {
   tag: string;
   description: string;
@@ -51,7 +55,7 @@ function LevelIndicator() {
   const meta = LEVEL_META[level];
   return (
     <div className="flex items-center gap-2.5">
-      <Badge variant={meta.variant as any} size="lg">
+      <Badge variant={meta.variant} size="lg">
         <span className="font-mono opacity-70">L{level}</span>
         {meta.tag}
       </Badge>
@@ -226,6 +230,10 @@ export default function HomePage() {
           }
           if (Array.isArray(data.hidden_templates)) {
             useUserLevelStore.setState({ hiddenTemplates: data.hidden_templates });
+          }
+          const currentLevel = parseCurrentLevel(data.current_level);
+          if (currentLevel !== null) {
+            useUserLevelStore.getState().setLevel(currentLevel);
           }
         })
         .catch((err) => {

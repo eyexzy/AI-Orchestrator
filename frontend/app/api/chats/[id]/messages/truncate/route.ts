@@ -1,41 +1,20 @@
 import { NextRequest, NextResponse } from "next/server";
-import { auth } from "@/auth";
-
-const API_URL =
-  process.env.NEXT_PUBLIC_API_URL ??
-  (process.env.NODE_ENV === "development" ? "http://localhost:8000" : "");
-
-const ADMIN_API_KEY = process.env.ADMIN_API_KEY ?? "";
+import { proxyUserJsonRequest } from "@/lib/backendProxy";
 
 export async function DELETE(
   req: NextRequest,
   props: { params: Promise<{ id: string }> },
 ) {
   const params = await props.params;
-  const session = await auth();
-  if (!session?.user?.email) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
-  const searchParams = req.nextUrl.searchParams;
-  const afterId = searchParams.get("after_id");
+  const afterId = req.nextUrl.searchParams.get("after_id");
 
   if (!afterId) {
     return NextResponse.json({ error: "after_id is required" }, { status: 400 });
   }
 
-  const headers: Record<string, string> = {};
-  if (ADMIN_API_KEY) headers["X-Api-Key"] = ADMIN_API_KEY;
-
-  try {
-    const res = await fetch(`${API_URL}/chats/${params.id}/messages/truncate?after_id=${afterId}`, {
-      method: "DELETE",
-      headers,
-    });
-    const data = await res.json();
-    return NextResponse.json(data, { status: res.status });
-  } catch (err) {
-    console.error("[/api/chats/[id]/messages/truncate DELETE] Backend error:", err);
-    return NextResponse.json({ error: "Backend unreachable" }, { status: 502 });
-  }
+  return proxyUserJsonRequest({
+    path: `/chats/${params.id}/messages/truncate?after_id=${encodeURIComponent(afterId)}`,
+    method: "DELETE",
+    fallbackError: "Failed to truncate chat history",
+  });
 }

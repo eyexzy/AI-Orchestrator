@@ -48,6 +48,7 @@ def train_and_evaluate(
     behavioral_X: np.ndarray,
     y: np.ndarray,
     model_type: ModelType = "LogisticRegression",
+    model_params: dict | None = None,
     test_size: float = 0.2,
     cv_folds: int = 5,
 ) -> dict:
@@ -65,7 +66,7 @@ def train_and_evaluate(
     # Need at least 2 samples per class in train after split for stratified CV
     can_split = min_class_count >= 4 and n_samples >= 12
 
-    clf = SklearnClassifier(model_type=model_type)
+    clf = SklearnClassifier(model_type=model_type, model_params=model_params)
 
     if can_split:
         # Stratified train/test split
@@ -132,6 +133,7 @@ def train_and_evaluate(
         "samples_train": int(n_samples * (1 - test_size)) if can_split else n_samples,
         "samples_test": int(n_samples * test_size) if can_split else 0,
         "model_type": model_type,
+        "model_params": dict(model_params or {}),
         "had_proper_split": can_split,
     }
 
@@ -139,6 +141,7 @@ def train_and_evaluate(
 async def retrain_from_db(
     min_samples: int = 10,
     model_type: ModelType = "LogisticRegression",
+    use_tuning: bool = True,
 ):
     """CLI-callable retrain function."""
     await init_db()
@@ -169,8 +172,31 @@ async def retrain_from_db(
         count = int((y == lvl).sum())
         print(f"[retrain]   L{lvl}: {count} samples ({count / len(y) * 100:.1f}%)")
 
-    result = train_and_evaluate(texts, behavioral_X, y, model_type=model_type)
+    tuning_result = None
+    model_params = None
+    if use_tuning and model_type in ("LogisticRegression", "RandomForest"):
+        try:
+            from ml_tuning import tune_hyperparameters
+
+            tuning_result = tune_hyperparameters(texts, behavioral_X, y, model_type)
+            model_params = tuning_result.get("best_params") or None
+            print(f"[retrain] Tuning applied: {model_params}")
+        except Exception as exc:
+            logger.warning(
+                "[retrain] Hyperparameter tuning skipped: %s: %s",
+                type(exc).__name__,
+                exc,
+            )
+
+    result = train_and_evaluate(
+        texts,
+        behavioral_X,
+        y,
+        model_type=model_type,
+        model_params=model_params,
+    )
     clf = result["classifier"]
+    result["tuning"] = tuning_result
 
     print(f"[retrain] Model: {model_type}")
     print(f"[retrain] Accuracy: {result['accuracy']:.1%}")
@@ -184,27 +210,19 @@ async def retrain_from_db(
     report_json = json.dumps(result["classification_report"], ensure_ascii=False)
 
     async with AsyncSessionLocal() as db:
-        existing = await db.execute(select(MLModelCache).where(MLModelCache.id == 1))
-        cache_row = existing.scalar_one_or_none()
-        if cache_row:
-            cache_row.weights_json = weights_json
-            cache_row.model_type = model_type
-            cache_row.accuracy = result["accuracy"]
-            cache_row.f1_score = result["f1_macro"]
-            cache_row.classification_report_json = report_json
-            cache_row.samples_used = result["samples_total"]
-        else:
-            db.add(MLModelCache(
-                id=1,
-                weights_json=weights_json,
-                model_type=model_type,
-                accuracy=result["accuracy"],
-                f1_score=result["f1_macro"],
-                classification_report_json=report_json,
-                samples_used=result["samples_total"],
-            ))
+        db.add(MLModelCache(
+            weights_json=weights_json,
+            model_type=model_type,
+            accuracy=result["accuracy"],
+            f1_score=result["f1_macro"],
+            classification_report_json=report_json,
+            samples_used=result["samples_total"],
+        ))
         await db.commit()
 
+    import ml_classifier
+
+    ml_classifier._classifier.from_dict(clf.to_dict())
     print("[retrain] Model saved to database")
     return result
 
@@ -216,5 +234,10 @@ if __name__ == "__main__":
         "--model", type=str, default="LogisticRegression",
         choices=["LogisticRegression", "RandomForest", "SVC"],
     )
+    parser.add_argument(
+        "--no-tuning",
+        action="store_true",
+        help="Skip GridSearchCV tuning for supported models",
+    )
     args = parser.parse_args()
-    asyncio.run(retrain_from_db(args.min_samples, args.model))
+    asyncio.run(retrain_from_db(args.min_samples, args.model, not args.no_tuning))

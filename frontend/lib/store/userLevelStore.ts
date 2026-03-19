@@ -1,5 +1,4 @@
 import { create } from "zustand";
-import { API_URL } from "@/lib/config";
 
 function generateSessionId(): string {
   if (typeof crypto !== "undefined" && crypto.randomUUID) {
@@ -36,6 +35,32 @@ export interface ScoreBreakdown {
   points: number;
   max_points: number;
   detail: string;
+}
+
+function normalizeUserLevel(value: unknown): UserLevel | null {
+  return value === 1 || value === 2 || value === 3 ? value : null;
+}
+
+export function toBehavioralMetricsPayload(
+  metrics: BehavioralMetrics,
+  overrides: Partial<Record<string, number | boolean>> = {},
+) {
+  return {
+    chars_per_second: metrics.charsPerSecond,
+    session_message_count: metrics.sessionMessageCount,
+    avg_prompt_length: metrics.avgPromptLength,
+    changed_temperature: metrics.changedTemperature,
+    changed_model: metrics.changedModel,
+    used_system_prompt: metrics.usedSystemPrompt,
+    used_variables: metrics.usedVariables,
+    used_advanced_features_count: metrics.advancedFeaturesCount,
+    tooltip_click_count: metrics.tooltipClickCount,
+    suggestion_click_count: metrics.suggestionClickCount,
+    cancel_action_count: metrics.cancelActionCount,
+    level_transition_count: metrics.levelTransitionCount,
+    session_duration_seconds: metrics.sessionDurationSeconds,
+    ...overrides,
+  };
 }
 
 interface UserLevelState {
@@ -155,7 +180,7 @@ export const useUserLevelStore = create<UserLevelState>((set, get) => ({
     })),
 
   analyzePrompt: async (text: string, currentCps: number) => {
-    const { metrics, sessionId, userEmail } = get();
+    const { metrics, sessionId } = get();
     const newLengths = [...metrics.promptLengths, text.length];
     const avg = newLengths.reduce((a, b) => a + b, 0) / newLengths.length;
     const newCount = metrics.sessionMessageCount + 1;
@@ -174,28 +199,20 @@ export const useUserLevelStore = create<UserLevelState>((set, get) => ({
     }));
 
     try {
-      const res = await fetch(`${API_URL}/analyze`, {
+      const metricsPayload = toBehavioralMetricsPayload(metrics, {
+        chars_per_second: currentCps,
+        session_message_count: newCount,
+        avg_prompt_length: avg,
+        session_duration_seconds: durationSeconds,
+      });
+
+      const res = await fetch("/api/analyze", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           prompt_text: text,
           session_id: sessionId,
-          user_email: userEmail,
-          metrics: {
-            chars_per_second: currentCps,
-            session_message_count: newCount,
-            avg_prompt_length: avg,
-            changed_temperature: metrics.changedTemperature,
-            changed_model: metrics.changedModel,
-            used_system_prompt: metrics.usedSystemPrompt,
-            used_variables: metrics.usedVariables,
-            used_advanced_features_count: metrics.advancedFeaturesCount,
-            tooltip_click_count: metrics.tooltipClickCount,
-            suggestion_click_count: metrics.suggestionClickCount,
-            cancel_action_count: metrics.cancelActionCount,
-            level_transition_count: metrics.levelTransitionCount,
-            session_duration_seconds: durationSeconds,
-          },
+          metrics: metricsPayload,
         }),
       });
 
@@ -228,18 +245,12 @@ export const useUserLevelStore = create<UserLevelState>((set, get) => ({
 
         const { groundTruth, metrics: m } = get();
         if (groundTruth !== null && m.sessionMessageCount === 1) {
-          fetch(`${API_URL}/ml/feedback`, {
+          fetch("/api/ml/feedback", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               prompt_text: text,
-              metrics: {
-                chars_per_second: m.charsPerSecond,
-                session_message_count: m.sessionMessageCount,
-                avg_prompt_length: m.avgPromptLength,
-                used_advanced_features_count: m.advancedFeaturesCount,
-                tooltip_click_count: m.tooltipClickCount,
-              },
+              metrics: toBehavioralMetricsPayload(m),
               actual_level: groundTruth,
             }),
           }).catch(() => {});
@@ -271,54 +282,15 @@ export const useUserLevelStore = create<UserLevelState>((set, get) => ({
         promptLengths: lengths,
         sessionStartTime: Date.now(),
       },
+      lastLevelChangeTs: 0,
+      score: 0,
+      normalizedScore: 0,
+      breakdown: [],
+      reasoning: [],
+      confidence: 0,
+      isAnalyzing: false,
+      hasAnalyzed: false,
     });
-
-    const recent = userTexts.length >= 3 ? userTexts.slice(-3) : userTexts;
-    const representativeText = recent.reduce(
-      (best, t) => (t.length > best.length ? t : best),
-      ""
-    );
-
-    const { sessionId, userEmail } = get();
-
-    try {
-      const res = await fetch(`${API_URL}/analyze`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          prompt_text: representativeText,
-          session_id: sessionId,
-          user_email: userEmail,
-          metrics: {
-            chars_per_second: 0,
-            session_message_count: count,
-            avg_prompt_length: avg,
-            used_advanced_features_count: 0,
-            tooltip_click_count: 0,
-          },
-        }),
-      });
-
-      if (res.ok) {
-        const data = await res.json();
-        const suggestedRaw = Number(data.final_level ?? data.suggested_level);
-        const suggested: UserLevel =
-          suggestedRaw >= 3 ? 3 : suggestedRaw <= 1 ? 1 : 2;
-        set({
-          level: suggested,
-          lastLevelChangeTs: 0,
-          confidence: data.confidence,
-          reasoning: data.reasoning,
-          score: data.score,
-          normalizedScore: data.normalized_score,
-          breakdown: data.breakdown ?? [],
-          thresholds: data.thresholds ?? { L2: 0.25, L3: 0.55 },
-          isAnalyzing: false,
-          hasAnalyzed: true,
-        });
-      }
-    } catch {
-    }
   },
 
   hideTemplate: async (id: string) => {
@@ -339,8 +311,16 @@ export const useUserLevelStore = create<UserLevelState>((set, get) => ({
       const res = await fetch("/api/profile/preferences");
       if (!res.ok) return;
       const data = await res.json();
+      const nextState: Partial<UserLevelState> = {};
       if (Array.isArray(data.hidden_templates)) {
-        set({ hiddenTemplates: data.hidden_templates });
+        nextState.hiddenTemplates = data.hidden_templates;
+      }
+      const currentLevel = normalizeUserLevel(data.current_level);
+      if (currentLevel !== null) {
+        nextState.level = currentLevel;
+      }
+      if (Object.keys(nextState).length > 0) {
+        set(nextState);
       }
     } catch {
     }

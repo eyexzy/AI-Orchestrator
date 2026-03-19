@@ -1,7 +1,6 @@
 import asyncio
 import json
 import logging
-
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -9,15 +8,14 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from database import AsyncSessionLocal, ChatSession, ChatMessage
-from dependencies import limiter, get_db
-from schemas.api import GenerateRequest, RefineRequest
+from database import AsyncSessionLocal, ChatMessage, ChatSession
+from dependencies import get_current_user, get_db, get_optional_current_user, limiter
+from schemas.api import GenerateRequest, MultiGenerateRequest, RefineRequest
 from services.llm import (
     get_client_for_model,
+    mock_generate,
     real_generate,
     real_generate_stream,
-    mock_generate,
-    mock_generate_stream,
     refine_prompt_with_llm,
 )
 
@@ -26,75 +24,192 @@ logger = logging.getLogger("ai-orchestrator")
 router = APIRouter()
 
 
-async def _save_assistant_message(db: AsyncSession, body: GenerateRequest, text: str, meta: dict, provider: str):
-    """Persist assistant reply and update chat title."""
+def _message_to_response(message: ChatMessage) -> dict:
+    try:
+        metadata = json.loads(message.metadata_json or "{}")
+        if not isinstance(metadata, dict):
+            metadata = {}
+    except (TypeError, json.JSONDecodeError):
+        metadata = {}
+
+    return {
+        "id": message.id,
+        "role": message.role,
+        "content": message.content,
+        "created_at": message.created_at.isoformat() if message.created_at else None,
+        "metadata": metadata,
+    }
+
+
+def _build_chat_title(prompt: str) -> str:
+    title = prompt[:60].strip()
+    if len(prompt) > 60:
+        title += "..."
+    return title or "New Chat"
+
+
+async def _ensure_session(
+    db: AsyncSession,
+    session_id: str,
+    prompt: str,
+    user_email: str,
+    enforce_owner: bool = False,
+) -> ChatSession:
+    result = await db.execute(
+        select(ChatSession).where(ChatSession.id == session_id)
+    )
+    session = result.scalars().first()
+    if session:
+        if enforce_owner and session.user_email != user_email:
+            raise HTTPException(status_code=404, detail="Chat not found")
+        return session
+
+    session = ChatSession(
+        id=session_id,
+        user_email=user_email,
+        title=_build_chat_title(prompt),
+    )
+    db.add(session)
+    try:
+        await db.commit()
+        await db.refresh(session)
+    except Exception:
+        await db.rollback()
+        raise HTTPException(
+            status_code=400,
+            detail=f"Chat session '{session_id}' not found and could not be created",
+        )
+
+    return session
+
+
+async def _save_user_message(db: AsyncSession, session_id: str, prompt: str) -> dict:
+    user_msg = ChatMessage(session_id=session_id, role="user", content=prompt)
+    db.add(user_msg)
+    await db.commit()
+    await db.refresh(user_msg)
+    return _message_to_response(user_msg)
+
+
+async def _save_assistant_message(
+    db: AsyncSession,
+    body: GenerateRequest,
+    text: str,
+    meta: dict,
+) -> dict:
+    if not body.session_id:
+        raise HTTPException(status_code=400, detail="session_id is required for persistence")
+
     ai_msg = ChatMessage(
-        session_id=    body.session_id,
-        role=          "assistant",
-        content=       text,
-        metadata_json= json.dumps(meta, ensure_ascii=False),
+        session_id=body.session_id,
+        role="assistant",
+        content=text,
+        metadata_json=json.dumps(meta, ensure_ascii=False),
     )
     db.add(ai_msg)
+
     result = await db.execute(
         select(ChatSession).where(ChatSession.id == body.session_id)
     )
-    sess = result.scalars().first()
-    if sess:
-        sess.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
-        if sess.title == "Новий чат":
-            title = body.prompt[:60].strip()
-            if len(body.prompt) > 60:
-                title += "…"
-            sess.title = title
+    session = result.scalars().first()
+    if session:
+        session.updated_at = datetime.now(timezone.utc)
+        if session.title in {"New Chat", "Новий чат"}:
+            session.title = _build_chat_title(body.prompt)
+
     await db.commit()
+    await db.refresh(ai_msg)
+    return _message_to_response(ai_msg)
+
+
+async def _generate_once(body: GenerateRequest):
+    client, model_info = get_client_for_model(body.model)
+    if model_info is None:
+        raise HTTPException(status_code=400, detail=f"Unknown model: {body.model}")
+
+    if client is not None:
+        try:
+            result = await asyncio.wait_for(real_generate(client, model_info, body), timeout=15.0)
+        except asyncio.TimeoutError:
+            logger.warning(
+                "[generate] provider_timeout",
+                extra={"provider": model_info["provider"], "model": body.model},
+            )
+            try:
+                result = await mock_generate(body, reason="provider_failure")
+            except RuntimeError:
+                raise HTTPException(status_code=504, detail="LLM provider timed out")
+        except Exception as exc:
+            logger.error(
+                "[generate] provider_failure",
+                extra={
+                    "provider": model_info["provider"],
+                    "model": body.model,
+                    "error": f"{type(exc).__name__}: {exc}",
+                },
+            )
+            try:
+                result = await mock_generate(body, reason="provider_failure")
+            except RuntimeError:
+                raise HTTPException(status_code=502, detail="LLM provider unavailable")
+    else:
+        try:
+            result = await mock_generate(body, reason="no_provider")
+        except RuntimeError:
+            raise HTTPException(
+                status_code=503,
+                detail="No configured provider for this model and mock mode is disabled",
+            )
+
+    logger.info(
+        "[generate] completed",
+        extra={"model": body.model, "provider": result.provider},
+    )
+    return result
 
 
 @limiter.limit("20/minute")
 @router.post("/generate")
-async def generate(request: Request, body: GenerateRequest, db: AsyncSession = Depends(get_db)):
+async def generate(
+    request: Request,
+    body: GenerateRequest,
+    db: AsyncSession = Depends(get_db),
+    user_email: str | None = Depends(get_optional_current_user),
+):
     logger.info(
-        f"[generate] model={body.model}, prompt_len={len(body.prompt)}, "
-        f"history={len(body.history)}, stream={body.stream}, top_p={body.top_p}"
+        "[generate] requested",
+        extra={
+            "model": body.model,
+            "prompt_len": len(body.prompt),
+            "history_size": len(body.history),
+            "stream": body.stream,
+            "top_p": body.top_p,
+            "session_id": body.session_id,
+        },
     )
     client, model_info = get_client_for_model(body.model)
 
     if model_info is None:
         raise HTTPException(status_code=400, detail=f"Unknown model: {body.model}")
 
-    # Validate / auto-create chat session
     if body.session_id:
-        result = await db.execute(
-            select(ChatSession).where(ChatSession.id == body.session_id)
+        if not user_email:
+            raise HTTPException(
+                status_code=401,
+                detail="Authentication required for persisted chat generation",
+            )
+        await _ensure_session(
+            db=db,
+            session_id=body.session_id,
+            prompt=body.prompt,
+            user_email=user_email,
+            enforce_owner=True,
         )
-        existing_session = result.scalars().first()
-        if not existing_session:
-            logger.warning(
-                f"[generate] session_id={body.session_id} not found — auto-creating"
-            )
-            new_session = ChatSession(
-                id=body.session_id,
-                user_email="anonymous",
-                title=body.prompt[:60].strip() + ("…" if len(body.prompt) > 60 else ""),
-            )
-            db.add(new_session)
-            try:
-                await db.commit()
-            except Exception:
-                await db.rollback()
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Chat session '{body.session_id}' not found and could not be created",
-                )
+        await _save_user_message(db, body.session_id, body.prompt)
 
-    # Persist user message
-    if body.session_id:
-        user_msg = ChatMessage(session_id=body.session_id, role="user", content=body.prompt)
-        db.add(user_msg)
-        await db.commit()
-
-    # STREAMING path
     if body.stream:
         if client is not None:
+
             async def stream_with_save():
                 full_text = ""
                 try:
@@ -107,52 +222,148 @@ async def generate(request: Request, body: GenerateRequest, db: AsyncSession = D
                                     full_text = data["full_text"]
                             except Exception:
                                 pass
-                except Exception as e:
-                    logger.error(f"[stream] stream_with_save error: {type(e).__name__}: {e}")
-                    yield f"data: {json.dumps({'error': str(e), 'done': True})}\n\n"
+                except Exception as exc:
+                    logger.error(
+                        f"[stream] stream_with_save error: {type(exc).__name__}: {exc}"
+                    )
+                    yield f"data: {json.dumps({'error': str(exc), 'done': True})}\n\n"
                 finally:
                     if body.session_id and full_text:
                         async with AsyncSessionLocal() as db2:
-                            await _save_assistant_message(db2, body, full_text, {}, "stream")
+                            await _save_assistant_message(db2, body, full_text, {})
+
         else:
+            try:
+                mock_result = await mock_generate(body, reason="no_provider")
+            except RuntimeError:
+                raise HTTPException(
+                    status_code=503,
+                    detail="No configured provider for this model and mock mode is disabled",
+                )
+
             async def stream_with_save():
-                async for chunk in mock_generate_stream(body):
-                    yield chunk
+                words = mock_result.text.split(" ")
+                for word in words:
+                    payload = json.dumps({"text": word + " ", "done": False}, ensure_ascii=False)
+                    yield f"data: {payload}\n\n"
+                    await asyncio.sleep(0.03)
+                done_payload = json.dumps(
+                    {"text": "", "done": True, "full_text": mock_result.text},
+                    ensure_ascii=False,
+                )
+                yield f"data: {done_payload}\n\n"
 
         return StreamingResponse(stream_with_save(), media_type="text/event-stream")
 
-    # NON-STREAMING path
-    result = None
-    if client is not None:
-        try:
-            result = await asyncio.wait_for(real_generate(client, model_info, body), timeout=15.0)
-        except asyncio.TimeoutError:
-            logger.warning(f"[generate] {model_info['provider']} timeout — attempting mock fallback")
-            try:
-                result = await mock_generate(body)
-            except RuntimeError:
-                raise HTTPException(status_code=504, detail="LLM provider timed out")
-        except Exception as e:
-            logger.error(f"[generate] {model_info['provider']} FAILED: {type(e).__name__}: {e}")
-            try:
-                result = await mock_generate(body)
-            except RuntimeError:
-                raise HTTPException(status_code=502, detail="LLM provider unavailable")
-    else:
-        result = await mock_generate(body)
+    result = await _generate_once(body)
 
-    logger.info(f"[generate] model={body.model} → provider={result.provider}")
-
-    if body.session_id and result:
+    if body.session_id:
         meta = {
-            "model":      result.usage.model,
-            "tokens":     result.usage.total_tokens,
+            "model": result.usage.model,
+            "tokens": result.usage.total_tokens,
             "latency_ms": result.usage.latency_ms,
-            "provider":   result.provider,
+            "provider": result.provider,
         }
-        await _save_assistant_message(db, body, result.text, meta, result.provider)
+        await _save_assistant_message(db, body, result.text, meta)
 
     return result
+
+
+@limiter.limit("10/minute")
+@router.post("/generate/multi")
+async def generate_multi(
+    request: Request,
+    body: MultiGenerateRequest,
+    db: AsyncSession = Depends(get_db),
+    user_email: str = Depends(get_current_user),
+):
+    logger.info(
+        f"[generate/multi] mode={body.mode}, model={body.model}, prompt_len={len(body.prompt)}, "
+        f"history={len(body.history)}, session_id={body.session_id}"
+    )
+
+    await _ensure_session(
+        db=db,
+        session_id=body.session_id,
+        prompt=body.prompt,
+        user_email=user_email,
+        enforce_owner=True,
+    )
+    await _save_user_message(db, body.session_id, body.prompt)
+
+    base_payload = body.model_dump(
+        exclude={
+            "mode",
+            "model_label",
+            "compare_model",
+            "compare_model_label",
+            "run_count",
+        }
+    )
+    primary_request = GenerateRequest(**base_payload)
+
+    if body.mode == "compare":
+        if not body.compare_model or body.compare_model == body.model:
+            raise HTTPException(status_code=422, detail="compare_model is required")
+
+        secondary_request = GenerateRequest(
+            **{
+                **base_payload,
+                "model": body.compare_model,
+            }
+        )
+        primary_result, secondary_result = await asyncio.gather(
+            _generate_once(primary_request),
+            _generate_once(secondary_request),
+        )
+        metadata = {
+            "isCompare": True,
+            "comparison": {
+                "modelA": {
+                    "text": primary_result.text,
+                    "model": body.model,
+                    "modelLabel": body.model_label or body.model,
+                    "latency_ms": primary_result.usage.latency_ms,
+                    "total_tokens": primary_result.usage.total_tokens,
+                },
+                "modelB": {
+                    "text": secondary_result.text,
+                    "model": body.compare_model,
+                    "modelLabel": body.compare_model_label or body.compare_model,
+                    "latency_ms": secondary_result.usage.latency_ms,
+                    "total_tokens": secondary_result.usage.total_tokens,
+                },
+            },
+        }
+        assistant_text = primary_result.text
+    else:
+        results = await asyncio.gather(
+            *[_generate_once(primary_request) for _ in range(body.run_count)]
+        )
+        metadata = {
+            "isSelfConsistency": True,
+            "selfConsistency": {
+                "model": body.model,
+                "modelLabel": body.model_label or body.model,
+                "runs": [
+                    {
+                        "text": item.text,
+                        "latency_ms": item.usage.latency_ms,
+                        "total_tokens": item.usage.total_tokens,
+                    }
+                    for item in results
+                ],
+            },
+        }
+        assistant_text = results[0].text if results else ""
+
+    assistant_message = await _save_assistant_message(
+        db=db,
+        body=GenerateRequest(**base_payload),
+        text=assistant_text,
+        meta=metadata,
+    )
+    return {"assistant_message": assistant_message}
 
 
 @limiter.limit("10/minute")
@@ -161,31 +372,32 @@ async def refine(request: Request, body: RefineRequest) -> dict:
     prompt = body.prompt.strip()
     if not prompt:
         raise HTTPException(status_code=422, detail="prompt is required")
+
     try:
         return await refine_prompt_with_llm(prompt)
-    except Exception as e:
-        logger.error(f"[refine] Failed: {type(e).__name__}: {e}")
+    except Exception as exc:
+        logger.error(f"[refine] Failed: {type(exc).__name__}: {exc}")
 
-        # Fallback: Ukrainian/English template instead of 503
-        is_ukrainian = any(c in prompt for c in "іїєґІЇЄҐ")
+        is_ukrainian = any(ch in prompt for ch in "іїєґІЇЄҐ")
         if is_ukrainian:
             improved = (
-                f"Будь ласка, надай детальну та структуровану відповідь на наступний запит: {prompt}. "
-                "Розкрий тему покроково, використовуй приклади та поясни кожен крок."
+                "Будь ласка, надай детальну та структуровану відповідь на наступний запит: "
+                f"{prompt}. Розкрий тему покроково, додай приклади та поясни кожен крок."
             )
             questions = [
                 "Який рівень деталізації вам потрібен?",
                 "Для якої мети ви використовуєте цю інформацію?",
-                "Чи є конкретний формат або стиль відповіді, який вам підходить?",
+                "Чи є бажаний формат або стиль відповіді?",
             ]
         else:
             improved = (
                 f"Please provide a detailed and well-structured response to the following request: {prompt}. "
-                "Break down the topic step by step, use examples, and explain each step clearly."
+                "Break the topic down step by step, add examples, and explain each step clearly."
             )
             questions = [
                 "What level of detail do you need?",
                 "What is the purpose of this information?",
-                "Is there a specific format or style you prefer?",
+                "Is there a preferred answer format or style?",
             ]
+
         return {"improved_prompt": improved, "clarifying_questions": questions}

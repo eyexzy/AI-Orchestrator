@@ -1,21 +1,54 @@
 import json
+from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, Query
-from fastapi.responses import JSONResponse
-from sqlalchemy import func, or_, select
+from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import ChatSession, ChatMessage
-from dependencies import check_admin_key, get_current_user, get_db
+from dependencies import get_current_user, get_db
 from schemas.api import CreateChatRequest, UpdateChatRequest, ChatSearchResult
 
 router = APIRouter()
 
 
+def _message_to_response(message: ChatMessage) -> dict:
+    try:
+        metadata = json.loads(message.metadata_json or "{}")
+        if not isinstance(metadata, dict):
+            metadata = {}
+    except (TypeError, json.JSONDecodeError):
+        metadata = {}
+
+    return {
+        "id":         message.id,
+        "role":       message.role,
+        "content":    message.content,
+        "created_at": message.created_at.isoformat() if message.created_at else None,
+        "metadata":   metadata,
+    }
+
+
+async def _get_owned_chat_session(
+    db: AsyncSession,
+    chat_id: str,
+    user_email: str,
+) -> ChatSession:
+    result = await db.execute(
+        select(ChatSession).where(
+            ChatSession.id == chat_id,
+            ChatSession.user_email == user_email,
+        )
+    )
+    session = result.scalars().first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Chat not found")
+    return session
+
+
 @router.get("/chats")
 async def list_chats(
     db: AsyncSession = Depends(get_db),
-    _api_key: str = Depends(check_admin_key),
     user_email: str = Depends(get_current_user),
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
@@ -48,7 +81,6 @@ async def list_chats(
 async def create_chat(
     req: CreateChatRequest,
     db: AsyncSession = Depends(get_db),
-    _api_key: str = Depends(check_admin_key),
     user_email: str = Depends(get_current_user),
 ):
     # user_email from JWT overrides anything in the request body
@@ -70,7 +102,6 @@ async def create_chat(
 async def search_chats(
     query: str = Query(..., max_length=200),
     db: AsyncSession = Depends(get_db),
-    _api_key: str = Depends(check_admin_key),
     user_email: str = Depends(get_current_user),
     limit: int = Query(default=20, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
@@ -136,30 +167,47 @@ async def search_chats(
 async def get_chat_messages(
     chat_id: str,
     db: AsyncSession = Depends(get_db),
-    _api_key: str = Depends(check_admin_key),
+    user_email: str = Depends(get_current_user),
 ):
-    result = await db.execute(
-        select(ChatSession).where(ChatSession.id == chat_id)
-    )
-    session = result.scalars().first()
-    if not session:
-        return JSONResponse(status_code=404, content={"error": "Chat not found"})
+    await _get_owned_chat_session(db, chat_id, user_email)
     result = await db.execute(
         select(ChatMessage)
         .where(ChatMessage.session_id == chat_id)
         .order_by(ChatMessage.created_at.asc())
     )
     msgs = result.scalars().all()
-    return [
-        {
-            "id":         m.id,
-            "role":       m.role,
-            "content":    m.content,
-            "created_at": m.created_at.isoformat() if m.created_at else None,
-            "metadata":   json.loads(m.metadata_json) if m.metadata_json else {},
-        }
-        for m in msgs
-    ]
+    return [_message_to_response(m) for m in msgs]
+
+
+@router.delete("/chats/{chat_id}/messages/truncate")
+async def truncate_chat_messages(
+    chat_id: str,
+    after_id: int = Query(default=0, ge=0),
+    db: AsyncSession = Depends(get_db),
+    user_email: str = Depends(get_current_user),
+):
+    session = await _get_owned_chat_session(db, chat_id, user_email)
+
+    if after_id > 0:
+        result = await db.execute(
+            select(ChatMessage.id).where(
+                ChatMessage.id == after_id,
+                ChatMessage.session_id == chat_id,
+            )
+        )
+        if result.scalar_one_or_none() is None:
+            raise HTTPException(status_code=404, detail="Message not found")
+
+    stmt = delete(ChatMessage).where(ChatMessage.session_id == chat_id)
+    if after_id > 0:
+        stmt = stmt.where(ChatMessage.id > after_id)
+
+    result = await db.execute(stmt)
+    session.updated_at = datetime.now(timezone.utc)
+    await db.commit()
+
+    deleted = result.rowcount if result.rowcount is not None else 0
+    return {"ok": True, "deleted": deleted}
 
 
 @router.patch("/chats/{chat_id}")
@@ -167,14 +215,9 @@ async def update_chat(
     chat_id: str,
     req: UpdateChatRequest,
     db: AsyncSession = Depends(get_db),
-    _api_key: str = Depends(check_admin_key),
+    user_email: str = Depends(get_current_user),
 ):
-    result = await db.execute(
-        select(ChatSession).where(ChatSession.id == chat_id)
-    )
-    session = result.scalars().first()
-    if not session:
-        return JSONResponse(status_code=404, content={"error": "Chat not found"})
+    session = await _get_owned_chat_session(db, chat_id, user_email)
     if req.title is not None:
         session.title = req.title
     if req.is_favorite is not None:
@@ -187,14 +230,9 @@ async def update_chat(
 async def delete_chat(
     chat_id: str,
     db: AsyncSession = Depends(get_db),
-    _api_key: str = Depends(check_admin_key),
+    user_email: str = Depends(get_current_user),
 ):
-    result = await db.execute(
-        select(ChatSession).where(ChatSession.id == chat_id)
-    )
-    session = result.scalars().first()
-    if not session:
-        return JSONResponse(status_code=404, content={"error": "Chat not found"})
+    session = await _get_owned_chat_session(db, chat_id, user_email)
     await db.delete(session)
     await db.commit()
     return {"ok": True}

@@ -21,12 +21,12 @@ function Spinner({ className }: { className?: string }) {
 
 /* CVA variants */
 const buttonVariants = cva(
-  "relative inline-flex max-w-full select-none touch-manipulation items-center justify-center whitespace-nowrap border-0 font-medium antialiased [font-feature-settings:'liga'] transition-[background-color,color,transform] duration-150 ease-in-out transform-gpu focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ds-focus-color)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--geist-background)] disabled:cursor-not-allowed disabled:pointer-events-none",
+  "relative inline-flex max-w-full select-none touch-manipulation items-center justify-center whitespace-nowrap border-0 font-medium antialiased [font-feature-settings:'liga'] transition-[background-color,color,opacity,transform] duration-150 ease-in-out transform-gpu focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ds-focus-color)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--geist-background)] disabled:cursor-not-allowed disabled:pointer-events-none",
   {
     variants: {
       variant: {
         default:
-          "bg-[var(--ds-gray-1000)] text-[var(--geist-background)] shadow-none hover:bg-[color-mix(in_oklab,var(--ds-gray-1000),var(--geist-background)_12%)] disabled:bg-[var(--ds-gray-100)] disabled:text-[var(--ds-gray-700)]",
+          "bg-[var(--ds-gray-1000)] text-[var(--geist-background)] shadow-none hover:opacity-90 disabled:bg-[var(--ds-gray-100)] disabled:text-[var(--ds-gray-700)]",
         secondary:
           "bg-[var(--geist-background)] text-[var(--ds-gray-1000)] shadow-[0_0_0_1px_var(--ds-gray-300)] hover:bg-[var(--ds-gray-100)] disabled:bg-[var(--geist-background)] disabled:text-[var(--ds-gray-700)] disabled:shadow-[0_0_0_1px_var(--ds-gray-200)]",
         chip:

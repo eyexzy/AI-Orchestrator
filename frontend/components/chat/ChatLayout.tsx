@@ -6,6 +6,11 @@ import { useUserLevelStore } from "@/lib/store/userLevelStore";
 import { useModelsStore } from "@/lib/store/modelsStore";
 import { useChatStore } from "@/lib/store/chatStore";
 import { resolveVariables } from "@/lib/api";
+import {
+  readGenerationPreferences,
+  writeGenerationPreferences,
+  type GenerationPreferences,
+} from "@/lib/generationPreferences";
 import { extractVarNames } from "@/components/chat/extractVarNames";
 import { MessageList } from "@/components/chat/MessageList";
 import { MainInput } from "@/components/chat/MainInput";
@@ -24,6 +29,29 @@ function sameNames(a: string[], b: string[]) {
   return a.length === b.length && a.every((name, index) => name === b[index]);
 }
 
+function resolvePreferredModel(
+  preferredModel: string | undefined,
+  models: Array<{ value: string; available: boolean }>,
+  fallbackModel: string,
+) {
+  if (
+    preferredModel &&
+    models.some((model) => model.available && model.value === preferredModel)
+  ) {
+    return preferredModel;
+  }
+  return fallbackModel;
+}
+
+function resolveSecondaryModel(
+  models: Array<{ value: string; available: boolean }>,
+  primaryModel: string,
+) {
+  const available = models.filter((model) => model.available);
+  const alternative = available.find((model) => model.value !== primaryModel);
+  return alternative?.value ?? primaryModel;
+}
+
 export function ChatLayout() {
   const { t } = useTranslation();
   const level = useUserLevelStore((s) => s.level);
@@ -31,7 +59,8 @@ export function ChatLayout() {
   const models = useModelsStore((s) => s.models);
   const messages = useChatStore((s) => s.messages);
   const isSending = useChatStore((s) => s.isSending);
-  const chatIsEmpty = messages.length === 0 && !isSending;
+  const messagesError = useChatStore((s) => s.messagesError);
+  const chatIsEmpty = messages.length === 0 && !isSending && !messagesError;
 
   const [inputWrapperHeight, setInputWrapperHeight] = useState(220);
   const roRef = useRef<ResizeObserver | null>(null);
@@ -54,13 +83,14 @@ export function ChatLayout() {
     return gemini?.value ?? available[0]?.value ?? "gemini-2.0-flash";
   }, [models]);
 
-  const secondModel = useMemo(() => {
-    const available = models.filter((m) => m.available);
-    const other = available.find((m) => m.value !== defaultModel);
-    return other?.value ?? defaultModel;
-  }, [models, defaultModel]);
+  const secondModel = useMemo(
+    () => resolveSecondaryModel(models, defaultModel),
+    [defaultModel, models],
+  );
 
-  const [model, setModel] = useState(defaultModel);
+  const [model, setModel] = useState(
+    defaultModel,
+  );
   const [temperature, setTemperature] = useState(0.7);
   const [maxTokens, setMaxTokens] = useState(1024);
   const [system, setSystem] = useState(() => getDefaultSystem());
@@ -76,18 +106,63 @@ export function ChatLayout() {
   const [mobileConfigOpen, setMobileConfigOpen] = useState(false);
   const [templatePrompt, setTemplatePrompt] = useState<string | null>(null);
   const [inputVariableNames, setInputVariableNames] = useState<string[]>([]);
+  const [storedGenerationPreferences, setStoredGenerationPreferences] =
+    useState<GenerationPreferences>({});
+  const [generationPreferencesHydrated, setGenerationPreferencesHydrated] =
+    useState(false);
+  const [generationPreferencesReadyToPersist, setGenerationPreferencesReadyToPersist] =
+    useState(false);
   const prevVarCountRef = useRef(0);
 
-  // Sync model selection when models load from backend
+  useEffect(() => {
+    const storedPreferences = readGenerationPreferences();
+    setStoredGenerationPreferences(storedPreferences);
+
+    if (storedPreferences.temperature !== undefined) {
+      setTemperature(storedPreferences.temperature);
+    }
+    if (storedPreferences.topP !== undefined) {
+      setTopP(storedPreferences.topP);
+    }
+
+    setGenerationPreferencesHydrated(true);
+  }, []);
+
+  // Sync model selection when models load from backend after hydration.
   const modelsInitialized = useRef(false);
   useEffect(() => {
-    if (!modelsInitialized.current && models.length > 0) {
-      modelsInitialized.current = true;
-      setModel(defaultModel);
-      setCompareModelA(defaultModel);
-      setCompareModelB(secondModel);
+    if (
+      !generationPreferencesHydrated ||
+      modelsInitialized.current ||
+      models.length === 0
+    ) {
+      return;
     }
-  }, [models, defaultModel, secondModel]);
+
+    modelsInitialized.current = true;
+
+    const preferredModel = resolvePreferredModel(
+      storedGenerationPreferences.model,
+      models,
+      defaultModel,
+    );
+    const preferredCompareModel = resolveSecondaryModel(models, preferredModel);
+
+    setModel(preferredModel);
+    setCompareModelA(preferredModel);
+    setCompareModelB(preferredCompareModel);
+    setGenerationPreferencesReadyToPersist(true);
+  }, [
+    defaultModel,
+    generationPreferencesHydrated,
+    models,
+    storedGenerationPreferences.model,
+  ]);
+
+  useEffect(() => {
+    if (!generationPreferencesReadyToPersist) return;
+    writeGenerationPreferences({ model, temperature, topP });
+  }, [generationPreferencesReadyToPersist, model, temperature, topP]);
 
   const handleInputVariableNamesChange = useCallback((names: string[]) => {
     setInputVariableNames((prev) => (sameNames(prev, names) ? prev : names));
@@ -368,7 +443,7 @@ export function ChatLayout() {
       <div className="chat-main" style={{ minWidth: 0, flex: "1 1 0" }}>
         {chatIsEmpty ? (
           <div className="flex h-full flex-col items-center justify-center px-6">
-            <h1 className="-mt-12 mb-4 text-center text-[32px] font-semibold tracking-tight text-foreground leading-tight">
+            <h1 className="-mt-12 mb-4 text-center text-3xl font-semibold leading-tight tracking-tight text-foreground md:text-4xl">
               {t("chat.greeting")}
             </h1>
             <div className="w-full max-w-3xl">

@@ -7,8 +7,9 @@ import { useUserLevelStore } from "@/lib/store/userLevelStore";
 import { useChatStore } from "@/lib/store/chatStore";
 import { ChatInputBox } from "@/components/chat/ChatInputBox";
 import { extractVarNames } from "@/components/chat/extractVarNames";
-import { API_URL } from "@/lib/config";
+import { REQUEST_TIMEOUT_MS } from "@/lib/config";
 import { resolveVariables } from "@/lib/api";
+import { readResponseError } from "@/lib/request";
 import { toast } from "sonner";
 import { TutorModal } from "./input/TutorModal";
 import { L1Chips } from "./input/L1Chips";
@@ -72,10 +73,16 @@ export function MainInput({
   const [improvedPrompt, setImprovedPrompt] = useState("");
   const [clarifyingQuestions, setClarifyingQuestions] = useState<string[]>([]);
   const [draft, setDraft] = useState("");
+  const refineAbortRef = useRef<AbortController | null>(null);
+  const refineRequestIdRef = useRef(0);
 
   useEffect(() => {
     isMountedRef.current = true;
-    return () => { isMountedRef.current = false; };
+    return () => {
+      isMountedRef.current = false;
+      refineAbortRef.current?.abort();
+      refineAbortRef.current = null;
+    };
   }, []);
 
   useEffect(() => {
@@ -142,40 +149,73 @@ export function MainInput({
   }, [sendMessage, analyzePrompt, userEmail, chatParams, onRawResponse, onVariableNamesChange]);
 
   const _callRefine = useCallback(async (text: string): Promise<boolean> => {
+    refineAbortRef.current?.abort();
+    const requestId = refineRequestIdRef.current + 1;
+    refineRequestIdRef.current = requestId;
+    const controller = new AbortController();
+    refineAbortRef.current = controller;
+    let timedOut = false;
+    const timeoutId = window.setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, REQUEST_TIMEOUT_MS);
+
     setOriginalPrompt(text);
     setIsRefining(true);
     setImprovedPrompt("");
     setClarifyingQuestions([]);
+    setModalOpen(false);
 
     try {
-      const controller = new AbortController();
-      const tid = setTimeout(() => controller.abort(), 10000);
-      const res = await fetch(`${API_URL}/refine`, {
+      const res = await fetch("/api/refine", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ prompt: text }),
         signal: controller.signal,
       });
-      clearTimeout(tid);
 
-      if (res.ok) {
-        const data = await res.json();
-        if (isMountedRef.current) {
-          setImprovedPrompt(data.improved_prompt ?? text);
-          setClarifyingQuestions(data.clarifying_questions ?? []);
-          setModalOpen(true);
-        }
-        return true;
+      if (!res.ok) {
+        throw new Error(await readResponseError(res, t("input.enhanceError")));
       }
-      toast.error("Failed to enhance prompt. Server unavailable.");
-      return false;
-    } catch {
-      toast.error("Failed to enhance prompt. Server unavailable.");
+
+      const data = await res.json();
+      if (
+        !isMountedRef.current ||
+        requestId !== refineRequestIdRef.current ||
+        controller.signal.aborted
+      ) {
+        return false;
+      }
+
+      setImprovedPrompt(data.improved_prompt ?? text);
+      setClarifyingQuestions(data.clarifying_questions ?? []);
+      setModalOpen(true);
+      return true;
+    } catch (error) {
+      const isAbort = error instanceof DOMException && error.name === "AbortError";
+      const isStale = requestId !== refineRequestIdRef.current;
+      if (isAbort && (isStale || !timedOut)) {
+        return false;
+      }
+
+      toast.error(
+        timedOut
+          ? t("input.enhanceError")
+          : error instanceof Error && error.message
+            ? error.message
+            : t("input.enhanceError"),
+      );
       return false;
     } finally {
-      if (isMountedRef.current) setIsRefining(false);
+      window.clearTimeout(timeoutId);
+      if (refineAbortRef.current === controller) {
+        refineAbortRef.current = null;
+      }
+      if (isMountedRef.current && requestId === refineRequestIdRef.current) {
+        setIsRefining(false);
+      }
     }
-  }, []);
+  }, [t]);
 
   const handleSend = useCallback(async (text?: string) => {
     const trimmed = (text ?? draft).trim();
@@ -210,13 +250,13 @@ export function MainInput({
   }, [draft, isSending, isRefining, externalDisabled, _callRefine]);
 
   const handleCoT = useCallback(() => {
-    onAppendToSystem?.("Let's think step by step. Explain your reasoning.");
-  }, [onAppendToSystem]);
+    onAppendToSystem?.(t("input.strategy.cot"));
+  }, [onAppendToSystem, t]);
 
   const handleStepBack = useCallback(() => {
-    const prefix = "Identify the core abstract principles or laws underlying this request before answering. ";
+    const prefix = t("input.strategy.stepBack");
     setDraft((prev) => (prev.startsWith(prefix) ? prev : prefix + prev));
-  }, []);
+  }, [t]);
 
   const isDisabled = isRefining || isSending || externalDisabled;
   const showEnhance = (level === 1 || level === 2) && draft.trim().length >= 2 && !isRefining;

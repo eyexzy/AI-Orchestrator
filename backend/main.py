@@ -1,99 +1,198 @@
+import inspect
 import json
+import logging
 import os
 import sys
-import logging
 from contextlib import asynccontextmanager
+from time import perf_counter
+from uuid import uuid4
 
 from dotenv import load_dotenv
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from slowapi import _rate_limit_exceeded_handler
+from fastapi.responses import JSONResponse
 from slowapi.errors import RateLimitExceeded
-from sqlalchemy import select
 
-from database import init_db, AsyncSessionLocal, MLModelCache
-from dependencies import limiter
-import ml_classifier
+from database import AsyncSessionLocal, MLModelCache, engine, init_db
+from dependencies import is_production_env, limiter
+from logging_utils import (
+    configure_logging,
+    get_request_id,
+    reset_request_id,
+    set_request_id,
+)
 
 load_dotenv()
+configure_logging()
+
+import ml_classifier
+from services.cache import cache
+from services.llm import clients, get_mock_mode
 
 logger = logging.getLogger("ai-orchestrator")
-logging.basicConfig(level=logging.INFO)
 
 
-# Environment validation
+def _get_non_empty_env(name: str) -> str | None:
+    value = os.getenv(name)
+    if value is None:
+        return None
+
+    value = value.strip()
+    return value or None
+
+
+def _apply_response_headers(response: JSONResponse | object, request_id: str):
+    if not hasattr(response, "headers"):
+        return response
+
+    response.headers["X-Request-ID"] = request_id
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'self'; "
+        "script-src 'self'; "
+        "style-src 'self' 'unsafe-inline'; "
+        "img-src 'self' data: blob:; "
+        "font-src 'self'; "
+        "connect-src 'self'; "
+        "frame-ancestors 'none'"
+    )
+    return response
+
+
+def _error_response(
+    status_code: int,
+    message: str,
+    *,
+    detail=None,
+):
+    payload = {
+        "error": message,
+        "request_id": get_request_id(),
+    }
+    if detail is not None:
+        payload["detail"] = detail
+    response = JSONResponse(payload, status_code=status_code)
+    return _apply_response_headers(response, get_request_id())
+
 
 def _validate_env():
-    is_production = os.getenv("ENV", "development") == "production"
+    is_production = is_production_env()
 
-    has_any_llm_key = any([
-        os.getenv("OPENAI_API_KEY"),
-        os.getenv("GOOGLE_API_KEY"),
-        os.getenv("GROQ_API_KEY"),
-        os.getenv("OPENROUTER_API_KEY"),
-    ])
+    has_any_llm_key = any(
+        _get_non_empty_env(env_name)
+        for env_name in (
+            "OPENAI_API_KEY",
+            "GOOGLE_API_KEY",
+            "GROQ_API_KEY",
+            "OPENROUTER_API_KEY",
+        )
+    )
 
     warnings = []
     errors = []
 
     if not has_any_llm_key:
-        warnings.append("No LLM API keys found — mock responses will be used")
+        warnings.append(
+            f"No LLM API keys found - mock mode '{get_mock_mode()}' will control generation"
+        )
 
-    if not os.getenv("ADMIN_API_KEY"):
-        warnings.append("ADMIN_API_KEY not set — admin/chat/template endpoints have no key protection")
-    if not os.getenv("AUTH_SECRET"):
-        warnings.append("AUTH_SECRET not set — JWT authentication will fail for protected endpoints")
+    admin_api_key = _get_non_empty_env("ADMIN_API_KEY")
+    auth_secret = _get_non_empty_env("AUTH_SECRET")
+
+    if not admin_api_key:
+        message = "ADMIN_API_KEY is required to protect admin endpoints"
+        if is_production:
+            errors.append(message)
+        else:
+            warnings.append(f"{message} in production")
+
+    if not auth_secret:
+        message = "AUTH_SECRET is required for JWT-protected endpoints"
+        if is_production:
+            errors.append(message)
+        else:
+            warnings.append(f"{message} in production")
 
     if is_production:
-        if not os.getenv("DATABASE_URL"):
+        if not _get_non_empty_env("DATABASE_URL"):
             errors.append("DATABASE_URL is required in production")
-        if not os.getenv("ALLOWED_ORIGINS"):
+        if not _get_non_empty_env("ALLOWED_ORIGINS"):
             errors.append("ALLOWED_ORIGINS is required in production")
 
-    for w in warnings:
-        logger.warning(f"[config]  {w}")
+    for warning in warnings:
+        logger.warning("[config] validation_warning", extra={"warning": warning})
 
     if errors:
-        for e in errors:
-            logger.error(f"[config] {e}")
+        for error in errors:
+            logger.error("[config] validation_error", extra={"error": error})
         sys.exit(1)
 
 
 _validate_env()
 
 
-# Lifespan
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()
+    await cache.initialize()
+    logger.info("[app] startup")
 
-    # Load or initialize ML model from DB
     async with AsyncSessionLocal() as db:
-        result = await db.execute(select(MLModelCache).where(MLModelCache.id == 1))
-        cache_row = result.scalar_one_or_none()
-        if cache_row:
-            try:
-                ml_classifier.get_classifier().from_dict(json.loads(cache_row.weights_json))
-                logger.info(f"[ml] Model loaded from database (type={cache_row.model_type}, f1={cache_row.f1_score})")
-            except Exception as e:
-                logger.warning(f"[ml] Failed to load cached model: {e} — retraining from scratch")
-                ml_classifier._train_fresh()
-                weights_json = json.dumps(ml_classifier.get_classifier().to_dict())
-                cache_row.weights_json = weights_json
-                cache_row.model_type = "LogisticRegression"
-                await db.commit()
+        cache_meta = None
+        try:
+            cache_meta = await ml_classifier.load_latest_model_from_db(db)
+        except Exception as exc:
+            logger.warning("[ml] failed_to_load_cached_model", extra={"error": str(exc)})
+
+        if cache_meta:
+            logger.info(
+                "[ml] model_loaded_from_database",
+                extra={
+                    "model_id": cache_meta["id"],
+                    "model_type": cache_meta["model_type"],
+                    "f1_score": cache_meta["f1_score"],
+                },
+            )
         else:
             ml_classifier._train_fresh()
-            weights_json = json.dumps(ml_classifier.get_classifier().to_dict())
-            db.add(MLModelCache(id=1, weights_json=weights_json, model_type="LogisticRegression"))
+            weights_json = json.dumps(ml_classifier.get_classifier().to_dict(), ensure_ascii=False)
+            db.add(MLModelCache(
+                weights_json=weights_json,
+                model_type="LogisticRegression",
+                accuracy=0.0,
+                f1_score=0.0,
+                classification_report_json="{}",
+                samples_used=0,
+            ))
             await db.commit()
-            logger.info("[ml] Synthetic model trained and saved to database")
+            logger.info("[ml] synthetic_model_trained_and_saved")
 
-    yield
+    try:
+        yield
+    finally:
+        await cache.close()
+        for provider_name, client in clients.items():
+            close_fn = getattr(client, "aclose", None) or getattr(client, "close", None)
+            if not callable(close_fn):
+                continue
 
+            try:
+                maybe_awaitable = close_fn()
+                if inspect.isawaitable(maybe_awaitable):
+                    await maybe_awaitable
+            except Exception as exc:
+                logger.warning(
+                    "[app] llm_client_shutdown_failed",
+                    extra={"provider": provider_name, "error": str(exc)},
+                )
 
-# App
+        await engine.dispose()
+        logger.info("[app] shutdown")
+
 
 app = FastAPI(
     title="AI-Orchestrator Backend",
@@ -102,7 +201,6 @@ app = FastAPI(
     lifespan=lifespan,
 )
 app.state.limiter = limiter
-app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 ALLOWED_ORIGINS = os.getenv(
     "ALLOWED_ORIGINS",
@@ -113,26 +211,94 @@ app.add_middleware(
     allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PATCH", "PUT", "DELETE"],
-    allow_headers=["Content-Type", "Authorization", "X-Api-Key"],
+    allow_headers=["Content-Type", "Authorization", "X-Api-Key", "X-Request-ID"],
 )
 
 
 @app.middleware("http")
-async def add_security_headers(request, call_next):
-    response = await call_next(request)
-    response.headers["X-Content-Type-Options"] = "nosniff"
-    response.headers["X-Frame-Options"] = "DENY"
-    response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
-    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
-    return response
+async def request_context_middleware(request: Request, call_next):
+    request_id = request.headers.get("x-request-id") or uuid4().hex
+    request.state.request_id = request_id
+    token = set_request_id(request_id)
+    start = perf_counter()
+    response = None
+
+    try:
+        response = await call_next(request)
+        return _apply_response_headers(response, request_id)
+    finally:
+        duration_ms = int((perf_counter() - start) * 1000)
+        logger.info(
+            "request.completed",
+            extra={
+                "method": request.method,
+                "path": request.url.path,
+                "status_code": response.status_code if response is not None else 500,
+                "duration_ms": duration_ms,
+            },
+        )
+        reset_request_id(token)
 
 
-# Register routers
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException):
+    message = exc.detail if isinstance(exc.detail, str) else "Request failed"
+    detail = None if isinstance(exc.detail, str) else exc.detail
+    logger.warning(
+        "request.http_error",
+        extra={
+            "method": request.method,
+            "path": request.url.path,
+            "status_code": exc.status_code,
+            "error": message,
+        },
+    )
+    return _error_response(exc.status_code, message, detail=detail)
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    logger.warning(
+        "request.validation_error",
+        extra={
+            "method": request.method,
+            "path": request.url.path,
+            "status_code": 422,
+        },
+    )
+    return _error_response(422, "Validation error", detail=exc.errors())
+
+
+@app.exception_handler(RateLimitExceeded)
+async def rate_limit_exception_handler(request: Request, exc: RateLimitExceeded):
+    logger.warning(
+        "request.rate_limited",
+        extra={
+            "method": request.method,
+            "path": request.url.path,
+            "status_code": 429,
+        },
+    )
+    return _error_response(429, "Rate limit exceeded")
+
+
+@app.exception_handler(Exception)
+async def unexpected_exception_handler(request: Request, exc: Exception):
+    logger.exception(
+        "request.unhandled_exception",
+        extra={
+            "method": request.method,
+            "path": request.url.path,
+        },
+    )
+    return _error_response(500, "Internal server error")
+
 
 from routers.analyze import router as analyze_router
 from routers.generate import router as generate_router
 from routers.chats import router as chats_router
 from routers.admin import router as admin_router
+from routers.feedback import router as feedback_router
 from routers.templates import router as templates_router
 from routers.profile import router as profile_router
 
@@ -140,5 +306,6 @@ app.include_router(analyze_router)
 app.include_router(generate_router)
 app.include_router(chats_router)
 app.include_router(admin_router)
+app.include_router(feedback_router)
 app.include_router(templates_router)
 app.include_router(profile_router)
