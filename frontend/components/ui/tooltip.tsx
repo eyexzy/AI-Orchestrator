@@ -9,11 +9,13 @@ export function Tooltip({
   content,
   className,
   align = "center",
+  onOpen,
 }: {
   children: React.ReactNode;
   content: React.ReactNode;
   className?: string;
   align?: "center" | "start" | "end";
+  onOpen?: () => void;
 }) {
   const [visible, setVisible] = useState(false);
   const [mounted, setMounted] = useState(false);
@@ -64,6 +66,7 @@ export function Tooltip({
     timeoutRef.current = setTimeout(() => {
       updatePosition();
       setVisible(true);
+      onOpen?.();
     }, 400);
   };
 

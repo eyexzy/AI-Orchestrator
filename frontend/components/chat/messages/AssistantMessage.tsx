@@ -3,6 +3,7 @@
 import { useChatStore } from "@/lib/store/chatStore";
 import { useUserLevelStore } from "@/lib/store/userLevelStore";
 import { useTranslation } from "@/lib/store/i18nStore";
+import { trackEvent } from "@/lib/eventTracker";
 import { CodeSurface, MarkdownRenderer } from "@/components/chat/MarkdownRenderer";
 import { Note } from "@/components/ui/note";
 import { AssistantActionBar } from "./MessageUI";
@@ -21,9 +22,14 @@ export function AssistantMessage({
   showRaw: boolean;
   isError?: boolean;
 }) {
-  const { regenerateLastResponse } = useChatStore();
+  const { regenerateLastResponse: _regenerate } = useChatStore();
   const level = useUserLevelStore((s) => s.level);
   const { t } = useTranslation();
+
+  const regenerateLastResponse = () => {
+    trackEvent("backtracking_detected", { trigger: "regenerate" });
+    _regenerate();
+  };
 
   return (
     <div className="group min-w-0 max-w-[min(85%,680px)]">

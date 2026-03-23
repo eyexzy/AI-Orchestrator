@@ -6,6 +6,7 @@ import { useTemplatesStore } from "@/lib/store/templatesStore";
 import { useTranslation } from "@/lib/store/i18nStore";
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, MenuBtn } from "./DropdownMenu";
+import { trackEvent } from "@/lib/eventTracker";
 
 const SUGGESTION_KEYS = [
   "chips.sug0", "chips.sug1", "chips.sug2", "chips.sug3",
@@ -136,7 +137,7 @@ export function L1Chips({ input, setInput, onSendSuggestion }: L1ChipsProps) {
             <p className="px-3.5 py-3 text-sm text-ds-text-tertiary">{t("chips.noTemplates")}</p>
           ) : (
             templates.map((tpl) => (
-              <MenuBtn key={tpl.id} column onClick={() => { setInput(tpl.prompt); setActiveMenu(null); }}>
+              <MenuBtn key={tpl.id} column onClick={() => { trackEvent("template_inserted", { template_id: tpl.id }); setInput(tpl.prompt); setActiveMenu(null); }}>
                 <div className="flex items-center gap-1.5">
                   <span className="text-sm font-medium text-ds-text">{tpl.title}</span>
                   <span className="rounded px-1.5 py-0.5 font-mono text-[10px] bg-gray-alpha-200 text-ds-text-tertiary">

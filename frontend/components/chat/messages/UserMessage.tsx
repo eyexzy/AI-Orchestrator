@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import { useChatStore } from "@/lib/store/chatStore";
 import { useTranslation } from "@/lib/store/i18nStore";
+import { trackEvent } from "@/lib/eventTracker";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
@@ -65,6 +66,7 @@ export function UserMessageBubble({
     const trimmed = draft.trim();
     if (!trimmed || isSending) return;
     setEditing(false);
+    trackEvent("backtracking_detected", { trigger: "edit_and_resend" });
     editAndResend(id, trimmed);
   };
 

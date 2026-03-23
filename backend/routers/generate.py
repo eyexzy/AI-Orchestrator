@@ -9,10 +9,19 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import AsyncSessionLocal, ChatMessage, ChatSession
-from dependencies import get_current_user, get_db, get_optional_current_user, limiter
+from dependencies import (
+    RATE_LIMIT_GENERATE,
+    RATE_LIMIT_GENERATE_MULTI,
+    RATE_LIMIT_REFINE,
+    get_current_user,
+    get_db,
+    get_optional_current_user,
+    limiter,
+)
 from schemas.api import GenerateRequest, MultiGenerateRequest, RefineRequest
 from services.llm import (
     get_client_for_model,
+    get_mock_mode,
     mock_generate,
     real_generate,
     real_generate_stream,
@@ -127,6 +136,14 @@ async def _generate_once(body: GenerateRequest):
     if model_info is None:
         raise HTTPException(status_code=400, detail=f"Unknown model: {body.model}")
 
+    if get_mock_mode() == "always":
+        result = await mock_generate(body, reason="no_provider")
+        logger.info(
+            "[generate] completed",
+            extra={"model": body.model, "provider": result.provider},
+        )
+        return result
+
     if client is not None:
         try:
             result = await asyncio.wait_for(real_generate(client, model_info, body), timeout=15.0)
@@ -168,7 +185,7 @@ async def _generate_once(body: GenerateRequest):
     return result
 
 
-@limiter.limit("20/minute")
+@limiter.limit(RATE_LIMIT_GENERATE)
 @router.post("/generate")
 async def generate(
     request: Request,
@@ -188,6 +205,8 @@ async def generate(
         },
     )
     client, model_info = get_client_for_model(body.model)
+    if get_mock_mode() == "always":
+        client = None
 
     if model_info is None:
         raise HTTPException(status_code=400, detail=f"Unknown model: {body.model}")
@@ -269,7 +288,7 @@ async def generate(
     return result
 
 
-@limiter.limit("10/minute")
+@limiter.limit(RATE_LIMIT_GENERATE_MULTI)
 @router.post("/generate/multi")
 async def generate_multi(
     request: Request,
@@ -366,7 +385,7 @@ async def generate_multi(
     return {"assistant_message": assistant_message}
 
 
-@limiter.limit("10/minute")
+@limiter.limit(RATE_LIMIT_REFINE)
 @router.post("/refine")
 async def refine(request: Request, body: RefineRequest) -> dict:
     prompt = body.prompt.strip()

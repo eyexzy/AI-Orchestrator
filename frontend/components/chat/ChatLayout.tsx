@@ -124,6 +124,24 @@ export function ChatLayout() {
     if (storedPreferences.topP !== undefined) {
       setTopP(storedPreferences.topP);
     }
+    if (storedPreferences.maxTokens !== undefined) {
+      setMaxTokens(storedPreferences.maxTokens);
+    }
+    if (storedPreferences.system !== undefined) {
+      setSystem(storedPreferences.system);
+    }
+    if (storedPreferences.variables !== undefined) {
+      setVariables(storedPreferences.variables);
+    }
+    if (storedPreferences.compareEnabled !== undefined) {
+      setCompareEnabled(storedPreferences.compareEnabled);
+    }
+    if (storedPreferences.selfConsistencyEnabled !== undefined) {
+      setSelfConsistencyEnabled(storedPreferences.selfConsistencyEnabled);
+    }
+    if (storedPreferences.fewShotExamples !== undefined) {
+      setFewShotExamples(storedPreferences.fewShotExamples);
+    }
 
     setGenerationPreferencesHydrated(true);
   }, []);
@@ -161,8 +179,19 @@ export function ChatLayout() {
 
   useEffect(() => {
     if (!generationPreferencesReadyToPersist) return;
-    writeGenerationPreferences({ model, temperature, topP });
-  }, [generationPreferencesReadyToPersist, model, temperature, topP]);
+    // When level < 3, the level-gate effect clears L3 state in memory.
+    // Preserve the stored L3 values so they survive a level demotion + refresh.
+    const l3Fields = level === 3
+      ? { system, variables, compareEnabled, selfConsistencyEnabled, fewShotExamples }
+      : {
+          system: storedGenerationPreferences.system,
+          variables: storedGenerationPreferences.variables,
+          compareEnabled: storedGenerationPreferences.compareEnabled,
+          selfConsistencyEnabled: storedGenerationPreferences.selfConsistencyEnabled,
+          fewShotExamples: storedGenerationPreferences.fewShotExamples,
+        };
+    writeGenerationPreferences({ model, temperature, topP, maxTokens, ...l3Fields });
+  }, [generationPreferencesReadyToPersist, model, temperature, topP, maxTokens, level, system, variables, compareEnabled, selfConsistencyEnabled, fewShotExamples, storedGenerationPreferences]);
 
   const handleInputVariableNamesChange = useCallback((names: string[]) => {
     setInputVariableNames((prev) => (sameNames(prev, names) ? prev : names));

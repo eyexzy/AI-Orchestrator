@@ -1,9 +1,23 @@
 import { create } from "zustand";
 import { toast } from "sonner";
-import { REQUEST_TIMEOUT_MS } from "@/lib/config";
+import { REQUEST_TIMEOUT_MS, ACTIVE_CHAT_STORAGE_KEY } from "@/lib/config";
 import { getErrorMessage, readResponseError } from "@/lib/request";
 import { getTranslation } from "./i18nStore";
 import { useUserLevelStore } from "./userLevelStore";
+
+function persistActiveChatId(id: string | null) {
+  try {
+    if (id) {
+      window.localStorage.setItem(ACTIVE_CHAT_STORAGE_KEY, id);
+    } else {
+      window.localStorage.removeItem(ACTIVE_CHAT_STORAGE_KEY);
+    }
+  } catch {}
+}
+
+// readPersistedActiveChatId removed: blank-first UX means we never
+// auto-restore on startup. persistActiveChatId writes are kept so that
+// external consumers (e.g. deleteChat cleanup) can still track the active chat.
 
 export type Role = "user" | "assistant";
 
@@ -426,7 +440,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
       }
 
       const data = await res.json();
-      set({ chats: Array.isArray(data) ? data : [], chatListError: null });
+      const loadedChats: ChatSession[] = Array.isArray(data) ? data : [];
+      set({ chats: loadedChats, chatListError: null });
+
+      // Blank-first UX: do NOT auto-restore the last active chat.
+      // The user starts with a clean workspace and selects a chat explicitly.
     } catch (error) {
       set({
         chatListError: getErrorMessage(
@@ -440,6 +458,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   selectChat: async (id, messageIdToFocus) => {
+    persistActiveChatId(id);
     set({
       activeChatId: id,
       isLoadingMessages: true,
@@ -447,7 +466,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       messagesError: null,
       pendingFocusMessageId: messageIdToFocus ?? null,
     });
-    useUserLevelStore.getState().setSessionId(id);
+    useUserLevelStore.getState().setChatId(id);
     try {
       const res = await fetchWithTimeout(`/api/chats/${id}/messages`);
       if (!res.ok) {
@@ -462,10 +481,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
           ? data.map(parseMessageFromDB)
           : [];
         set({ messages: parsedMessages, messagesError: null });
-        const userTexts = parsedMessages
-          .filter((message) => message.role === "user")
-          .map((message) => message.content);
-        await useUserLevelStore.getState().restoreFromMessages(userTexts);
+        // Reset behavioral session metrics — chat history is for UX/context only,
+        // not for scoring the current behavioral session.
+        useUserLevelStore.getState().resetMetrics();
       }
     } catch (error) {
       if (get().activeChatId === id) {
@@ -495,6 +513,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       }
 
       const chat: ChatSession = await res.json();
+      persistActiveChatId(chat.id);
       set((state) => ({
         chats: [chat, ...state.chats],
         activeChatId: chat.id,
@@ -502,7 +521,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         messagesError: null,
       }));
       useUserLevelStore.getState().resetMetrics();
-      useUserLevelStore.getState().setSessionId(chat.id);
+      useUserLevelStore.getState().setChatId(chat.id);
       return chat.id;
     } catch (error) {
       toast.error(getErrorMessage(error, "Failed to create chat"));
@@ -520,9 +539,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
       set((state) => {
         const chats = state.chats.filter((chat) => chat.id !== id);
         const isActive = state.activeChatId === id;
+        if (isActive) persistActiveChatId(null);
         return {
           chats,
-          activeChatId: isActive ? (chats[0]?.id ?? null) : state.activeChatId,
+          activeChatId: isActive ? null : state.activeChatId,
           messages: isActive ? [] : state.messages,
           messagesError: isActive ? null : state.messagesError,
         };

@@ -26,40 +26,24 @@ from sklearn.model_selection import (
     learning_curve,
     train_test_split,
 )
-from sqlalchemy import select
-
-from database import AsyncSessionLocal, init_db, MLFeedback
 from ml_classifier import (
     BEHAVIORAL_FEATURE_NAMES,
     ModelType,
     SklearnClassifier,
     _create_synthetic_training_data,
 )
-from retrain import _load_data_from_rows
 
 logger = logging.getLogger("ml-evaluation")
 
 
-async def _load_all_data() -> tuple[list[str], np.ndarray, np.ndarray]:
-    """Load data from DB, falling back to synthetic if not enough."""
-    await init_db()
-    async with AsyncSessionLocal() as db:
-        result = await db.execute(select(MLFeedback))
-        rows = result.scalars().all()
+async def _load_all_data() -> tuple[list[str], np.ndarray, np.ndarray, np.ndarray, dict]:
+    """Load data from tiered dataset builder."""
+    from dataset_builder import build_dataset
 
-    syn_texts, syn_beh, syn_y = _create_synthetic_training_data()
-
-    if len(rows) >= 10:
-        return _load_data_from_rows(rows)
-
-    if rows:
-        real_texts, real_beh, real_y = _load_data_from_rows(rows)
-        texts = list(syn_texts) + list(real_texts)
-        beh = np.vstack([syn_beh, real_beh])
-        y = np.concatenate([syn_y, real_y])
-        return texts, beh, y
-
-    return list(syn_texts), syn_beh, syn_y
+    texts, beh, y, weights, stats = await build_dataset(min_samples=10)
+    print(f"  Dataset: gold={stats['gold']}, silver={stats['silver']}, "
+          f"bronze={stats['bronze']}, synthetic={stats['synthetic']}")
+    return texts, beh, y, weights, stats
 
 
 def compare_models(
@@ -251,7 +235,7 @@ def random_baseline(y: np.ndarray) -> dict:
 
 async def full_evaluation():
     """Run complete evaluation suite for diploma."""
-    texts, behavioral_X, y = await _load_all_data()
+    texts, behavioral_X, y, weights, stats = await _load_all_data()
 
     print(f"\nTotal samples: {len(y)}")
     for lvl in (1, 2, 3):
@@ -270,6 +254,7 @@ async def full_evaluation():
     # Save all results to JSON for later use in thesis
     all_results = {
         "n_samples": len(y),
+        "dataset_tiers": stats,
         "class_distribution": {int(lvl): int((y == lvl).sum()) for lvl in (1, 2, 3)},
         "baselines": baselines,
         "model_comparison": model_results,
@@ -295,7 +280,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     async def main():
-        texts, behavioral_X, y = await _load_all_data()
+        texts, behavioral_X, y, weights, stats = await _load_all_data()
         print(f"Loaded {len(y)} samples")
 
         if args.ablation:

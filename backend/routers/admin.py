@@ -9,11 +9,13 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+import ml_classifier
 from database import InteractionLog, MLFeedback, MLModelCache
 from dependencies import check_admin_key, get_db, limiter
 from schemas.api import RetrainResponse
 from services.cache import cache
 from services.llm import clients, AVAILABLE_MODELS
+from services.scoring import has_structured_patterns
 from retrain import retrain_from_db
 
 logger = logging.getLogger("ai-orchestrator")
@@ -96,7 +98,7 @@ async def test_providers(request: Request):
 @router.post("/ml/retrain", response_model=RetrainResponse, dependencies=[Depends(check_admin_key)])
 async def ml_retrain(
     request: Request,
-    model_type: str = Query(default="LogisticRegression", regex="^(LogisticRegression|RandomForest|SVC)$"),
+    model_type: str = Query(default="LogisticRegression", pattern="^(LogisticRegression|RandomForest|SVC)$"),
     min_samples: int = Query(default=10, ge=0),
     use_tuning: bool = Query(default=True),
 ):
@@ -143,7 +145,7 @@ async def export_csv(db: AsyncSession = Depends(get_db)):
     output = io.StringIO()
     writer = csv.DictWriter(
         output,
-        fieldnames=["Timestamp", "SessionID", "UserEmail", "Level", "Prompt", "Score", "NormalizedScore", "TypingSpeed", "Metrics"],
+        fieldnames=["Timestamp", "SessionID", "ChatID", "UserEmail", "Level", "Prompt", "Score", "NormalizedScore", "TypingSpeed", "Metrics"],
     )
     writer.writeheader()
     for log in logs:

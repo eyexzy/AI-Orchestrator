@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
+import dynamic from "next/dynamic";
 import { useSession } from "next-auth/react";
 import { ChevronDown, ChevronUp, PieChart, Star, Pencil, Trash2 } from "lucide-react";
 import { UserLevelToggle } from "@/components/user-level-toggle";
@@ -9,17 +10,22 @@ import { useChatStore } from "@/lib/store/chatStore";
 import { useI18nStore } from "@/lib/store/i18nStore";
 import { useTheme } from "next-themes";
 import { ChatLayout } from "@/components/chat/ChatLayout";
-import { ScoreDashboard } from "@/components/ScoreDashboard";
 import { ChatSidebar } from "@/components/ChatSidebar";
 import { UserMenuDropdown } from "@/components/UserMenuDropdown";
-import { OnboardingModal } from "@/components/OnboardingModal";
-import { AccountSettingsModal } from "@/components/modals/AccountSettingsModal";
-import { FeedbackModal } from "@/components/modals/FeedbackModal";
+import { MicroFeedbackToast } from "@/components/MicroFeedbackToast";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ActionMenu } from "@/components/ui/action-menu";
 import { RenameChatModal } from "@/components/modals/RenameChatModal";
 import { useTranslation } from "@/lib/store/i18nStore";
+import { fetchProfilePreferences } from "@/lib/profilePreferences";
+import { initEventTracker } from "@/lib/eventTracker";
+
+// Lazy-load heavy components that are not needed on initial render
+const ScoreDashboard = dynamic(() => import("@/components/ScoreDashboard").then(m => ({ default: m.ScoreDashboard })), { ssr: false });
+const OnboardingModal = dynamic(() => import("@/components/OnboardingModal").then(m => ({ default: m.OnboardingModal })), { ssr: false });
+const AccountSettingsModal = dynamic(() => import("@/components/modals/AccountSettingsModal").then(m => ({ default: m.AccountSettingsModal })), { ssr: false });
+const FeedbackModal = dynamic(() => import("@/components/modals/FeedbackModal").then(m => ({ default: m.FeedbackModal })), { ssr: false });
 import {
   Sheet,
   SheetTrigger,
@@ -202,50 +208,65 @@ export default function HomePage() {
   const [sheetOpen, setSheetOpen] = useState(false);
   const [accountSettingsOpen, setAccountSettingsOpen] = useState(false);
   const [feedbackOpen, setFeedbackOpen] = useState(false);
-  const { activeChatId, selectChat, chats } = useChatStore();
   const { setTheme } = useTheme();
   const prefsFetched = useRef(false);
 
   useEffect(() => {
     const email = session?.user?.email;
-    if (email && !prefsFetched.current) {
-      prefsFetched.current = true;
-      useUserLevelStore.getState().setUserEmail(email);
-
-      fetch("/api/profile/preferences")
-        .then((res) => {
-          if (!res.ok) throw new Error("Failed to fetch preferences");
-          return res.json();
-        })
-        .then((data) => {
-          if (data.language) {
-            useI18nStore.getState().setLanguage(data.language as "en" | "uk");
-          }
-          if (data.theme) {
-            document.documentElement.classList.add("theme-transitioning");
-            setTheme(data.theme);
-            setTimeout(() => {
-              document.documentElement.classList.remove("theme-transitioning");
-            }, 50);
-          }
-          if (Array.isArray(data.hidden_templates)) {
-            useUserLevelStore.setState({ hiddenTemplates: data.hidden_templates });
-          }
-          const currentLevel = parseCurrentLevel(data.current_level);
-          if (currentLevel !== null) {
-            useUserLevelStore.getState().setLevel(currentLevel);
-          }
-        })
-        .catch((err) => {
-          console.error("Failed to load preferences on start:", err);
-          prefsFetched.current = false;
-        });
+    if (!email || prefsFetched.current) {
+      return;
     }
-  }, [session?.user?.email, setTheme]);
 
-  useEffect(() => {
-    if (!activeChatId && chats.length > 0) selectChat(chats[0].id);
-  }, [activeChatId, chats, selectChat]);
+    let cancelled = false;
+    prefsFetched.current = true;
+    useUserLevelStore.getState().setUserEmail(email);
+
+    initEventTracker({
+      getSessionId: () => useUserLevelStore.getState().sessionId,
+      getChatId: () => useChatStore.getState().activeChatId,
+    });
+
+    void fetchProfilePreferences()
+      .then((data) => {
+        if (cancelled) {
+          return;
+        }
+
+        if (data.language) {
+          useI18nStore.getState().setLanguage(data.language as "en" | "uk");
+        }
+        if (data.theme) {
+          document.documentElement.classList.add("theme-transitioning");
+          setTheme(data.theme);
+          setTimeout(() => {
+            document.documentElement.classList.remove("theme-transitioning");
+          }, 50);
+        }
+        if (Array.isArray(data.hidden_templates)) {
+          useUserLevelStore.setState({ hiddenTemplates: data.hidden_templates });
+        }
+        const currentLevel = parseCurrentLevel(data.current_level);
+        if (currentLevel !== null) {
+          useUserLevelStore.getState().setLevel(currentLevel);
+        }
+        // Mark profile as loaded and propagate onboarding status
+        useUserLevelStore.setState({
+          profileLoaded: true,
+          onboardingCompleted: data.onboarding_completed ?? false,
+        });
+      })
+      .catch(() => {
+        if (!cancelled) {
+          prefsFetched.current = false;
+        }
+        // Even on failure, mark profileLoaded so OnboardingModal can fall back to localStorage
+        useUserLevelStore.setState({ profileLoaded: true });
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [session?.user?.email, setTheme]);
 
   return (
     <Sheet open={sheetOpen} onOpenChange={setSheetOpen}>
@@ -292,6 +313,7 @@ export default function HomePage() {
         </div>
 
         <LevelUpNotification />
+        <MicroFeedbackToast />
         <OnboardingModal />
         <AccountSettingsModal open={accountSettingsOpen} onOpenChange={setAccountSettingsOpen} />
         <FeedbackModal open={feedbackOpen} onOpenChange={setFeedbackOpen} />

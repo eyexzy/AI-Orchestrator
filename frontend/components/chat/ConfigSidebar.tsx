@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, memo, useRef, useEffect, useState, useMemo } from "react";
+import { Fragment, memo, useRef, useEffect, useState, useMemo, useCallback } from "react";
 import { Settings, ChevronUp, Layers2, Cpu, SlidersHorizontal, LayoutTemplate, Terminal, Braces, BookOpen } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useUserLevelStore } from "@/lib/store/userLevelStore";
@@ -8,6 +8,7 @@ import { useModelsStore } from "@/lib/store/modelsStore";
 import { useTemplatesStore, getMergedTemplates, type PromptTemplate } from "@/lib/store/templatesStore";
 import { useTranslation } from "@/lib/store/i18nStore";
 
+import { trackEvent } from "@/lib/eventTracker";
 import { getDefaultSystem, isDefaultSystem } from "./sidebar/config";
 import type { SidebarConfig } from "./sidebar/config";
 import { Switch } from "@/components/ui/switch";
@@ -63,6 +64,7 @@ function SidebarTemplateItem({ tpl, config }: { tpl: PromptTemplate; config: Sid
       <div
         className="flex flex-1 flex-col"
         onClick={() => {
+          trackEvent("template_inserted", { template_id: tpl.id, category: tpl.category_name });
           const vars = tpl.variables ?? [];
           const nv: Record<string, string> = {};
           if (vars.length > 0 && config.variables) {
@@ -104,7 +106,7 @@ function SidebarTemplateItem({ tpl, config }: { tpl: PromptTemplate; config: Sid
 const ConfigSidebarComponent = ({ config, forceVisible }: { config: SidebarConfig; forceVisible?: boolean }) => {
   const { t, language } = useTranslation();
   const level = useUserLevelStore((s) => s.level);
-  const { trackAdvancedFeature } = useUserLevelStore();
+  const { trackAdvancedFeature, trackTooltipClick } = useUserLevelStore();
   const models = useModelsStore((s) => s.models);
   const fetchModels = useModelsStore((s) => s.fetchModels);
   const customTemplates = useTemplatesStore((s) => s.templates);
@@ -114,6 +116,11 @@ const ConfigSidebarComponent = ({ config, forceVisible }: { config: SidebarConfi
     () => getMergedTemplates(customTemplates, level, language as "en" | "uk", hiddenTemplates),
     [customTemplates, level, language, hiddenTemplates],
   );
+
+  const handleTooltipOpen = useCallback((id: string) => {
+    trackTooltipClick();
+    trackEvent("tooltip_opened", { tooltip_id: id });
+  }, [trackTooltipClick]);
 
   const tempTracked = useRef(false);
   const modelTracked = useRef(false);
@@ -172,7 +179,7 @@ const ConfigSidebarComponent = ({ config, forceVisible }: { config: SidebarConfi
           <div className="flex flex-col gap-5">
             <div className="flex flex-col gap-2">
               <div className="flex items-center justify-between">
-                <Tooltip align="start" content={t("tooltip.compare")}>
+                <Tooltip align="start" content={t("tooltip.compare")} onOpen={() => handleTooltipOpen("compare")}>
                   <span className="text-[13px] font-medium text-ds-text">{t("config.compare")}</span>
                 </Tooltip>
                 <Switch
@@ -181,6 +188,7 @@ const ConfigSidebarComponent = ({ config, forceVisible }: { config: SidebarConfi
                     config.setCompareEnabled!(v);
                     if (v) {
                       config.setSelfConsistencyEnabled!(false);
+                      trackEvent("compare_enabled");
                       trackAdvancedFeature("model_comparison");
                     }
                   }}
@@ -190,7 +198,7 @@ const ConfigSidebarComponent = ({ config, forceVisible }: { config: SidebarConfi
 
             <div className="flex flex-col gap-2">
               <div className="flex items-center justify-between">
-                <Tooltip align="start" content={t("tooltip.check3x")}>
+                <Tooltip align="start" content={t("tooltip.check3x")} onOpen={() => handleTooltipOpen("check3x")}>
                   <span className="text-[13px] font-medium text-ds-text">{t("config.check3x")}</span>
                 </Tooltip>
                 <Switch
@@ -199,6 +207,7 @@ const ConfigSidebarComponent = ({ config, forceVisible }: { config: SidebarConfi
                     config.setSelfConsistencyEnabled!(v);
                     if (v) {
                       config.setCompareEnabled!(false);
+                      trackEvent("self_consistency_enabled");
                       trackAdvancedFeature("self_consistency");
                     }
                   }}
@@ -208,7 +217,7 @@ const ConfigSidebarComponent = ({ config, forceVisible }: { config: SidebarConfi
 
             <div className="flex flex-col gap-2">
               <div className="flex items-center justify-between">
-                <Tooltip align="start" content={t("tooltip.rawJson")}>
+                <Tooltip align="start" content={t("tooltip.rawJson")} onOpen={() => handleTooltipOpen("rawJson")}>
                   <span className="text-[13px] font-medium text-ds-text">{t("config.rawJson")}</span>
                 </Tooltip>
                 <Switch
@@ -245,6 +254,7 @@ const ConfigSidebarComponent = ({ config, forceVisible }: { config: SidebarConfi
                   value={config.compareModelA ?? config.model}
                   onValueChange={(v) => {
                     config.setCompareModelA?.(v);
+                    trackEvent("model_changed", { model: v, slot: "A" });
                     if (!modelTracked.current) {
                       modelTracked.current = true;
                       trackAdvancedFeature("model");
@@ -280,6 +290,7 @@ const ConfigSidebarComponent = ({ config, forceVisible }: { config: SidebarConfi
             value={config.model}
             onValueChange={(v) => {
               config.setModel(v);
+              trackEvent("model_changed", { model: v });
               if (!modelTracked.current) {
                 modelTracked.current = true;
                 trackAdvancedFeature("model");
@@ -315,7 +326,7 @@ const ConfigSidebarComponent = ({ config, forceVisible }: { config: SidebarConfi
 
           <div className="space-y-2">
             <div className="flex items-center justify-between">
-              <Tooltip align="start" content={t("tooltip.temperature")}>
+              <Tooltip align="start" content={t("tooltip.temperature")} onOpen={() => handleTooltipOpen("temperature")}>
                 <span className="block cursor-help pb-0 text-[13px] font-medium text-ds-text">
                   {t("config.temperature")}
                 </span>
@@ -333,6 +344,7 @@ const ConfigSidebarComponent = ({ config, forceVisible }: { config: SidebarConfi
                 config.setTemperature(v[0]);
                 if (!tempTracked.current && v[0] !== 0.7) {
                   tempTracked.current = true;
+                  trackEvent("temperature_changed", { value: v[0] });
                   trackAdvancedFeature("temperature");
                 }
               }}
@@ -341,7 +353,7 @@ const ConfigSidebarComponent = ({ config, forceVisible }: { config: SidebarConfi
 
           <div className="space-y-2">
             <div className="flex items-center justify-between">
-              <Tooltip align="start" content={t("tooltip.maxTokens")}>
+              <Tooltip align="start" content={t("tooltip.maxTokens")} onOpen={() => handleTooltipOpen("maxTokens")}>
                 <span className="block cursor-help pb-0 text-[13px] font-medium text-ds-text">
                   {t("config.maxTokens")}
                 </span>
@@ -363,7 +375,7 @@ const ConfigSidebarComponent = ({ config, forceVisible }: { config: SidebarConfi
             <>
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
-                  <Tooltip align="start" content={t("tooltip.topP")}>
+                  <Tooltip align="start" content={t("tooltip.topP")} onOpen={() => handleTooltipOpen("topP")}>
                     <span className="block cursor-help pb-0 text-[13px] font-medium text-ds-text">
                       {t("config.topP")}
                     </span>
@@ -377,7 +389,10 @@ const ConfigSidebarComponent = ({ config, forceVisible }: { config: SidebarConfi
                   max={1}
                   step={0.05}
                   value={[config.topP ?? 1.0]}
-                  onValueChange={(v) => config.setTopP!(v[0])}
+                  onValueChange={(v) => {
+                    config.setTopP!(v[0]);
+                    trackEvent("top_p_changed", { value: v[0] });
+                  }}
                 />
               </div>
 
@@ -438,6 +453,7 @@ const ConfigSidebarComponent = ({ config, forceVisible }: { config: SidebarConfi
                 config.setSystem!(e.target.value);
                 if (!sysTracked.current && !isDefaultSystem(e.target.value) && e.target.value !== "") {
                   sysTracked.current = true;
+                  trackEvent("system_prompt_edited", { length: e.target.value.length });
                   trackAdvancedFeature("system_prompt");
                 }
               }}
@@ -475,6 +491,11 @@ const ConfigSidebarComponent = ({ config, forceVisible }: { config: SidebarConfi
           <VariableEditor
             variables={config.variables}
             onChange={(v) => {
+              const prevCount = Object.keys(config.variables ?? {}).length;
+              const newCount = Object.keys(v).length;
+              if (newCount > prevCount) {
+                trackEvent("variable_added", { count: newCount });
+              }
               config.setVariables!(v);
             }}
           />
@@ -493,6 +514,7 @@ const ConfigSidebarComponent = ({ config, forceVisible }: { config: SidebarConfi
             examples={config.fewShotExamples}
             onChange={(v) => {
               if (v.length > (config.fewShotExamples?.length ?? 0)) {
+                trackEvent("few_shot_added", { count: v.length });
                 trackAdvancedFeature("few_shot");
               }
               config.setFewShotExamples!(v);

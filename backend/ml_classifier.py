@@ -158,10 +158,16 @@ class SklearnClassifier:
         behavioral_sparse = csr_matrix(behavioral_scaled)
         return hstack([tfidf_matrix, behavioral_sparse])
 
-    def fit(self, texts: list[str], behavioral_X: np.ndarray, y: np.ndarray):
-        """Train on text + behavioral features."""
+    def fit(
+        self,
+        texts: list[str],
+        behavioral_X: np.ndarray,
+        y: np.ndarray,
+        sample_weight: np.ndarray | None = None,
+    ):
+        """Train on text + behavioral features with optional sample weights."""
         X_combined = self._build_features(texts, behavioral_X, fit=True)
-        self.model.fit(X_combined, y)
+        self.model.fit(X_combined, y, sample_weight=sample_weight)
         self.is_trained = True
 
     def predict_proba(self, texts: list[str], behavioral_X: np.ndarray) -> np.ndarray:
