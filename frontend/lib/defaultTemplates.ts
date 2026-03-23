@@ -16,9 +16,7 @@ interface VirtualDef {
 }
 
 const VIRTUAL_TEMPLATES: VirtualDef[] = [
-  // ════════════════════════════════════════════════════════════════════════
-  // ── L2 TEMPLATES (No variables, focus on Role, Format, and Clarity) ──
-  // ════════════════════════════════════════════════════════════════════════
+  // L2 TEMPLATES (No variables, focus on Role, Format, and Clarity)
   {
     id: "default-l2-1",
     level: 2,
@@ -163,9 +161,7 @@ const VIRTUAL_TEMPLATES: VirtualDef[] = [
     },
   },
 
-  // ════════════════════════════════════════════════════════════════════════
-  // ── L3 TEMPLATES (Variables, CoT, Step-back, Multi-perspective, JSON) ──
-  // ════════════════════════════════════════════════════════════════════════
+  // L3 TEMPLATES (Variables, CoT, Step-back, Multi-perspective, JSON)
   {
     id: "default-l3-1",
     level: 3,

@@ -303,10 +303,6 @@ export const useUserLevelStore = create<UserLevelState>((set, get) => ({
   },
 
   restoreFromMessages: async (_userTexts: string[]) => {
-    // Always reset to a clean behavioral session when switching chats.
-    // Chat history is available for UX display (chatStore.messages) and
-    // LLM context (buildHistory), but must NOT pollute per-session
-    // behavioral metrics that go to /api/analyze for scoring.
     get().resetMetrics();
   },
 

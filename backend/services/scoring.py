@@ -38,7 +38,6 @@ logger = logging.getLogger("ai-orchestrator")
 
 # Configuration helpers
 
-
 def _get_env_float(name: str, default: float) -> float:
     raw = os.getenv(name)
     if raw is None or not str(raw).strip():
@@ -114,8 +113,8 @@ EXPERT_REFERENCE_TEXT = (
     or DEFAULT_EXPERT_REFERENCE_TEXT
 )
 
-_semantic_model = None          # SentenceTransformer instance or None
-_reference_vector = None        # Pre-encoded expert reference
+_semantic_model = None # SentenceTransformer instance or None
+_reference_vector = None # Pre-encoded expert reference
 _semantic_available: bool = False
 
 
@@ -266,10 +265,6 @@ def _has_politeness_words(text: str) -> bool:
 
 
 # Block 1: Prompt Craftsmanship (max 3.0)
-#
-# Measures *how well the user crafts prompts* — topic-agnostic.
-# UX rationale: experienced users write longer, more specific, better-structured
-# prompts regardless of what domain they are asking about.
 
 def _score_prompt_craftsmanship(
     text: str,
@@ -310,12 +305,6 @@ def _score_prompt_craftsmanship(
         detail=f"{word_count} words",
     ))
 
-    # Prompt specificity sub-score (0–1.0) — REPLACES semantic similarity.
-    # UX rationale: experienced users constrain their prompts with explicit
-    # requirements (examples, output format, audience, constraints, negatives).
-    # This is domain-agnostic: a chef and a coder both score high if they
-    # write "give me 5 recipes for beginners, no more than 30 min each,
-    # in a numbered list" vs just "recipes".
     spec_pts = 0.0
     if specificity >= 4:
         spec_pts = 1.0
@@ -331,9 +320,6 @@ def _score_prompt_craftsmanship(
         detail=f"{specificity} specificity signals",
     ))
 
-    # Structure sub-score (0–0.75)
-    # UX rationale: using structured patterns, role assignment, or format
-    # requirements shows the user understands how to get better results from AI.
     struct_pts = 0.0
     struct_parts: list[str] = []
     if has_structure:
@@ -592,10 +578,6 @@ def _score_stability(
 
 
 # Penalties (reduce total score)
-#
-# Only behavioral signals — no content-based penalties.
-# Politeness penalty was removed: being polite is not an indicator of
-# lower experience.  An expert can write "please format this as JSON".
 
 def _apply_penalties(
     user_features: dict,

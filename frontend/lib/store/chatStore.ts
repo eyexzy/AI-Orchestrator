@@ -15,10 +15,6 @@ function persistActiveChatId(id: string | null) {
   } catch {}
 }
 
-// readPersistedActiveChatId removed: blank-first UX means we never
-// auto-restore on startup. persistActiveChatId writes are kept so that
-// external consumers (e.g. deleteChat cleanup) can still track the active chat.
-
 export type Role = "user" | "assistant";
 
 export interface ChatSession {
@@ -443,8 +439,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
       const loadedChats: ChatSession[] = Array.isArray(data) ? data : [];
       set({ chats: loadedChats, chatListError: null });
 
-      // Blank-first UX: do NOT auto-restore the last active chat.
-      // The user starts with a clean workspace and selects a chat explicitly.
     } catch (error) {
       set({
         chatListError: getErrorMessage(
@@ -481,8 +475,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
           ? data.map(parseMessageFromDB)
           : [];
         set({ messages: parsedMessages, messagesError: null });
-        // Reset behavioral session metrics — chat history is for UX/context only,
-        // not for scoring the current behavioral session.
         useUserLevelStore.getState().resetMetrics();
       }
     } catch (error) {
