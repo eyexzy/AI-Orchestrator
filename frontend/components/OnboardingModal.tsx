@@ -13,10 +13,11 @@ import {
 import { Button } from "@/components/ui/button";
 import { useUserLevelStore } from "@/lib/store/userLevelStore";
 import { useTranslation } from "@/lib/store/i18nStore";
+import { patchProfilePreferences } from "@/lib/profilePreferences";
 
 type Step = 1 | 2 | 3;
 
-const STORAGE_KEY = "ai_orchestrator_onboarded";
+const STORAGE_KEY_PREFIX = "ai_orchestrator_onboarded_";
 
 interface Option {
   key: string;
@@ -64,16 +65,26 @@ export function OnboardingModal() {
   const [step2, setStep2] = useState<number | null>(null);
   const [step3, setStep3] = useState<number | null>(null);
 
+  const profileLoaded = useUserLevelStore((s) => s.profileLoaded);
+  const onboardingCompleted = useUserLevelStore((s) => s.onboardingCompleted);
+  const userEmail = useUserLevelStore((s) => s.userEmail);
+
+  const storageKey = STORAGE_KEY_PREFIX + userEmail;
+
   useEffect(() => {
     if (typeof window === "undefined") return;
+    // Wait until profile has been loaded from backend
+    if (!profileLoaded) return;
+    // Already completed (backend says so)
+    if (onboardingCompleted) return;
     try {
-      const stored = window.localStorage.getItem(STORAGE_KEY);
+      const stored = window.localStorage.getItem(storageKey);
       if (!stored) {
         setOpen(true);
       }
     } catch {
     }
-  }, []);
+  }, [profileLoaded, onboardingCompleted, storageKey]);
 
   const handleCloseCompletely = () => {
     setOpen(false);
@@ -82,13 +93,15 @@ export function OnboardingModal() {
   const markOnboarded = () => {
     if (typeof window !== "undefined") {
       try {
-        window.localStorage.setItem(STORAGE_KEY, "1");
+        window.localStorage.setItem(storageKey, "1");
       } catch {
       }
     }
   };
 
   const handleSkip = () => {
+    useUserLevelStore.setState({ onboardingCompleted: true });
+    patchProfilePreferences({ onboarding_completed: true }).catch(() => {});
     markOnboarded();
     handleCloseCompletely();
   };
@@ -114,6 +127,13 @@ export function OnboardingModal() {
 
     useUserLevelStore.getState().setLevel(startLevel);
     useUserLevelStore.getState().setGroundTruth(groundTruth);
+    useUserLevelStore.setState({ onboardingCompleted: true });
+
+    // Persist onboarding result to backend profile
+    patchProfilePreferences({
+      self_assessed_level: startLevel,
+      onboarding_completed: true,
+    }).catch(() => {});
 
     markOnboarded();
     handleCloseCompletely();

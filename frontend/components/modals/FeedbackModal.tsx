@@ -4,43 +4,74 @@ import { useState } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { Frown, Meh, Smile } from "lucide-react";
+import { Frown, Meh, Smile, ThumbsUp, ThumbsDown } from "lucide-react";
 import { toast } from "sonner";
 import { useTranslation } from "@/lib/store/i18nStore";
-import { toBehavioralMetricsPayload, useUserLevelStore } from "@/lib/store/userLevelStore";
+import { useUserLevelStore } from "@/lib/store/userLevelStore";
 
-const MOOD_TO_LEVEL: Record<string, number> = { sad: 1, neutral: 2, smile: 3 };
+const LEVEL_LABELS: Record<number, string> = { 1: "Beginner", 2: "Intermediate", 3: "Advanced" };
 
 export function FeedbackModal({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
   const { t } = useTranslation();
-  const metrics = useUserLevelStore((state) => state.metrics);
+  const level = useUserLevelStore((s) => s.level);
+  const sessionId = useUserLevelStore((s) => s.sessionId);
+
   const [mood, setMood] = useState<"sad" | "neutral" | "smile" | null>(null);
   const [text, setText] = useState("");
+  const [levelAgree, setLevelAgree] = useState<"agree" | "disagree" | null>(null);
   const [sending, setSending] = useState(false);
 
   const handleSubmit = async () => {
-    if (!text.trim() && !mood) return;
+    if (!text.trim() && !mood && !levelAgree) return;
 
     setSending(true);
     try {
-      const res = await fetch("/api/ml/feedback", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          prompt_text: text.trim() || "(mood only)",
-          metrics: toBehavioralMetricsPayload(metrics),
-          actual_level: MOOD_TO_LEVEL[mood ?? "neutral"],
-        }),
-      });
+      const promises: Promise<Response>[] = [];
 
-      if (!res.ok) {
-        const data = await res.json().catch(() => null);
-        throw new Error(data?.error ?? `HTTP ${res.status}`);
+      // 1) Product feedback — mood + text → dedicated table, NOT ml_feedback
+      if (text.trim() || mood) {
+        promises.push(
+          fetch("/api/product-feedback", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              mood,
+              feedback_text: text.trim(),
+              session_id: sessionId,
+            }),
+          }),
+        );
+      }
+
+      // 2) Adaptation feedback — explicit label for the adaptation engine
+      if (levelAgree) {
+        promises.push(
+          fetch("/api/adaptation-feedback", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              session_id: sessionId,
+              ui_level_at_time: level,
+              question_type: "periodic_level_check",
+              answer_value: levelAgree,
+              feature_snapshot: {},
+            }),
+          }),
+        );
+      }
+
+      const results = await Promise.all(promises);
+      for (const res of results) {
+        if (!res.ok) {
+          const data = await res.json().catch(() => null);
+          throw new Error(data?.error ?? `HTTP ${res.status}`);
+        }
       }
 
       toast.success(t("feedback.success") ?? "Feedback sent!");
       setText("");
       setMood(null);
+      setLevelAgree(null);
       onOpenChange(false);
     } catch (err) {
       toast.error(
@@ -55,6 +86,7 @@ export function FeedbackModal({ open, onOpenChange }: { open: boolean; onOpenCha
   const handleCancel = () => {
     setText("");
     setMood(null);
+    setLevelAgree(null);
     onOpenChange(false);
   };
 
@@ -66,7 +98,7 @@ export function FeedbackModal({ open, onOpenChange }: { open: boolean; onOpenCha
           <DialogDescription>{t("feedback.description")}</DialogDescription>
         </DialogHeader>
 
-        <div className="p-6 pt-2 pb-4">
+        <div className="p-6 pt-2 pb-4 space-y-4">
           <Textarea
             variant="default"
             value={text}
@@ -77,7 +109,35 @@ export function FeedbackModal({ open, onOpenChange }: { open: boolean; onOpenCha
             textareaClassName="min-h-[120px] resize-none p-3 text-[14px]"
           />
 
-          <div className="mt-4 flex items-center justify-between">
+          {/* Level agreement — adaptation feedback */}
+          <div className="flex items-center justify-between rounded-lg border border-gray-alpha-200 px-3 py-2">
+            <span className="text-[13px] text-ds-text-secondary">
+              {t("feedback.levelQuestion") ?? `Your level: ${LEVEL_LABELS[level] ?? level}. Correct?`}
+            </span>
+            <div className="flex items-center gap-1 rounded-full border border-gray-alpha-200 bg-gray-alpha-100 p-0.5">
+              {[
+                { id: "agree" as const, icon: ThumbsUp },
+                { id: "disagree" as const, icon: ThumbsDown },
+              ].map(({ id, icon: Icon }) => (
+                <Button
+                  key={id}
+                  type="button"
+                  variant="tertiary"
+                  size="sm"
+                  iconOnly
+                  leftIcon={<Icon size={14} strokeWidth={2} />}
+                  onClick={() => setLevelAgree(levelAgree === id ? null : id)}
+                  className={`h-7 w-7 rounded-full p-0 shadow-none ${
+                    levelAgree === id
+                      ? "bg-background shadow-sm text-ds-text"
+                      : "text-ds-text-tertiary hover:text-ds-text-secondary hover:bg-gray-alpha-200"
+                  }`}
+                />
+              ))}
+            </div>
+          </div>
+
+          <div className="flex items-center justify-between">
             <div className="flex items-center gap-1.5 rounded-full border border-gray-alpha-200 bg-gray-alpha-100 p-1">
               {[
                 { id: "sad", icon: Frown },
@@ -97,8 +157,7 @@ export function FeedbackModal({ open, onOpenChange }: { open: boolean; onOpenCha
                       ? "bg-background shadow-sm text-ds-text"
                       : "text-ds-text-tertiary hover:text-ds-text-secondary hover:bg-gray-alpha-200"
                   }`}
-                >
-                </Button>
+                />
               ))}
             </div>
 
@@ -110,7 +169,7 @@ export function FeedbackModal({ open, onOpenChange }: { open: boolean; onOpenCha
                 variant="default"
                 size="sm"
                 onClick={handleSubmit}
-                disabled={(!text.trim() && !mood) || sending}
+                disabled={(!text.trim() && !mood && !levelAgree) || sending}
                 isLoading={sending}
               >
                 {t("feedback.submit")}

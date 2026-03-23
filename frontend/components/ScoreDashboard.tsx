@@ -1,49 +1,80 @@
 "use client";
 
-import { useState } from "react";
-import { Lightbulb, Zap, Download, PieChart } from "lucide-react";
+import { useEffect, useState } from "react";
+import {
+  Lightbulb, Zap, Download, PieChart,
+  ArrowUpRight, ArrowDownRight, Minus,
+  Brain, Cpu, Shield, TrendingUp,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Note } from "@/components/ui/note";
 import { useUserLevelStore } from "@/lib/store/userLevelStore";
 
-/* Level palette — RGB triplets for use with rgba() */
-const LEVEL_COLORS: Record<1 | 2 | 3, string> = {
+/* Types */
+
+interface DashboardDecision {
+  rule_score: number | null;
+  rule_level: number | null;
+  ml_score: number | null;
+  ml_level: number | null;
+  final_level: number;
+  confidence: number | null;
+  transition_reason: Record<string, unknown>;
+  created_at: string | null;
+}
+
+interface DashboardData {
+  current_level: number;
+  suggested_level: number | null;
+  self_assessed_level: number | null;
+  initial_level: number;
+  rule_score: number | null;
+  ml_score: number | null;
+  confidence: number | null;
+  profile_features: Record<string, unknown>;
+  level_history: number[];
+  recent_decisions: DashboardDecision[];
+  updated_at: string | null;
+}
+
+/* Palette */
+
+const LEVEL_COLORS: Record<number, string> = {
   1: "46, 125, 50",
   2: "0, 100, 245",
   3: "189, 119, 0",
 };
 
-const LEVEL_NAMES: Record<1 | 2 | 3, string> = {
+const LEVEL_NAMES: Record<number, string> = {
   1: "Novice",
   2: "Intermediate",
   3: "Expert",
 };
 
-/* Bar */
-function Bar({
-  value,
-  max = 100,
-  color,
-}: {
-  value: number;
-  max?: number;
-  color?: string;
-}) {
+/* Small helpers */
+
+function Bar({ value, max = 100, color }: { value: number; max?: number; color?: string }) {
   const pct = Math.min(100, Math.max(0, (value / max) * 100));
   return (
     <div className="relative h-1 w-full overflow-hidden rounded-full bg-gray-alpha-200">
       <div
         className="h-full rounded-full transition-all duration-500"
-        style={{
-          width: `${pct}%`,
-          background: color ?? "rgb(var(--text-2))",
-        }}
+        style={{ width: `${pct}%`, background: color ?? "rgb(var(--text-2))" }}
       />
     </div>
   );
 }
 
-/* Progress math */
+function StatCard({ label, value, sub }: { label: string; value: string | number; sub?: string }) {
+  return (
+    <div className="rounded-xl p-3 bg-gray-alpha-100 border border-gray-alpha-200">
+      <p className="text-xs text-ds-text-tertiary">{label}</p>
+      <p className="mt-0.5 font-mono text-[15px] font-medium text-ds-text">{value}</p>
+      {sub && <p className="mt-0.5 text-[11px] text-ds-text-tertiary">{sub}</p>}
+    </div>
+  );
+}
+
 function progressToNext(
   normalized: number,
   level: 1 | 2 | 3,
@@ -86,7 +117,7 @@ function getTip(
   }
 
   const structureItem = breakdown.find(
-    (b) => b.category === "Structure & Context",
+    (b) => b.category.endsWith("Structure & Context"),
   );
   if (structureItem && structureItem.points === 0) {
     return (
@@ -95,7 +126,7 @@ function getTip(
     );
   }
 
-  const techItem = breakdown.find((b) => b.category === "Technical Terms");
+  const techItem = breakdown.find((b) => b.category.endsWith("Technical Terms"));
   if (techItem && techItem.points === 0 && level >= 2) {
     return (
       "Use system variables (e.g. {{var}}) " +
@@ -137,12 +168,58 @@ function TipCard({
   );
 }
 
+/* Key factors extraction */
+
+function extractKeyFactors(features: Record<string, unknown>): { label: string; value: string; icon: typeof Brain }[] {
+  const factors: { label: string; value: string; icon: typeof Brain }[] = [];
+
+  const avgLen = features.avg_prompt_length_rolling;
+  if (typeof avgLen === "number" && avgLen > 0) {
+    factors.push({ label: "Avg prompt length", value: `${Math.round(avgLen)} chars`, icon: TrendingUp });
+  }
+
+  const structured = features.structured_prompt_ratio_rolling;
+  if (typeof structured === "number") {
+    factors.push({ label: "Structured ratio", value: `${Math.round(structured * 100)}%`, icon: Shield });
+  }
+
+  const advanced = features.advanced_actions_per_session;
+  if (typeof advanced === "number") {
+    factors.push({ label: "Advanced actions/session", value: String(advanced), icon: Cpu });
+  }
+
+  const helpRatio = features.help_ratio;
+  if (typeof helpRatio === "number") {
+    factors.push({ label: "Help dependency", value: `${Math.round(helpRatio * 100)}%`, icon: Brain });
+  }
+
+  const cancelRate = features.cancel_rate;
+  if (typeof cancelRate === "number") {
+    factors.push({ label: "Cancel rate", value: `${Math.round(cancelRate * 100)}%`, icon: Brain });
+  }
+
+  const sessions = features.sessions_count;
+  if (typeof sessions === "number") {
+    factors.push({ label: "Sessions tracked", value: String(sessions), icon: TrendingUp });
+  }
+
+  return factors;
+}
+
+/* Transition icon */
+
+function TransitionIcon({ action }: { action: string }) {
+  if (action === "promotion") return <ArrowUpRight size={12} className="text-geist-success" />;
+  if (action === "demotion") return <ArrowDownRight size={12} className="text-geist-error" />;
+  return <Minus size={12} className="text-ds-text-tertiary" />;
+}
+
 /* Main dashboard */
 
 export function ScoreDashboard() {
   const {
     level,
-    confidence,
+    confidence: localConfidence,
     reasoning,
     score,
     normalizedScore,
@@ -153,20 +230,45 @@ export function ScoreDashboard() {
     isAnalyzing,
   } = useUserLevelStore();
 
-  const accent = LEVEL_COLORS[level];
+  const [dashboard, setDashboard] = useState<DashboardData | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    fetch("/api/profile/dashboard")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (!cancelled && data) setDashboard(data);
+      })
+      .catch(() => {})
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [level]); // re-fetch when level changes
+
+  const accent = LEVEL_COLORS[level] ?? LEVEL_COLORS[1];
   const progress = progressToNext(normalizedScore, level, thresholds);
 
-  if (!hasAnalyzed) {
+  // Use persisted data when available, local state as fallback
+  const ruleScore = dashboard?.rule_score ?? (hasAnalyzed ? score : null);
+  const mlScore = dashboard?.ml_score ?? null;
+  const confidence = dashboard?.confidence ?? (hasAnalyzed ? localConfidence : null);
+  const suggestedLevel = dashboard?.suggested_level ?? null;
+  const profileFeatures = dashboard?.profile_features ?? {};
+  const recentDecisions = dashboard?.recent_decisions ?? [];
+  const keyFactors = extractKeyFactors(profileFeatures);
+
+  if (!hasAnalyzed && !dashboard) {
     return (
       <div className="flex flex-col items-center justify-center py-20 text-center">
         <div className="mb-3 opacity-20">
           <PieChart size={32} strokeWidth={2} />
         </div>
         <p className="text-[15px] text-ds-text-secondary">
-          Waiting for input
+          {loading ? "Loading profile..." : "Waiting for input"}
         </p>
         <p className="mt-1 text-xs text-ds-text-tertiary">
-          Send a message to see the analysis
+          {loading ? "" : "Send a message to see the analysis"}
         </p>
       </div>
     );
@@ -185,10 +287,10 @@ export function ScoreDashboard() {
           </div>
           <div>
             <p className="text-[15px] font-semibold text-ds-text">
-              {LEVEL_NAMES[level]}
+              {LEVEL_NAMES[level] ?? `Level ${level}`}
             </p>
             <p className="text-xs text-ds-text-tertiary">
-              {Math.round(confidence * 100)}% confidence
+              {confidence !== null ? `${Math.round(confidence * 100)}% confidence` : "No data yet"}
             </p>
           </div>
         </div>
@@ -210,89 +312,164 @@ export function ScoreDashboard() {
 
       <div className="divider" />
 
-      {/* Progress */}
-      <div className="space-y-2">
-        <div className="flex items-center justify-between text-xs">
-          <span className="text-ds-text-tertiary">Progress</span>
-          <span className="font-mono text-ds-text-secondary">
-            {score}/13.5
-          </span>
-        </div>
-        <Bar value={progress.percent} color={`rgb(${accent})`} />
-        <p className="text-xs text-ds-text-tertiary">
-          {progress.label}
-        </p>
+      {/* Scores overview */}
+      <div className="grid grid-cols-2 gap-2">
+        <StatCard
+          label="Rule score"
+          value={ruleScore !== null ? ruleScore.toFixed(1) : "—"}
+          sub="out of 15.0"
+        />
+        <StatCard
+          label="ML contribution"
+          value={mlScore !== null ? mlScore.toFixed(2) : "—"}
+          sub={mlScore !== null ? "blended score" : "not active"}
+        />
+        <StatCard
+          label="Suggested"
+          value={suggestedLevel !== null ? `L${suggestedLevel}` : "—"}
+          sub={suggestedLevel !== null && suggestedLevel !== level ? "differs from current" : undefined}
+        />
+        <StatCard
+          label="Confidence"
+          value={confidence !== null ? `${Math.round(confidence * 100)}%` : "—"}
+          sub={confidence !== null && confidence < 0.4 ? "low — needs data" : undefined}
+        />
       </div>
 
-      {/* Mentor tip */}
-      <TipCard
-        breakdown={breakdown}
-        reasoning={reasoning}
-        level={level}
-        score={score}
-      />
-
-      <div className="divider" />
-
-      {/* Breakdown */}
-      <div className="space-y-3">
-        <p className="config-label">Breakdown</p>
-        {breakdown.map((item) => (
-          <div key={item.category} className="space-y-1">
+      {/* Progress to next level */}
+      {hasAnalyzed && (
+        <>
+          <div className="divider" />
+          <div className="space-y-2">
             <div className="flex items-center justify-between text-xs">
-              <span className="text-ds-text-secondary">{item.category}</span>
-              <span className="font-mono text-ds-text-tertiary">
-                {item.points < 0 ? "" : "+"}
-                {item.points.toFixed(1)}/{item.max_points.toFixed(1)}
+              <span className="text-ds-text-tertiary">Progress</span>
+              <span className="font-mono text-ds-text-secondary">
+                {score.toFixed(1)}/15.0
               </span>
             </div>
-            <Bar
-              value={item.max_points > 0 ? (item.points / item.max_points) * 100 : 0}
-            />
+            <Bar value={progress.percent} color={`rgb(${accent})`} />
+            <p className="text-xs text-ds-text-tertiary">{progress.label}</p>
           </div>
-        ))}
-      </div>
+        </>
+      )}
 
-      <div className="divider" />
+      {/* Mentor tip */}
+      {hasAnalyzed && breakdown.length > 0 && (
+        <>
+          <TipCard breakdown={breakdown} reasoning={reasoning} level={level} score={score} />
+        </>
+      )}
+
+      {/* Breakdown (real-time from last analysis) */}
+      {hasAnalyzed && breakdown.length > 0 && (
+        <>
+          <div className="divider" />
+          <div className="space-y-3">
+            <p className="config-label">Breakdown</p>
+            {breakdown.map((item) => (
+              <div key={item.category} className="space-y-1">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-ds-text-secondary">{item.category}</span>
+                  <span className="font-mono text-ds-text-tertiary">
+                    {item.points < 0 ? "" : "+"}{item.points.toFixed(1)}/{item.max_points.toFixed(1)}
+                  </span>
+                </div>
+                <Bar
+                  value={item.max_points > 0 ? (item.points / item.max_points) * 100 : 0}
+                />
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+
+      {/* Key factors (from persisted user profile) */}
+      {keyFactors.length > 0 && (
+        <>
+          <div className="divider" />
+          <div className="space-y-2.5">
+            <p className="config-label">Key factors</p>
+            <div className="grid grid-cols-2 gap-2">
+              {keyFactors.map((f) => (
+                <div key={f.label} className="flex items-center gap-2 rounded-lg px-3 py-2 bg-gray-alpha-100 border border-gray-alpha-200">
+                  <f.icon size={13} className="shrink-0 text-ds-text-tertiary" />
+                  <div className="min-w-0">
+                    <p className="text-[11px] text-ds-text-tertiary truncate">{f.label}</p>
+                    <p className="font-mono text-[12px] font-medium text-ds-text">{f.value}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </>
+      )}
 
       {/* Reasoning */}
       {reasoning.length > 0 && (
-        <div className="space-y-2">
-          <p className="config-label">Analysis</p>
-          <ul className="space-y-1">
-            {reasoning.map((r, i) => (
-              <li
-                key={i}
-                className="text-sm leading-relaxed text-ds-text-secondary"
-              >
-                <span className="text-ds-text-tertiary">·</span> {r}
-              </li>
-            ))}
-          </ul>
-        </div>
+        <>
+          <div className="divider" />
+          <div className="space-y-2">
+            <p className="config-label">Analysis</p>
+            <ul className="space-y-1">
+              {reasoning.map((r, i) => (
+                <li key={i} className="text-sm leading-relaxed text-ds-text-secondary">
+                  <span className="text-ds-text-tertiary">·</span> {r}
+                </li>
+              ))}
+            </ul>
+          </div>
+        </>
       )}
 
-      <div className="divider" />
+      {/* Transition history */}
+      {recentDecisions.length > 0 && (
+        <>
+          <div className="divider" />
+          <div className="space-y-2.5">
+            <p className="config-label">Recent transitions</p>
+            <div className="space-y-1.5 max-h-[200px] overflow-y-auto">
+              {recentDecisions.slice(0, 10).map((d, i) => {
+                const action = String(d.transition_reason?.action ?? "no_change");
+                const ts = d.created_at
+                  ? new Date(d.created_at).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })
+                  : "";
+                return (
+                  <div
+                    key={i}
+                    className="flex items-center justify-between rounded-lg px-3 py-2 text-xs bg-gray-alpha-100 border border-gray-alpha-200"
+                  >
+                    <div className="flex items-center gap-2">
+                      <TransitionIcon action={action} />
+                      <span className="font-mono text-ds-text">L{d.final_level}</span>
+                      <span className="text-ds-text-tertiary">{action.replace("_", " ")}</span>
+                    </div>
+                    <div className="flex items-center gap-3 text-ds-text-tertiary">
+                      {d.rule_score !== null && (
+                        <span className="font-mono">R:{d.rule_score.toFixed(1)}</span>
+                      )}
+                      {d.confidence !== null && (
+                        <span className="font-mono">{Math.round(d.confidence * 100)}%</span>
+                      )}
+                      <span>{ts}</span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </>
+      )}
 
-      {/* Metrics grid */}
+      {/* Session metrics */}
+      <div className="divider" />
       <div className="grid grid-cols-2 gap-2">
         {[
           { label: "Messages", value: metrics.sessionMessageCount },
           { label: "Speed", value: `${metrics.charsPerSecond.toFixed(1)} c/s` },
           { label: "Avg. length", value: Math.round(metrics.avgPromptLength) },
-          { label: "Score", value: score },
+          { label: "Session score", value: hasAnalyzed ? score.toFixed(1) : "—" },
         ].map((m) => (
-          <div
-            key={m.label}
-            className="rounded-xl p-3 bg-gray-alpha-100 border border-gray-alpha-200"
-          >
-            <p className="text-xs text-ds-text-tertiary">
-              {m.label}
-            </p>
-            <p className="mt-0.5 font-mono text-[15px] font-medium text-ds-text">
-              {m.value}
-            </p>
-          </div>
+          <StatCard key={m.label} label={m.label} value={m.value} />
         ))}
       </div>
 

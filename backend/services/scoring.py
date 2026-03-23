@@ -1,20 +1,42 @@
+"""
+Rule Engine V3 — 5-block behavioral scoring system.
+
+Scoring philosophy: every rule measures *user experience with AI chat tools*,
+not domain knowledge or topic technicality.  The three concepts are kept separate:
+
+  - "prompt quality"       = how well a prompt is crafted (specificity, constraints)
+  - "domain technicality"  = subject area of the prompt (NOT scored)
+  - "experience level"     = how effectively the user operates the AI interface
+
+Blocks (each 0–3 max, total max = 15):
+  1. Prompt Craftsmanship — length, specificity, structure, context-setting
+  2. Tool Mastery         — advanced features, system prompt, variables
+  3. Autonomy             — self-sufficiency, low cancel/help ratios
+  4. Efficiency           — typing speed, session activity, prompt consistency
+  5. Stability            — rolling user aggregates from session history
+
+Penalties reduce score but never below 0.
+ML blending adjusts the final normalized score.
+"""
+
+import logging
 import math
 import os
 import re
 
-from sentence_transformers import SentenceTransformer
+# Force offline mode BEFORE importing sentence_transformers / transformers.
+# This prevents any user request from triggering a network download.
+os.environ.setdefault("HF_HUB_OFFLINE", "1")
+os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
+
 from sklearn.metrics.pairwise import cosine_similarity
 
 import ml_classifier
 from schemas.api import AnalyzeRequest, BehavioralMetrics, ScoreBreakdown
 
-DEFAULT_EXPERT_REFERENCE_TEXT = (
-    "API JSON LLM prompt engineering architecture backend frontend database SQL "
-    "React Python machine learning optimization deployment рефакторинг асинхронність "
-    "нейронні мережі transformer embedding fine-tuning RAG vector tokenizer attention "
-    "inference neural network backpropagation gradient hyperparameter Docker Kubernetes "
-    "CI/CD MLOps DevOps REST GraphQL WebSocket classification regression clustering NLP"
-)
+logger = logging.getLogger("ai-orchestrator")
+
+# Configuration helpers
 
 
 def _get_env_float(name: str, default: float) -> float:
@@ -37,101 +59,152 @@ def _get_env_int(name: str, default: int) -> int:
         return default
 
 
-EXPERT_REFERENCE_TEXT = (
-    os.getenv("SCORING_EXPERT_REFERENCE_TEXT", DEFAULT_EXPERT_REFERENCE_TEXT).strip()
-    or DEFAULT_EXPERT_REFERENCE_TEXT
-)
+# Block max points
+BLOCK_MAX = 3.0
+MAX_SCORE = BLOCK_MAX * 5  # 15.0
 
-MAX_SCORE = _get_env_float("SCORING_MAX_SCORE", 13.5)
+# Prompt Craftsmanship thresholds
+PROMPT_LENGTH_MEDIUM = _get_env_int("SCORING_PROMPT_LENGTH_MEDIUM_THRESHOLD", 80)
+PROMPT_LENGTH_LONG = _get_env_int("SCORING_PROMPT_LENGTH_LONG_THRESHOLD", 200)
+WORD_COUNT_MEDIUM = _get_env_int("SCORING_WORD_COUNT_MEDIUM_THRESHOLD", 15)
+WORD_COUNT_LONG = _get_env_int("SCORING_WORD_COUNT_LONG_THRESHOLD", 40)
 
-PROMPT_LENGTH_MEDIUM_THRESHOLD = _get_env_int(
-    "SCORING_PROMPT_LENGTH_MEDIUM_THRESHOLD",
-    80,
-)
-PROMPT_LENGTH_LONG_THRESHOLD = _get_env_int(
-    "SCORING_PROMPT_LENGTH_LONG_THRESHOLD",
-    200,
-)
-WORD_COUNT_MEDIUM_THRESHOLD = _get_env_int(
-    "SCORING_WORD_COUNT_MEDIUM_THRESHOLD",
-    15,
-)
-WORD_COUNT_LONG_THRESHOLD = _get_env_int(
-    "SCORING_WORD_COUNT_LONG_THRESHOLD",
-    40,
-)
-
-SEMANTIC_LOW_THRESHOLD = _get_env_float("SCORING_SEMANTIC_LOW_THRESHOLD", 0.15)
-SEMANTIC_MEDIUM_THRESHOLD = _get_env_float(
-    "SCORING_SEMANTIC_MEDIUM_THRESHOLD",
-    0.30,
-)
-SEMANTIC_HIGH_THRESHOLD = _get_env_float("SCORING_SEMANTIC_HIGH_THRESHOLD", 0.45)
-
+# Efficiency thresholds
 TYPING_SPEED_THRESHOLD = _get_env_float("SCORING_TYPING_SPEED_THRESHOLD", 5.0)
 TYPING_SPEED_CAP = _get_env_float("SCORING_TYPING_SPEED_CAP", 15.0)
+SESSION_ACTIVITY_MEDIUM = _get_env_int("SCORING_SESSION_ACTIVITY_MEDIUM_THRESHOLD", 5)
+SESSION_ACTIVITY_HIGH = _get_env_int("SCORING_SESSION_ACTIVITY_HIGH_THRESHOLD", 10)
+AVG_PROMPT_LENGTH_THRESHOLD = _get_env_float("SCORING_AVG_PROMPT_LENGTH_THRESHOLD", 150.0)
 
-SESSION_ACTIVITY_MEDIUM_THRESHOLD = _get_env_int(
-    "SCORING_SESSION_ACTIVITY_MEDIUM_THRESHOLD",
-    5,
-)
-SESSION_ACTIVITY_HIGH_THRESHOLD = _get_env_int(
-    "SCORING_SESSION_ACTIVITY_HIGH_THRESHOLD",
-    10,
-)
-AVG_PROMPT_LENGTH_THRESHOLD = _get_env_float(
-    "SCORING_AVG_PROMPT_LENGTH_THRESHOLD",
-    150.0,
-)
+# Tool Mastery thresholds
+ADVANCED_MEDIUM = _get_env_int("SCORING_ADVANCED_FEATURES_MEDIUM_THRESHOLD", 1)
+ADVANCED_HIGH = _get_env_int("SCORING_ADVANCED_FEATURES_HIGH_THRESHOLD", 3)
 
-ADVANCED_FEATURES_MEDIUM_THRESHOLD = _get_env_int(
-    "SCORING_ADVANCED_FEATURES_MEDIUM_THRESHOLD",
-    1,
-)
-ADVANCED_FEATURES_HIGH_THRESHOLD = _get_env_int(
-    "SCORING_ADVANCED_FEATURES_HIGH_THRESHOLD",
-    3,
-)
-SELF_SUFFICIENCY_MIN_MESSAGES = _get_env_int(
-    "SCORING_SELF_SUFFICIENCY_MIN_MESSAGES",
-    3,
-)
-POLITENESS_PENALTY = _get_env_float("SCORING_POLITENESS_PENALTY", -0.5)
+# Autonomy thresholds
+SELF_SUFFICIENCY_MIN_MESSAGES = _get_env_int("SCORING_SELF_SUFFICIENCY_MIN_MESSAGES", 3)
 
+# Penalty weights (behavioral signals only — no content-based penalties)
+HIGH_CANCEL_RATE_THRESHOLD = _get_env_float("SCORING_HIGH_CANCEL_RATE_THRESHOLD", 0.3)
+HIGH_CANCEL_PENALTY = _get_env_float("SCORING_HIGH_CANCEL_PENALTY", -0.5)
+HIGH_HELP_RATIO_THRESHOLD = _get_env_float("SCORING_HIGH_HELP_RATIO_THRESHOLD", 0.5)
+HIGH_HELP_PENALTY = _get_env_float("SCORING_HIGH_HELP_PENALTY", -0.5)
+
+# ML blending
 ML_BLEND_MIN_CONFIDENCE = _get_env_float("SCORING_ML_BLEND_MIN_CONFIDENCE", 0.5)
 ML_BLEND_BASE_WEIGHT = _get_env_float("SCORING_ML_BLEND_BASE_WEIGHT", 0.3)
 ML_BLEND_REASON_DELTA = _get_env_float("SCORING_ML_BLEND_REASON_DELTA", 0.03)
 
+# Level thresholds
 L2_THRESHOLD = _get_env_float("L2_THRESHOLD", 0.25)
 L3_THRESHOLD = _get_env_float("L3_THRESHOLD", 0.55)
 if L2_THRESHOLD > L3_THRESHOLD:
     L2_THRESHOLD, L3_THRESHOLD = L3_THRESHOLD, L2_THRESHOLD
 
 
-class SemanticAnalyzer:
-    _instance: "SemanticAnalyzer | None" = None
+# Semantic model — kept for ML feature extraction (ml_classifier.extract_features),
+# but NO LONGER used in rule-based scoring.  Rule scoring is now topic-agnostic.
 
-    def __new__(cls):
-        if cls._instance is None:
-            cls._instance = super().__new__(cls)
-            cls._instance._initialized = False
-        return cls._instance
+# Legacy expert reference text — only used by ml_classifier backward compat path.
+DEFAULT_EXPERT_REFERENCE_TEXT = (
+    "API JSON LLM prompt engineering architecture backend frontend database SQL "
+    "React Python machine learning optimization deployment"
+)
+EXPERT_REFERENCE_TEXT = (
+    os.getenv("SCORING_EXPERT_REFERENCE_TEXT", DEFAULT_EXPERT_REFERENCE_TEXT).strip()
+    or DEFAULT_EXPERT_REFERENCE_TEXT
+)
 
-    def __init__(self):
-        if self._initialized:
-            return
-        self.model = SentenceTransformer("paraphrase-multilingual-MiniLM-L12-v2")
-        self.reference_vector = self.model.encode([EXPERT_REFERENCE_TEXT])[0]
-        self._initialized = True
+_semantic_model = None          # SentenceTransformer instance or None
+_reference_vector = None        # Pre-encoded expert reference
+_semantic_available: bool = False
 
-    def calculate_semantic_tech_score(self, text: str) -> float:
-        user_vector = self.model.encode([text])[0]
-        similarity = cosine_similarity([user_vector], [self.reference_vector])[0][0]
-        return round(max(0.0, float(similarity)), 3)
+
+def warmup_semantic_model() -> bool:
+    """Load the SentenceTransformer model from local cache (offline-only).
+
+    Call this once during app startup (lifespan).
+    Returns True if model loaded, False if unavailable (graceful degradation).
+    The model is used by ml_classifier feature extraction, NOT by rule scoring.
+    """
+    global _semantic_model, _reference_vector, _semantic_available
+
+    if _semantic_available:
+        return True
+
+    try:
+        from sentence_transformers import SentenceTransformer
+
+        model = SentenceTransformer("paraphrase-multilingual-MiniLM-L12-v2")
+        ref_vec = model.encode([EXPERT_REFERENCE_TEXT])[0]
+
+        _semantic_model = model
+        _reference_vector = ref_vec
+        _semantic_available = True
+        logger.info(
+            "[semantic] model_loaded",
+            extra={"model": "paraphrase-multilingual-MiniLM-L12-v2", "status": "ok"},
+        )
+        return True
+    except Exception as exc:
+        _semantic_available = False
+        logger.warning(
+            "[semantic] model_unavailable — get_semantic_score will return 0.0. "
+            "To enable, download the model into the HuggingFace cache: "
+            "python -c \"from sentence_transformers import SentenceTransformer; "
+            "SentenceTransformer('paraphrase-multilingual-MiniLM-L12-v2')\"",
+            extra={"error": f"{type(exc).__name__}: {exc}"},
+        )
+        return False
 
 
 def get_semantic_score(text: str) -> float:
-    return SemanticAnalyzer().calculate_semantic_tech_score(text)
+    """Return semantic similarity to expert reference text.
+
+    Used ONLY by ml_classifier feature extraction for backward compat.
+    NOT used in rule-based scoring (rule scoring is topic-agnostic).
+    Returns 0.0 if model is not available.
+    """
+    if not _semantic_available:
+        return 0.0
+    user_vector = _semantic_model.encode([text])[0]
+    similarity = cosine_similarity([user_vector], [_reference_vector])[0][0]
+    return round(max(0.0, float(similarity)), 3)
+
+
+# Text analysis helpers (kept public for aggregation pipeline)
+
+def _count_specificity_signals(text: str) -> int:
+    """Count topic-agnostic prompt specificity signals.
+
+    These measure *prompt engineering skill* — how well the user constrains
+    and specifies the task — regardless of what domain the prompt is about.
+    A cookbook author and a software engineer both score high if they write
+    specific, well-constrained prompts.
+    """
+    signals = [
+        # Constraints: the user sets explicit boundaries
+        r"(?:не більше|не менше|максимум|мінімум|обмеж|exactly|at most|at least|no more than|limit)",
+        # Examples / few-shot: the user provides concrete examples
+        r"(?:наприклад|приклад|for example|e\.g\.|such as|like this|here is an example)",
+        # Explicit output format: the user specifies how the result should look
+        r"(?:у форматі|поверни|output|return|respond with|give me|provide|format as|as a list|as a table)",
+        # Numbered requirements / multi-step instructions
+        r"(?:^|\n)\s*\d+[\.\)]\s",
+        # Audience / context specification
+        r"(?:для\s+(?:початківців|експертів|дітей|студентів)|for\s+(?:beginners|experts|children|students)|target audience|audience is)",
+        # Tone/style constraints
+        r"(?:тон|стиль|formal|informal|concise|detailed|brief|tone|style|voice)",
+        # Negative constraints: what NOT to do
+        r"(?:не використовуй|не включай|без|уникай|don'?t\s+(?:use|include|mention)|avoid|without|exclude|do not)",
+        # Length / scope constraints
+        r"(?:коротко|детально|стисло|розгорнуто|in\s+\d+\s+(?:words|sentences|paragraphs)|briefly|in detail|summarize)",
+    ]
+    count = 0
+    lower = text.lower()
+    for pattern in signals:
+        if re.search(pattern, lower, re.IGNORECASE | re.MULTILINE):
+            count += 1
+    return count
 
 
 def has_structured_patterns(text: str) -> bool:
@@ -192,194 +265,440 @@ def _has_politeness_words(text: str) -> bool:
     return any(re.search(pattern, text, re.IGNORECASE) for pattern in patterns)
 
 
-def compute_score(request: AnalyzeRequest):
-    text = request.prompt_text.strip()
-    metrics = request.metrics or BehavioralMetrics()
-    reasons: list[str] = []
-    breakdown: list[ScoreBreakdown] = []
+# Block 1: Prompt Craftsmanship (max 3.0)
+#
+# Measures *how well the user crafts prompts* — topic-agnostic.
+# UX rationale: experienced users write longer, more specific, better-structured
+# prompts regardless of what domain they are asking about.
 
+def _score_prompt_craftsmanship(
+    text: str,
+    reasons: list[str],
+) -> tuple[float, list[ScoreBreakdown]]:
+    breakdown: list[ScoreBreakdown] = []
     length = len(text)
     word_count = len(text.split())
-    semantic_score = get_semantic_score(text)
+    specificity = _count_specificity_signals(text)
     has_structure = has_structured_patterns(text)
     has_role = _has_role_pattern(text)
     has_format = _has_format_requirement(text)
-    has_politeness = _has_politeness_words(text)
 
-    score = 0.0
+    # Length sub-score (0–0.75)
+    # UX rationale: experienced users provide more context to the AI.
+    len_pts = 0.0
+    if length > PROMPT_LENGTH_LONG:
+        len_pts = 0.75
+    elif length > PROMPT_LENGTH_MEDIUM:
+        len_pts = 0.4
+    breakdown.append(ScoreBreakdown(
+        category="PC: Prompt Length",
+        points=round(len_pts, 2), max_points=0.75,
+        detail=f"{length} chars",
+    ))
 
-    pts = 0.0
-    if length > PROMPT_LENGTH_LONG_THRESHOLD:
-        pts = 2.0
-        reasons.append(f"Long prompt ({length} chars)")
-    elif length > PROMPT_LENGTH_MEDIUM_THRESHOLD:
-        pts = 1.0
-        reasons.append(f"Medium prompt ({length} chars)")
-    score += pts
-    breakdown.append(
-        ScoreBreakdown(
-            category="Prompt Length",
-            points=pts,
-            max_points=2.0,
-            detail=f"{length} characters",
-        )
-    )
-
-    pts = 0.0
-    if word_count > WORD_COUNT_LONG_THRESHOLD:
-        pts = 1.5
+    # Word count sub-score (0–0.5)
+    # UX rationale: detailed prompts correlate with intentional AI usage.
+    wc_pts = 0.0
+    if word_count > WORD_COUNT_LONG:
+        wc_pts = 0.5
         reasons.append(f"Detailed prompt ({word_count} words)")
-    elif word_count > WORD_COUNT_MEDIUM_THRESHOLD:
-        pts = 0.5
-    score += pts
-    breakdown.append(
-        ScoreBreakdown(
-            category="Word Count",
-            points=pts,
-            max_points=1.5,
-            detail=f"{word_count} words",
-        )
-    )
+    elif word_count > WORD_COUNT_MEDIUM:
+        wc_pts = 0.25
+    breakdown.append(ScoreBreakdown(
+        category="PC: Word Count",
+        points=round(wc_pts, 2), max_points=0.5,
+        detail=f"{word_count} words",
+    ))
 
-    pts = 0.0
-    if semantic_score >= SEMANTIC_HIGH_THRESHOLD:
-        pts = 3.0
-        reasons.append(f"High semantic similarity ({semantic_score:.3f})")
-    elif semantic_score >= SEMANTIC_MEDIUM_THRESHOLD:
-        pts = 1.5
-        reasons.append(f"Moderate semantic similarity ({semantic_score:.3f})")
-    elif semantic_score >= SEMANTIC_LOW_THRESHOLD:
-        pts = 0.5
-    score += pts
-    breakdown.append(
-        ScoreBreakdown(
-            category="Technical Terms",
-            points=pts,
-            max_points=3.0,
-            detail=f"semantic similarity score: {semantic_score:.3f}",
-        )
-    )
+    # Prompt specificity sub-score (0–1.0) — REPLACES semantic similarity.
+    # UX rationale: experienced users constrain their prompts with explicit
+    # requirements (examples, output format, audience, constraints, negatives).
+    # This is domain-agnostic: a chef and a coder both score high if they
+    # write "give me 5 recipes for beginners, no more than 30 min each,
+    # in a numbered list" vs just "recipes".
+    spec_pts = 0.0
+    if specificity >= 4:
+        spec_pts = 1.0
+        reasons.append(f"Highly specific prompt ({specificity} constraint signals)")
+    elif specificity >= 2:
+        spec_pts = 0.5
+        reasons.append(f"Moderately specific prompt ({specificity} constraint signals)")
+    elif specificity >= 1:
+        spec_pts = 0.2
+    breakdown.append(ScoreBreakdown(
+        category="PC: Prompt Specificity",
+        points=round(spec_pts, 2), max_points=1.0,
+        detail=f"{specificity} specificity signals",
+    ))
 
-    pts = 0.0
-    detail_parts: list[str] = []
+    # Structure sub-score (0–0.75)
+    # UX rationale: using structured patterns, role assignment, or format
+    # requirements shows the user understands how to get better results from AI.
+    struct_pts = 0.0
+    struct_parts: list[str] = []
     if has_structure:
-        pts += 1.0
-        detail_parts.append("structured patterns")
+        struct_pts += 0.25
+        struct_parts.append("structured patterns")
     if has_role:
-        pts += 1.0
-        detail_parts.append("role assignment")
+        struct_pts += 0.25
+        struct_parts.append("role assignment")
     if has_format:
-        pts += 1.0
-        detail_parts.append("format requirement")
-    if detail_parts:
-        reasons.append(f"Structure & Context detected: {', '.join(detail_parts)}")
-    score += pts
-    breakdown.append(
-        ScoreBreakdown(
-            category="Structure & Context",
-            points=pts,
-            max_points=3.0,
-            detail=", ".join(detail_parts) if detail_parts else "None",
-        )
-    )
+        struct_pts += 0.25
+        struct_parts.append("format requirement")
+    if struct_parts:
+        reasons.append(f"Structure detected: {', '.join(struct_parts)}")
+    breakdown.append(ScoreBreakdown(
+        category="PC: Structure & Context",
+        points=round(struct_pts, 2), max_points=0.75,
+        detail=", ".join(struct_parts) if struct_parts else "None",
+    ))
 
+    total = min(len_pts + wc_pts + spec_pts + struct_pts, BLOCK_MAX)
+    return round(total, 2), breakdown
+
+
+# Block 2: Tool Mastery (max 3.0)
+
+def _score_tool_mastery(
+    metrics: BehavioralMetrics,
+    user_features: dict,
+    reasons: list[str],
+) -> tuple[float, list[ScoreBreakdown]]:
+    breakdown: list[ScoreBreakdown] = []
+    advanced = getattr(metrics, "used_advanced_features_count", 0) or 0
+
+    # Session advanced features (0–1.0)
+    adv_pts = 0.0
+    if advanced >= ADVANCED_HIGH:
+        adv_pts = 1.0
+        reasons.append(f"Active advanced features ({advanced} actions)")
+    elif advanced >= ADVANCED_MEDIUM:
+        adv_pts = 0.5
+        reasons.append(f"Some advanced features ({advanced} actions)")
+    breakdown.append(ScoreBreakdown(
+        category="TM: Advanced Features",
+        points=round(adv_pts, 2), max_points=1.0,
+        detail=f"{advanced} session actions",
+    ))
+
+    # Specific tool flags (0–1.0)
+    tool_pts = 0.0
+    tool_parts: list[str] = []
+    if metrics.used_system_prompt:
+        tool_pts += 0.35
+        tool_parts.append("system prompt")
+    if metrics.used_variables:
+        tool_pts += 0.35
+        tool_parts.append("variables")
+    if metrics.changed_model:
+        tool_pts += 0.15
+        tool_parts.append("model change")
+    if metrics.changed_temperature:
+        tool_pts += 0.15
+        tool_parts.append("temperature change")
+    tool_pts = min(tool_pts, 1.0)
+    if tool_parts:
+        reasons.append(f"Tools used: {', '.join(tool_parts)}")
+    breakdown.append(ScoreBreakdown(
+        category="TM: Tool Usage",
+        points=round(tool_pts, 2), max_points=1.0,
+        detail=", ".join(tool_parts) if tool_parts else "None",
+    ))
+
+    # Rolling advanced adoption from user profile (0–1.0)
+    rolling_adv = user_features.get("advanced_actions_per_session", 0.0)
+    rolling_pts = 0.0
+    if rolling_adv >= 3.0:
+        rolling_pts = 1.0
+    elif rolling_adv >= 1.0:
+        rolling_pts = 0.5
+    elif rolling_adv >= 0.3:
+        rolling_pts = 0.2
+    breakdown.append(ScoreBreakdown(
+        category="TM: Rolling Adoption",
+        points=round(rolling_pts, 2), max_points=1.0,
+        detail=f"{rolling_adv:.1f} advanced actions/session (rolling)",
+    ))
+
+    total = min(adv_pts + tool_pts + rolling_pts, BLOCK_MAX)
+    return round(total, 2), breakdown
+
+
+# Block 3: Autonomy (max 3.0)
+
+def _score_autonomy(
+    metrics: BehavioralMetrics,
+    user_features: dict,
+    reasons: list[str],
+) -> tuple[float, list[ScoreBreakdown]]:
+    breakdown: list[ScoreBreakdown] = []
+
+    # Self-sufficiency: no tooltips after enough messages (0–1.0)
+    suf_pts = 0.0
+    if metrics.tooltip_click_count == 0 and metrics.session_message_count > SELF_SUFFICIENCY_MIN_MESSAGES:
+        suf_pts = 1.0
+        reasons.append("Self-sufficient (no help needed)")
+    elif metrics.tooltip_click_count <= 1 and metrics.session_message_count > SELF_SUFFICIENCY_MIN_MESSAGES:
+        suf_pts = 0.5
+    breakdown.append(ScoreBreakdown(
+        category="AU: Self-sufficiency",
+        points=round(suf_pts, 2), max_points=1.0,
+        detail=f"{metrics.tooltip_click_count} tooltip opens, {metrics.session_message_count} messages",
+    ))
+
+    # Low cancel rate (0–1.0)
+    cancel_pts = 0.0
+    cancel_rate = user_features.get("cancel_rate", 0.0)
+    if cancel_rate == 0.0 and metrics.session_message_count >= 2:
+        cancel_pts = 1.0
+    elif cancel_rate < 0.1:
+        cancel_pts = 0.7
+    elif cancel_rate < HIGH_CANCEL_RATE_THRESHOLD:
+        cancel_pts = 0.3
+    breakdown.append(ScoreBreakdown(
+        category="AU: Low Cancel Rate",
+        points=round(cancel_pts, 2), max_points=1.0,
+        detail=f"cancel rate: {cancel_rate:.2f}",
+    ))
+
+    # Low help ratio from user aggregates (0–1.0)
+    help_pts = 0.0
+    help_ratio = user_features.get("help_ratio", 0.0)
+    if help_ratio == 0.0 and user_features.get("total_prompts", 0) >= 3:
+        help_pts = 1.0
+    elif help_ratio < 0.1:
+        help_pts = 0.7
+    elif help_ratio < HIGH_HELP_RATIO_THRESHOLD:
+        help_pts = 0.3
+    breakdown.append(ScoreBreakdown(
+        category="AU: Low Help Ratio",
+        points=round(help_pts, 2), max_points=1.0,
+        detail=f"help ratio: {help_ratio:.3f}",
+    ))
+
+    total = min(suf_pts + cancel_pts + help_pts, BLOCK_MAX)
+    return round(total, 2), breakdown
+
+
+# Block 4: Efficiency (max 3.0)
+
+def _score_efficiency(
+    metrics: BehavioralMetrics,
+    reasons: list[str],
+) -> tuple[float, list[ScoreBreakdown]]:
+    breakdown: list[ScoreBreakdown] = []
+
+    # Typing speed (0–1.0)
     effective_speed = min(metrics.chars_per_second, TYPING_SPEED_CAP)
-    pts = 1.0 if effective_speed > TYPING_SPEED_THRESHOLD else 0.0
-    if pts > 0:
+    spd_pts = 0.0
+    if effective_speed > TYPING_SPEED_THRESHOLD:
+        spd_pts = 1.0
         reasons.append("Fast typing speed")
-    score += pts
-    breakdown.append(
-        ScoreBreakdown(
-            category="Typing Speed",
-            points=pts,
-            max_points=1.0,
-            detail=f"{metrics.chars_per_second:.1f} chars/sec (capped at {TYPING_SPEED_CAP:g})",
-        )
-    )
+    elif effective_speed > TYPING_SPEED_THRESHOLD * 0.6:
+        spd_pts = 0.4
+    breakdown.append(ScoreBreakdown(
+        category="EF: Typing Speed",
+        points=round(spd_pts, 2), max_points=1.0,
+        detail=f"{metrics.chars_per_second:.1f} chars/sec (cap {TYPING_SPEED_CAP:g})",
+    ))
 
-    pts = 0.0
-    if metrics.session_message_count > SESSION_ACTIVITY_HIGH_THRESHOLD:
-        pts = 1.0
-        reasons.append("Experienced session (many messages)")
-    elif metrics.session_message_count > SESSION_ACTIVITY_MEDIUM_THRESHOLD:
-        pts = 0.5
-    score += pts
-    breakdown.append(
-        ScoreBreakdown(
-            category="Session Activity",
-            points=pts,
-            max_points=1.0,
-            detail=f"{metrics.session_message_count} messages",
-        )
-    )
+    # Session activity (0–1.0)
+    act_pts = 0.0
+    if metrics.session_message_count > SESSION_ACTIVITY_HIGH:
+        act_pts = 1.0
+        reasons.append(f"Experienced session ({metrics.session_message_count} messages)")
+    elif metrics.session_message_count > SESSION_ACTIVITY_MEDIUM:
+        act_pts = 0.5
+    breakdown.append(ScoreBreakdown(
+        category="EF: Session Activity",
+        points=round(act_pts, 2), max_points=1.0,
+        detail=f"{metrics.session_message_count} messages",
+    ))
 
-    pts = 1.0 if metrics.avg_prompt_length > AVG_PROMPT_LENGTH_THRESHOLD else 0.0
-    if pts > 0:
+    # Consistent prompt length (0–1.0)
+    avg_pts = 0.0
+    if metrics.avg_prompt_length > AVG_PROMPT_LENGTH_THRESHOLD:
+        avg_pts = 1.0
         reasons.append("Consistently long prompts")
-    score += pts
-    breakdown.append(
-        ScoreBreakdown(
-            category="Avg Prompt Length",
-            points=pts,
-            max_points=1.0,
-            detail=f"{metrics.avg_prompt_length:.0f} chars avg",
-        )
-    )
+    elif metrics.avg_prompt_length > AVG_PROMPT_LENGTH_THRESHOLD * 0.5:
+        avg_pts = 0.4
+    breakdown.append(ScoreBreakdown(
+        category="EF: Avg Prompt Length",
+        points=round(avg_pts, 2), max_points=1.0,
+        detail=f"{metrics.avg_prompt_length:.0f} chars avg",
+    ))
 
-    advanced_features = getattr(metrics, "used_advanced_features_count", 0) or 0
-    pts = 0.0
-    if advanced_features >= ADVANCED_FEATURES_HIGH_THRESHOLD:
-        pts = 2.0
-        reasons.append(
-            f"Active use of advanced features ({advanced_features} actions)"
-        )
-    elif advanced_features >= ADVANCED_FEATURES_MEDIUM_THRESHOLD:
-        pts = 1.0
-        reasons.append(
-            f"Some advanced features used ({advanced_features} actions)"
-        )
-    score += pts
-    breakdown.append(
-        ScoreBreakdown(
-            category="Advanced Features",
-            points=pts,
-            max_points=2.0,
-            detail=f"{advanced_features} advanced actions",
-        )
-    )
+    total = min(spd_pts + act_pts + avg_pts, BLOCK_MAX)
+    return round(total, 2), breakdown
 
-    pts = (
-        0.5
-        if metrics.tooltip_click_count == 0
-        and metrics.session_message_count > SELF_SUFFICIENCY_MIN_MESSAGES
-        else 0.0
-    )
-    score += pts
-    breakdown.append(
-        ScoreBreakdown(
-            category="Self-sufficiency",
-            points=pts,
-            max_points=0.5,
-            detail="No help needed" if pts > 0 else "Used hints",
-        )
-    )
 
-    if has_politeness:
-        score = max(0.0, score + POLITENESS_PENALTY)
-        reasons.append(
-            f"Conversational/Polite tone detected ({POLITENESS_PENALTY:+.1f} pts)"
-        )
-        breakdown.append(
-            ScoreBreakdown(
-                category="Politeness Penalty",
-                points=POLITENESS_PENALTY,
-                max_points=0.0,
-                detail="Polite/conversational phrasing found",
-            )
-        )
+# Block 5: Stability (max 3.0) — from rolling user aggregates
 
+def _score_stability(
+    user_features: dict,
+    reasons: list[str],
+) -> tuple[float, list[ScoreBreakdown]]:
+    breakdown: list[ScoreBreakdown] = []
+    sessions_count = user_features.get("sessions_count", 0)
+
+    # Structured prompt consistency (0–1.0)
+    struct_ratio = user_features.get("structured_prompt_ratio_rolling", 0.0)
+    struct_pts = 0.0
+    if struct_ratio >= 0.5:
+        struct_pts = 1.0
+        reasons.append(f"Consistently structured prompts ({struct_ratio:.0%})")
+    elif struct_ratio >= 0.2:
+        struct_pts = 0.5
+    elif struct_ratio >= 0.05:
+        struct_pts = 0.2
+    breakdown.append(ScoreBreakdown(
+        category="ST: Structured Prompts",
+        points=round(struct_pts, 2), max_points=1.0,
+        detail=f"{struct_ratio:.1%} structured (rolling)",
+    ))
+
+    # Refine accept rate — high means user acts on AI suggestions (0–1.0)
+    accept_rate = user_features.get("refine_accept_rate")
+    accept_pts = 0.0
+    if accept_rate is not None:
+        if accept_rate >= 0.7:
+            accept_pts = 1.0
+        elif accept_rate >= 0.4:
+            accept_pts = 0.5
+        elif accept_rate >= 0.1:
+            accept_pts = 0.2
+    breakdown.append(ScoreBreakdown(
+        category="ST: Refine Accept Rate",
+        points=round(accept_pts, 2), max_points=1.0,
+        detail=f"{accept_rate:.1%} accept rate" if accept_rate is not None else "No refine data",
+    ))
+
+    # Session experience depth — more sessions = more stable signal (0–1.0)
+    depth_pts = 0.0
+    if sessions_count >= 8:
+        depth_pts = 1.0
+    elif sessions_count >= 4:
+        depth_pts = 0.6
+    elif sessions_count >= 2:
+        depth_pts = 0.3
+    breakdown.append(ScoreBreakdown(
+        category="ST: Session Depth",
+        points=round(depth_pts, 2), max_points=1.0,
+        detail=f"{sessions_count} sessions tracked",
+    ))
+
+    total = min(struct_pts + accept_pts + depth_pts, BLOCK_MAX)
+    return round(total, 2), breakdown
+
+
+# Penalties (reduce total score)
+#
+# Only behavioral signals — no content-based penalties.
+# Politeness penalty was removed: being polite is not an indicator of
+# lower experience.  An expert can write "please format this as JSON".
+
+def _apply_penalties(
+    user_features: dict,
+    score: float,
+    reasons: list[str],
+) -> tuple[float, list[ScoreBreakdown]]:
+    penalties: list[ScoreBreakdown] = []
+
+    # High cancel rate penalty
+    cancel_rate = user_features.get("cancel_rate", 0.0)
+    if cancel_rate >= HIGH_CANCEL_RATE_THRESHOLD:
+        score = max(0.0, score + HIGH_CANCEL_PENALTY)
+        reasons.append(f"High cancel rate ({cancel_rate:.0%})")
+        penalties.append(ScoreBreakdown(
+            category="Penalty: High Cancel Rate",
+            points=HIGH_CANCEL_PENALTY, max_points=0.0,
+            detail=f"cancel rate {cancel_rate:.1%} >= {HIGH_CANCEL_RATE_THRESHOLD:.0%}",
+        ))
+
+    # High help ratio penalty
+    help_ratio = user_features.get("help_ratio", 0.0)
+    if help_ratio >= HIGH_HELP_RATIO_THRESHOLD:
+        score = max(0.0, score + HIGH_HELP_PENALTY)
+        reasons.append(f"High help dependency ({help_ratio:.1%})")
+        penalties.append(ScoreBreakdown(
+            category="Penalty: High Help Ratio",
+            points=HIGH_HELP_PENALTY, max_points=0.0,
+            detail=f"help ratio {help_ratio:.1%} >= {HIGH_HELP_RATIO_THRESHOLD:.0%}",
+        ))
+
+    return score, penalties
+
+
+# Main entry point
+
+def compute_score(
+    request: AnalyzeRequest,
+    user_features: dict | None = None,
+):
+    """
+    Compute user level score using Rule Engine V2.
+
+    Args:
+        request: The analyze request with prompt text and session metrics.
+        user_features: Rolling user-level aggregates from profile_features_json.
+                       If None, Stability/Autonomy blocks get minimal scores.
+
+    Returns:
+        Tuple of (level, confidence, reasons, score, normalized, breakdown, ml_info).
+    """
+    text = request.prompt_text.strip()
+    metrics = request.metrics or BehavioralMetrics()
+    uf = user_features or {}
+    reasons: list[str] = []
+    all_breakdown: list[ScoreBreakdown] = []
+
+    # Score each block
+    pc_score, pc_bd = _score_prompt_craftsmanship(text, reasons)
+    tm_score, tm_bd = _score_tool_mastery(metrics, uf, reasons)
+    au_score, au_bd = _score_autonomy(metrics, uf, reasons)
+    ef_score, ef_bd = _score_efficiency(metrics, reasons)
+    st_score, st_bd = _score_stability(uf, reasons)
+
+    # Block summary entries
+    all_breakdown.append(ScoreBreakdown(
+        category="Prompt Craftsmanship", points=pc_score, max_points=BLOCK_MAX,
+        detail=f"Block total",
+    ))
+    all_breakdown.extend(pc_bd)
+    all_breakdown.append(ScoreBreakdown(
+        category="Tool Mastery", points=tm_score, max_points=BLOCK_MAX,
+        detail=f"Block total",
+    ))
+    all_breakdown.extend(tm_bd)
+    all_breakdown.append(ScoreBreakdown(
+        category="Autonomy", points=au_score, max_points=BLOCK_MAX,
+        detail=f"Block total",
+    ))
+    all_breakdown.extend(au_bd)
+    all_breakdown.append(ScoreBreakdown(
+        category="Efficiency", points=ef_score, max_points=BLOCK_MAX,
+        detail=f"Block total",
+    ))
+    all_breakdown.extend(ef_bd)
+    all_breakdown.append(ScoreBreakdown(
+        category="Stability", points=st_score, max_points=BLOCK_MAX,
+        detail=f"Block total",
+    ))
+    all_breakdown.extend(st_bd)
+
+    raw_score = pc_score + tm_score + au_score + ef_score + st_score
+
+    # Apply penalties (behavioral only — no content-based penalties)
+    score, penalty_bd = _apply_penalties(uf, raw_score, reasons)
+    all_breakdown.extend(penalty_bd)
+
+    # Normalize and determine level
     normalized = min(score / MAX_SCORE, 1.0)
-    confidence = 1 - math.exp(-score / 3)
+
+    # Confidence: combines data richness with score certainty
+    data_depth = min(uf.get("sessions_count", 0) / 5, 1.0)
+    score_certainty = 1 - math.exp(-score / 3)
+    confidence = round(0.4 * data_depth + 0.6 * score_certainty, 2)
 
     if normalized >= L3_THRESHOLD:
         level = 3
@@ -388,15 +707,12 @@ def compute_score(request: AnalyzeRequest):
     else:
         level = 1
 
+    # ML blending
     metrics_dict = {
         "chars_per_second": metrics.chars_per_second,
         "session_message_count": metrics.session_message_count,
         "avg_prompt_length": metrics.avg_prompt_length,
-        "used_advanced_features_count": getattr(
-            metrics,
-            "used_advanced_features_count",
-            0,
-        ),
+        "used_advanced_features_count": getattr(metrics, "used_advanced_features_count", 0),
         "tooltip_click_count": getattr(metrics, "tooltip_click_count", 0),
     }
     ml_level, ml_conf = ml_classifier.ml_predict(
@@ -405,14 +721,26 @@ def compute_score(request: AnalyzeRequest):
         has_structure_fn=has_structured_patterns,
     )
 
+    ml_info: dict = {
+        "ml_level": ml_level,
+        "ml_confidence": round(ml_conf, 4),
+        "ml_score": None,
+        "ml_blended": False,
+    }
+
     if ml_conf > ML_BLEND_MIN_CONFIDENCE:
         ml_normalized = (ml_level - 1) / 2.0
         ml_weight = ML_BLEND_BASE_WEIGHT * ml_conf
         blended = normalized * (1 - ml_weight) + ml_normalized * ml_weight
         if abs(blended - normalized) > ML_BLEND_REASON_DELTA:
-            reasons.append(f"ML adjustment: L{ml_level} suggestion ({ml_conf:.0%} confidence)")
+            reasons.append(f"ML adjustment: L{ml_level} ({ml_conf:.0%} confidence)")
+        ml_info["ml_score"] = round(blended * MAX_SCORE, 4)
+        ml_info["ml_blended"] = True
         normalized = blended
         score = round(blended * MAX_SCORE, 2)
+        # Recalculate confidence after blending
+        score_certainty = 1 - math.exp(-score / 3)
+        confidence = round(0.4 * data_depth + 0.6 * score_certainty, 2)
         if normalized >= L3_THRESHOLD:
             level = 3
         elif normalized >= L2_THRESHOLD:
@@ -421,13 +749,14 @@ def compute_score(request: AnalyzeRequest):
             level = 1
 
     if not reasons:
-        reasons.append("Simple short prompt - Guided mode recommended")
+        reasons.append("Simple short prompt — Guided mode recommended")
 
     return (
         level,
-        round(confidence, 2),
+        confidence,
         reasons,
         round(score, 2),
         round(normalized, 4),
-        breakdown,
+        all_breakdown,
+        ml_info,
     )

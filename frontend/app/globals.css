@@ -976,6 +976,45 @@
   border-radius: 4px;
 }
 
+/* Snippet — terminal command (matches code block style) */
+.snippet {
+  display: flex;
+  align-items: center;
+  height: 44px;
+  padding: 0 6px 0 16px;
+  border-radius: 6px;
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 13px;
+  font-weight: 500;
+  background: var(--ds-background-100);
+  color: var(--ds-gray-1000);
+  border: 1px solid var(--ds-gray-alpha-400);
+}
+.snippet-prompt {
+  margin-right: 10px;
+  color: var(--ds-gray-1000);
+  user-select: none;
+  flex-shrink: 0;
+}
+.snippet-text {
+  flex: 1;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
+}
+.snippet-text::-webkit-scrollbar { height: 4px; }
+.snippet-text::-webkit-scrollbar-thumb {
+  background: var(--ds-gray-alpha-200);
+  border-radius: 4px;
+}
+.snippet-comment {
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 13px;
+  color: var(--ds-gray-700);
+  padding: 0 16px;
+}
+
 /* Code Block Line Numbers Hover */
 .react-syntax-highlighter-line-number {
   transition: color 0.15s ease;

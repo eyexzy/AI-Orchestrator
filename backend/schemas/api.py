@@ -31,6 +31,8 @@ class AnalyzeRequest(BaseModel):
     prompt_text: str = Field(..., max_length=10000)
     metrics:     BehavioralMetrics | None = None
     session_id:  str = "unknown"
+    # chat_id is the persistent chat thread; session_id is one page-visit UUID.
+    chat_id:     Optional[str] = None
     user_email:  str = "anonymous"
 
 
@@ -203,11 +205,157 @@ class ProfilePreferencesUpdate(BaseModel):
     language:             Optional[str] = None   # "en" "uk"
     manual_level_override: Optional[int] = Field(default=None, ge=1, le=3)
     hidden_templates:     Optional[list[str]] = None
+    self_assessed_level:  Optional[int] = Field(default=None, ge=1, le=3)
+    onboarding_completed: Optional[bool] = None
 
 
 class ProfilePreferencesResponse(BaseModel):
     theme:                str
     language:             str
     current_level:        int = Field(default=1, ge=1, le=3)
+    initial_level:        int = Field(default=1, ge=1, le=3)
+    self_assessed_level:  Optional[int] = None
     manual_level_override: Optional[int] = None
+    onboarding_completed: bool = False
     hidden_templates:     list[str] = Field(default_factory=list)
+
+
+# User event schemas (Layer 1)
+
+class UserEventCreate(BaseModel):
+    session_id:         str | None = None
+    chat_id:            str | None = None
+    event_type:         str = Field(..., max_length=64)
+    event_context:      dict = Field(default_factory=dict)
+    payload:            dict = Field(default_factory=dict)
+
+
+class UserEventBatchCreate(BaseModel):
+    events:             list[UserEventCreate] = Field(..., min_length=1, max_length=50)
+
+
+class UserEventBatchResponse(BaseModel):
+    ok:                 bool = True
+    saved:              int = 0
+
+
+class UserEventResponse(BaseModel):
+    id:                 int
+    user_email:         str
+    session_id:         str | None = None
+    chat_id:            str | None = None
+    event_type:         str
+    event_context:      dict = Field(default_factory=dict)
+    payload:            dict = Field(default_factory=dict)
+    created_at:         datetime | None = None
+
+
+# Session metrics schemas (Layer 2)
+
+class SessionMetricsResponse(BaseModel):
+    id:                       int
+    user_email:               str
+    session_id:               str | None = None
+    chat_id:                  str | None = None
+    prompts_count:            int = 0
+    avg_prompt_length:        float = 0.0
+    median_prompt_length:     float = 0.0
+    structured_prompt_ratio:  float = 0.0
+    tooltip_open_count:       int = 0
+    refine_accept_count:      int = 0
+    refine_reject_count:      int = 0
+    advanced_actions_count:   int = 0
+    cancel_actions_count:     int = 0
+    backtracking_count:       int = 0
+    session_duration_seconds: float = 0.0
+    task_success_proxy:       float = 0.0
+    created_at:               datetime | None = None
+
+
+# User experience profile schemas (Layer 3)
+
+class UserExperienceProfileResponse(BaseModel):
+    user_email:            str
+    self_assessed_level:   int | None = None
+    initial_level:         int = 1
+    current_level:         int = 1
+    suggested_level_last:  int | None = None
+    rule_score_last:       float | None = None
+    ml_score_last:         float | None = None
+    confidence_last:       float | None = None
+    manual_level_override: int | None = None
+    profile_features:      dict = Field(default_factory=dict)
+    level_history:         list = Field(default_factory=list)
+    updated_at:            datetime | None = None
+
+
+# Adaptation feedback schemas
+
+class AdaptationFeedbackCreate(BaseModel):
+    session_id:               str | None = None
+    chat_id:                  str | None = None
+    ui_level_at_time:         int | None = Field(default=None, ge=1, le=3)
+    suggested_level_at_time:  int | None = Field(default=None, ge=1, le=3)
+    question_type:            str = Field(..., max_length=64)
+    answer_value:             str = Field(..., max_length=255)
+    feature_snapshot:         dict = Field(default_factory=dict)
+
+
+class AdaptationFeedbackResponse(BaseModel):
+    id:                       int
+    user_email:               str
+    session_id:               str | None = None
+    chat_id:                  str | None = None
+    ui_level_at_time:         int | None = None
+    suggested_level_at_time:  int | None = None
+    question_type:            str
+    answer_value:             str
+    feature_snapshot:         dict = Field(default_factory=dict)
+    created_at:               datetime | None = None
+
+
+# Adaptation decision schemas (Layer 6)
+
+class AdaptationDecisionResponse(BaseModel):
+    id:                     int
+    user_email:             str
+    session_id:             str | None = None
+    chat_id:                str | None = None
+    rule_score:             float | None = None
+    rule_level:             int | None = None
+    ml_score:               float | None = None
+    ml_level:               int | None = None
+    ml_confidence:          float | None = None
+    final_level:            int
+    confidence:             float | None = None
+    transition_applied:     bool = False
+    transition_reason:      dict = Field(default_factory=dict)
+    rule_breakdown:         dict = Field(default_factory=dict)
+    created_at:             datetime | None = None
+
+
+# Dashboard schemas (user-scoped)
+
+class DashboardDecisionItem(BaseModel):
+    rule_score:         float | None = None
+    rule_level:         int | None = None
+    ml_score:           float | None = None
+    ml_level:           int | None = None
+    final_level:        int
+    confidence:         float | None = None
+    transition_reason:  dict = Field(default_factory=dict)
+    created_at:         datetime | None = None
+
+
+class DashboardResponse(BaseModel):
+    current_level:        int = 1
+    suggested_level:      int | None = None
+    self_assessed_level:  int | None = None
+    initial_level:        int = 1
+    rule_score:           float | None = None
+    ml_score:             float | None = None
+    confidence:           float | None = None
+    profile_features:     dict = Field(default_factory=dict)
+    level_history:        list[int] = Field(default_factory=list)
+    recent_decisions:     list[DashboardDecisionItem] = Field(default_factory=list)
+    updated_at:           datetime | None = None

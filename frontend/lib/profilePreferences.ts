@@ -4,7 +4,10 @@ export interface ProfilePreferences {
   theme: string;
   language: string;
   current_level: 1 | 2 | 3;
+  initial_level: 1 | 2 | 3;
+  self_assessed_level: 1 | 2 | 3 | null;
   manual_level_override: 1 | 2 | 3 | null;
+  onboarding_completed: boolean;
   hidden_templates: string[];
 }
 

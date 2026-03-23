@@ -16,6 +16,8 @@ import { L1Chips } from "./input/L1Chips";
 import { L3StrategyChips } from "./input/L3StrategyChips";
 import { useTranslation } from "@/lib/store/i18nStore";
 import { Button } from "@/components/ui/button";
+import { flushEvents, trackEvent } from "@/lib/eventTracker";
+import { useMicroFeedbackStore } from "@/lib/store/microFeedbackStore";
 
 const MIN_WORDS = 5;
 const VARIABLE_SYNC_DEBOUNCE_MS = 120;
@@ -107,8 +109,11 @@ export function MainInput({
   const lastKeystrokeTimeRef = useRef<number | null>(null);
   const activeTypingDurationMsRef = useRef<number>(0);
   const typingCharsRef = useRef<number>(0);
+  const prevDraftLenRef = useRef<number>(0);
 
   const _dispatch = useCallback(async (text: string) => {
+    trackEvent("prompt_submitted", { length: text.length });
+    await flushEvents();
     setDraft("");
     onVariableNamesChange?.([]);
     setModalOpen(false);
@@ -145,6 +150,7 @@ export function MainInput({
       lastKeystrokeTimeRef.current = null;
       activeTypingDurationMsRef.current = 0;
       typingCharsRef.current = 0;
+      prevDraftLenRef.current = 0;
     }
   }, [sendMessage, analyzePrompt, userEmail, chatParams, onRawResponse, onVariableNamesChange]);
 
@@ -160,6 +166,7 @@ export function MainInput({
       controller.abort();
     }, REQUEST_TIMEOUT_MS);
 
+    trackEvent("refine_opened", { prompt_length: text.length });
     setOriginalPrompt(text);
     setIsRefining(true);
     setImprovedPrompt("");
@@ -250,10 +257,12 @@ export function MainInput({
   }, [draft, isSending, isRefining, externalDisabled, _callRefine]);
 
   const handleCoT = useCallback(() => {
+    trackEvent("system_prompt_edited", { strategy: "cot" });
     onAppendToSystem?.(t("input.strategy.cot"));
   }, [onAppendToSystem, t]);
 
   const handleStepBack = useCallback(() => {
+    trackEvent("system_prompt_edited", { strategy: "step_back" });
     const prefix = t("input.strategy.stepBack");
     setDraft((prev) => (prev.startsWith(prefix) ? prev : prefix + prev));
   }, [t]);
@@ -298,9 +307,9 @@ export function MainInput({
           originalPrompt={originalPrompt}
           improvedPrompt={improvedPrompt}
           clarifyingQuestions={clarifyingQuestions}
-          onSendOriginal={() => _dispatch(originalPrompt)}
-          onSendImproved={() => _dispatch(improvedPrompt || originalPrompt)}
-          onCancel={() => { trackCancelAction(); setModalOpen(false); }}
+          onSendOriginal={() => { trackEvent("refine_rejected"); _dispatch(originalPrompt); }}
+          onSendImproved={() => { trackEvent("refine_accepted"); _dispatch(improvedPrompt || originalPrompt); useMicroFeedbackStore.getState().tryTrigger("scenario_complete"); }}
+          onCancel={() => { trackEvent("cancel_action", { context: "refine_modal" }); trackCancelAction(); setModalOpen(false); }}
         />
       )}
 
@@ -308,12 +317,19 @@ export function MainInput({
         value={draft}
         onChange={(v) => {
           const now = Date.now();
+          // Emit prompt_started on first keystroke of a new message
+          if (lastKeystrokeTimeRef.current === null && v.length > 0) {
+            trackEvent("prompt_started");
+          }
           if (lastKeystrokeTimeRef.current !== null) {
             const delta = now - lastKeystrokeTimeRef.current;
             if (delta < 3000) activeTypingDurationMsRef.current += delta;
           }
           lastKeystrokeTimeRef.current = now;
-          typingCharsRef.current++;
+          // Count actual character delta, not just onChange count
+          const charDelta = Math.abs(v.length - prevDraftLenRef.current);
+          typingCharsRef.current += charDelta;
+          prevDraftLenRef.current = v.length;
           setDraft(v);
         }}
         onSend={() => handleSend()}
@@ -331,7 +347,7 @@ export function MainInput({
                   <L1Chips
                     input={draft}
                     setInput={setDraft}
-                    onSendSuggestion={(text) => { trackSuggestionClick(); handleSend(text); }}
+                    onSendSuggestion={(text) => { trackEvent("suggestion_clicked", { text_length: text.length }); trackSuggestionClick(); handleSend(text); }}
                   />
                 )}
                 {level === 3 && onAppendToSystem && (

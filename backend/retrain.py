@@ -1,6 +1,8 @@
 """
 CLI script and reusable function for retraining the ML classifier.
 Supports train/test split, cross-validation, and full evaluation metrics.
+
+Uses dataset_builder for tiered label collection (gold/silver/bronze).
 """
 import json
 import sys
@@ -31,7 +33,7 @@ logger = logging.getLogger("ml-classifier")
 
 
 def _load_data_from_rows(rows: list) -> tuple[list[str], np.ndarray, np.ndarray]:
-    """Extract texts, behavioral features, and labels from DB rows."""
+    """Extract texts, behavioral features, and labels from legacy MLFeedback rows."""
     texts = [r.prompt_text or "" for r in rows]
     behavioral_X = np.array([
         [r.prompt_length, r.word_count, r.has_structure,
@@ -49,6 +51,7 @@ def train_and_evaluate(
     y: np.ndarray,
     model_type: ModelType = "LogisticRegression",
     model_params: dict | None = None,
+    sample_weight: np.ndarray | None = None,
     test_size: float = 0.2,
     cv_folds: int = 5,
 ) -> dict:
@@ -78,9 +81,10 @@ def train_and_evaluate(
         test_texts = [texts[i] for i in test_idx]
         train_beh, test_beh = behavioral_X[train_idx], behavioral_X[test_idx]
         train_y, test_y = y[train_idx], y[test_idx]
+        train_w = sample_weight[train_idx] if sample_weight is not None else None
 
-        # Train
-        clf.fit(train_texts, train_beh, train_y)
+        # Train with sample weights
+        clf.fit(train_texts, train_beh, train_y, sample_weight=train_w)
 
         # Cross-validation on training set — adapt folds to data size
         min_train_class = min((train_y == c).sum() for c in set(train_y))
@@ -106,7 +110,7 @@ def train_and_evaluate(
         cm = confusion_matrix(test_y, test_pred, labels=[1, 2, 3]).tolist()
     else:
         # Not enough data for proper split — train on all, no test metrics
-        clf.fit(texts, behavioral_X, y)
+        clf.fit(texts, behavioral_X, y, sample_weight=sample_weight)
 
         X_all = clf._build_features(texts, behavioral_X, fit=False)
         all_pred = clf.model.predict(X_all)
@@ -143,33 +147,20 @@ async def retrain_from_db(
     model_type: ModelType = "LogisticRegression",
     use_tuning: bool = True,
 ):
-    """CLI-callable retrain function."""
-    await init_db()
+    """CLI-callable retrain function using the tiered dataset builder."""
+    from dataset_builder import build_dataset
 
-    async with AsyncSessionLocal() as db:
-        result = await db.execute(select(MLFeedback))
-        rows = result.scalars().all()
+    texts, behavioral_X, y, sample_weights, stats = await build_dataset(
+        min_samples=min_samples,
+    )
 
-    print(f"[retrain] Loaded {len(rows)} samples from database")
-
-    if len(rows) < min_samples:
-        # Fallback to synthetic + real data combined
-        syn_texts, syn_beh, syn_y = _create_synthetic_training_data()
-        if rows:
-            real_texts, real_beh, real_y = _load_data_from_rows(rows)
-            texts = list(syn_texts) + list(real_texts)
-            behavioral_X = np.vstack([syn_beh, real_beh])
-            y = np.concatenate([syn_y, real_y])
-            print(f"[retrain] Combined {len(syn_texts)} synthetic + {len(real_texts)} real samples")
-        else:
-            texts, behavioral_X, y = list(syn_texts), syn_beh, syn_y
-            print(f"[retrain] Using {len(syn_texts)} synthetic samples only")
-    else:
-        texts, behavioral_X, y = _load_data_from_rows(rows)
+    print(f"[retrain] Dataset: {stats['total']} samples "
+          f"(gold={stats['gold']}, silver={stats['silver']}, "
+          f"bronze={stats['bronze']}, synthetic={stats['synthetic']})")
 
     # Class distribution
     for lvl in (1, 2, 3):
-        count = int((y == lvl).sum())
+        count = stats["class_distribution"].get(lvl, 0)
         print(f"[retrain]   L{lvl}: {count} samples ({count / len(y) * 100:.1f}%)")
 
     tuning_result = None
@@ -194,9 +185,11 @@ async def retrain_from_db(
         y,
         model_type=model_type,
         model_params=model_params,
+        sample_weight=sample_weights,
     )
     clf = result["classifier"]
     result["tuning"] = tuning_result
+    result["dataset_stats"] = stats
 
     print(f"[retrain] Model: {model_type}")
     print(f"[retrain] Accuracy: {result['accuracy']:.1%}")

@@ -14,8 +14,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from slowapi.errors import RateLimitExceeded
 
-from database import AsyncSessionLocal, MLModelCache, engine, init_db
-from dependencies import is_production_env, limiter
+from database import AsyncSessionLocal, ENGINE_RUNTIME_CONFIG, MLModelCache, engine, init_db
+from dependencies import get_rate_limit_strategy_summary, is_production_env, limiter
 from logging_utils import (
     configure_logging,
     get_request_id,
@@ -139,6 +139,28 @@ _validate_env()
 async def lifespan(app: FastAPI):
     await init_db()
     await cache.initialize()
+    logger.info(
+        "[app] runtime_strategy",
+        extra={
+            "rate_limiting": get_rate_limit_strategy_summary(),
+            "db_pool": ENGINE_RUNTIME_CONFIG,
+        },
+    )
+
+    # Warm up semantic model at startup — not in the first user request path.
+    from time import perf_counter as _pc
+    from services.scoring import warmup_semantic_model
+    _t0 = _pc()
+    semantic_ok = warmup_semantic_model()
+    _t1 = _pc()
+    logger.info(
+        "[app] semantic_warmup",
+        extra={
+            "available": semantic_ok,
+            "duration_ms": int((_t1 - _t0) * 1000),
+        },
+    )
+
     logger.info("[app] startup")
 
     async with AsyncSessionLocal() as db:
@@ -168,8 +190,16 @@ async def lifespan(app: FastAPI):
                 classification_report_json="{}",
                 samples_used=0,
             ))
-            await db.commit()
-            logger.info("[ml] synthetic_model_trained_and_saved")
+            try:
+                await db.commit()
+            except Exception as exc:
+                await db.rollback()
+                logger.warning(
+                    "[ml] failed_to_persist_synthetic_model",
+                    extra={"error": str(exc)},
+                )
+            else:
+                logger.info("[ml] synthetic_model_trained_and_saved")
 
     try:
         yield
@@ -301,6 +331,9 @@ from routers.admin import router as admin_router
 from routers.feedback import router as feedback_router
 from routers.templates import router as templates_router
 from routers.profile import router as profile_router
+from routers.events import router as events_router
+from routers.adaptation_feedback import router as adaptation_feedback_router
+from routers.product_feedback import router as product_feedback_router
 
 app.include_router(analyze_router)
 app.include_router(generate_router)
@@ -309,3 +342,6 @@ app.include_router(admin_router)
 app.include_router(feedback_router)
 app.include_router(templates_router)
 app.include_router(profile_router)
+app.include_router(events_router)
+app.include_router(adaptation_feedback_router)
+app.include_router(product_feedback_router)

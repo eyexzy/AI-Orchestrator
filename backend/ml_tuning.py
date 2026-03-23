@@ -13,35 +13,18 @@ import numpy as np
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import GridSearchCV, StratifiedKFold
-from sqlalchemy import select
 
-from database import AsyncSessionLocal, MLFeedback, init_db
-from ml_classifier import SklearnClassifier, _create_synthetic_training_data
-from retrain import _load_data_from_rows
+from ml_classifier import SklearnClassifier
 
 TuneModelType = Literal["RandomForest", "LogisticRegression"]
 
 
 async def load_tuning_data(min_real_samples: int = 10) -> tuple[list[str], np.ndarray, np.ndarray]:
-    """Load feedback data with synthetic fallback for robust tuning."""
-    await init_db()
-    async with AsyncSessionLocal() as db:
-        result = await db.execute(select(MLFeedback))
-        rows = result.scalars().all()
+    """Load data from tiered dataset builder for tuning."""
+    from dataset_builder import build_dataset
 
-    syn_texts, syn_beh, syn_y = _create_synthetic_training_data()
-    if len(rows) >= min_real_samples:
-        return _load_data_from_rows(rows)
-
-    if rows:
-        real_texts, real_beh, real_y = _load_data_from_rows(rows)
-        return (
-            list(syn_texts) + list(real_texts),
-            np.vstack([syn_beh, real_beh]),
-            np.concatenate([syn_y, real_y]),
-        )
-
-    return list(syn_texts), syn_beh, syn_y
+    texts, beh, y, _weights, _stats = await build_dataset(min_samples=min_real_samples)
+    return texts, beh, y
 
 
 def tune_hyperparameters(

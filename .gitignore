@@ -6,12 +6,16 @@
 .env.production.local
 
 *.db
+*.db-journal
 *.sqlite
 *.sqlite3
 ml_feedback.csv
 ml_model.json
 
 __pycache__/
+.pytest_cache/
+.coverage
+htmlcov/
 *.pyc
 *.pyo
 *.pyd
@@ -21,6 +25,7 @@ env/
 
 node_modules/
 .next/
+*.tsbuildinfo
 out/
 dist/
 build/
@@ -39,9 +44,5 @@ Thumbs.db
 
 settings.local.json
 
-# Local draft and utility files
-AUDIT_REPORT.md
-AUDIT_V2_IMPROVEMENTS.md
 collect_code.py
-full_project_context.txt
-Чорнетка для диплому.docx
+backend/testsuite/perf/results/

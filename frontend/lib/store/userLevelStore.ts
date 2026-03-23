@@ -64,7 +64,10 @@ export function toBehavioralMetricsPayload(
 }
 
 interface UserLevelState {
+  /** Behavioral session UUID — generated once per page load (NOT the chat UUID). */
   sessionId: string;
+  /** Active chat thread UUID — updated when the user selects / creates a chat. */
+  chatId: string | null;
   userEmail: string;
   level: UserLevel;
   lastLevelChangeTs: number;
@@ -79,7 +82,10 @@ interface UserLevelState {
   hasAnalyzed: boolean;
   groundTruth: number | null;
   hiddenTemplates: string[];
+  onboardingCompleted: boolean;
+  profileLoaded: boolean;
   setSessionId: (id: string) => void;
+  setChatId: (id: string | null) => void;
   setUserEmail: (email: string) => void;
   setLevel: (level: UserLevel) => void;
   setGroundTruth: (level: number) => void;
@@ -114,6 +120,7 @@ const initialMetrics: BehavioralMetrics = {
 
 export const useUserLevelStore = create<UserLevelState>((set, get) => ({
   sessionId: generateSessionId(),
+  chatId: null,
   userEmail: "anonymous",
   level: 1,
   lastLevelChangeTs: 0,
@@ -128,8 +135,12 @@ export const useUserLevelStore = create<UserLevelState>((set, get) => ({
   hasAnalyzed: false,
   groundTruth: null,
   hiddenTemplates: [],
+  onboardingCompleted: false,
+  profileLoaded: false,
 
   setSessionId: (id) => set({ sessionId: id }),
+
+  setChatId: (id) => set({ chatId: id }),
 
   setUserEmail: (email) => set({ userEmail: email }),
 
@@ -212,12 +223,14 @@ export const useUserLevelStore = create<UserLevelState>((set, get) => ({
         body: JSON.stringify({
           prompt_text: text,
           session_id: sessionId,
+          chat_id: get().chatId,
           metrics: metricsPayload,
         }),
       });
 
       if (res.ok) {
         const data = await res.json();
+        const prevLevel = get().level;
 
         set((s) => {
           const finalLevel = Number(data.final_level) as UserLevel;
@@ -243,6 +256,31 @@ export const useUserLevelStore = create<UserLevelState>((set, get) => ({
           };
         });
 
+        // Micro-feedback triggers
+        const updatedState = get();
+        const levelChanged = updatedState.level !== prevLevel;
+        try {
+          const { useMicroFeedbackStore } = await import("./microFeedbackStore");
+          const trigger = useMicroFeedbackStore.getState().tryTrigger;
+
+          if (levelChanged) {
+            // Trigger 1: level just changed
+            trigger("level_change_agree");
+          } else if (data.confidence < 0.4 && updatedState.metrics.sessionMessageCount >= 3) {
+            // Trigger 2: low confidence after a few messages
+            trigger("low_confidence_self_assess");
+          } else if (updatedState.metrics.sessionMessageCount > 0 &&
+                     updatedState.metrics.sessionMessageCount % 10 === 0) {
+            // Trigger 5: periodic check every 10 messages
+            trigger("periodic_check");
+          } else if (updatedState.metrics.tooltipClickCount >= 3) {
+            // Trigger 3: user opened many help tooltips
+            trigger("help_series_check");
+          }
+        } catch {
+          // micro-feedback is non-critical
+        }
+
         const { groundTruth, metrics: m } = get();
         if (groundTruth !== null && m.sessionMessageCount === 1) {
           fetch("/api/ml/feedback", {
@@ -264,33 +302,12 @@ export const useUserLevelStore = create<UserLevelState>((set, get) => ({
     }
   },
 
-  restoreFromMessages: async (userTexts: string[]) => {
-    if (userTexts.length === 0) {
-      get().resetMetrics();
-      return;
-    }
-
-    const lengths = userTexts.map((t) => t.length);
-    const avg = lengths.reduce((a, b) => a + b, 0) / lengths.length;
-    const count = userTexts.length;
-
-    set({
-      metrics: {
-        ...initialMetrics,
-        sessionMessageCount: count,
-        avgPromptLength: avg,
-        promptLengths: lengths,
-        sessionStartTime: Date.now(),
-      },
-      lastLevelChangeTs: 0,
-      score: 0,
-      normalizedScore: 0,
-      breakdown: [],
-      reasoning: [],
-      confidence: 0,
-      isAnalyzing: false,
-      hasAnalyzed: false,
-    });
+  restoreFromMessages: async (_userTexts: string[]) => {
+    // Always reset to a clean behavioral session when switching chats.
+    // Chat history is available for UX display (chatStore.messages) and
+    // LLM context (buildHistory), but must NOT pollute per-session
+    // behavioral metrics that go to /api/analyze for scoring.
+    get().resetMetrics();
   },
 
   hideTemplate: async (id: string) => {
@@ -309,9 +326,12 @@ export const useUserLevelStore = create<UserLevelState>((set, get) => ({
   initProfile: async () => {
     try {
       const res = await fetch("/api/profile/preferences");
-      if (!res.ok) return;
+      if (!res.ok) {
+        set({ profileLoaded: true });
+        return;
+      }
       const data = await res.json();
-      const nextState: Partial<UserLevelState> = {};
+      const nextState: Partial<UserLevelState> = { profileLoaded: true };
       if (Array.isArray(data.hidden_templates)) {
         nextState.hiddenTemplates = data.hidden_templates;
       }
@@ -319,22 +339,19 @@ export const useUserLevelStore = create<UserLevelState>((set, get) => ({
       if (currentLevel !== null) {
         nextState.level = currentLevel;
       }
-      if (Object.keys(nextState).length > 0) {
-        set(nextState);
+      if (typeof data.onboarding_completed === "boolean") {
+        nextState.onboardingCompleted = data.onboarding_completed;
       }
+      set(nextState);
     } catch {
+      set({ profileLoaded: true });
     }
   },
 
   resetMetrics: () =>
     set({
       metrics: { ...initialMetrics, sessionStartTime: Date.now() },
-      lastLevelChangeTs: 0,
-      score: 0,
-      normalizedScore: 0,
-      breakdown: [],
-      reasoning: [],
-      confidence: 0,
+      isAnalyzing: false,
       hasAnalyzed: false,
     }),
 }));
