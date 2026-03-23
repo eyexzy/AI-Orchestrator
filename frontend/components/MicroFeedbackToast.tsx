@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { useTranslation } from "@/lib/store/i18nStore";
 import { useMicroFeedbackStore } from "@/lib/store/microFeedbackStore";
 
-const AUTO_DISMISS_MS = 20_000; // auto-hide after 20 s
+const AUTO_DISMISS_MS = 20_000;
 
 export function MicroFeedbackToast() {
   const { t } = useTranslation();

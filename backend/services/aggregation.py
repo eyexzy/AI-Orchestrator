@@ -25,9 +25,7 @@ logger = logging.getLogger("ai-orchestrator")
 ROLLING_SESSION_WINDOW = 10
 
 
-# ---------------------------------------------------------------------------
 # Layer 2: raw events -> session_metrics
-# ---------------------------------------------------------------------------
 
 async def aggregate_session(
     db: AsyncSession,
@@ -149,9 +147,7 @@ async def aggregate_session(
     return sm
 
 
-# ---------------------------------------------------------------------------
 # Layer 3: session_metrics (rolling N) -> user profile features
-# ---------------------------------------------------------------------------
 
 async def aggregate_user_profile(
     db: AsyncSession,
@@ -244,9 +240,7 @@ async def aggregate_user_profile(
     return features
 
 
-# ---------------------------------------------------------------------------
 # Orchestrator
-# ---------------------------------------------------------------------------
 
 async def run_aggregation_for_session(
     db: AsyncSession,
