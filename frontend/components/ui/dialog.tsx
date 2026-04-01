@@ -35,7 +35,7 @@ export function Dialog({ open, onOpenChange, onCancel, children }: DialogProps) 
   return createPortal(
     <div className="fixed inset-0 z-[100] flex items-center justify-center overflow-hidden p-4">
       <div
-        className="absolute -inset-4 bg-black/60 backdrop-blur-sm dark:bg-black/70 transition-all duration-200 animate-in fade-in"
+        className="absolute -inset-4 bg-black/55 dark:bg-black/70 transition-opacity duration-150 animate-fade-in [will-change:opacity]"
         onClick={() => {
           onCancel?.();
           onOpenChange?.(false);
@@ -55,7 +55,7 @@ export function DialogContent({ className, children, ...props }: DialogContentPr
   return (
     <div
       className={cn(
-        "relative z-[101] w-full max-w-lg overflow-hidden rounded-2xl bg-background shadow-geist-lg animate-in fade-in zoom-in-95 duration-200",
+        "relative z-[101] w-full max-w-lg overflow-hidden rounded-2xl border border-gray-alpha-200 bg-background shadow-geist-lg animate-in fade-in zoom-in-95 duration-200 transform-gpu [will-change:transform]",
         className,
       )}
       {...props}

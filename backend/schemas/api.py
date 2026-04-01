@@ -112,6 +112,24 @@ class GenerateResponse(BaseModel):
 
 class RefineRequest(BaseModel):
     prompt: str = Field(..., max_length=20000)
+    language: Optional[str] = None          # "en" | "uk"; auto-detected if None
+    level: Optional[int] = Field(default=None, ge=1, le=3)
+    clarification_answers: Optional[dict[str, str]] = None
+
+
+class TutorQuestion(BaseModel):
+    id: str
+    question: str
+
+
+class TutorReviewResponse(BaseModel):
+    opening_message: str
+    strengths: list[str]
+    gaps: list[str]
+    clarifying_questions: list[TutorQuestion]
+    improved_prompt: str
+    why_this_is_better: list[str]
+    next_step: str
 
 
 # Chat CRUD schemas

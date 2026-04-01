@@ -682,7 +682,9 @@ export function TemplateManagerModal({ open, onOpenChange }: TemplateManagerModa
                   rows={4}
                   textareaClassName={textareaCls}
                 />
-                <p className="mt-1.5 text-[11px] text-ds-text-tertiary">To use literal double curly braces without creating a variable, escape them with a backslash: <code className="bg-gray-alpha-200 px-1 rounded">{"\\{{text}}"}</code></p>
+                <p className="mt-1.5 text-[11px] text-ds-text-tertiary">
+                  {t("templateManager.escapeVariableHelp")} <code className="bg-gray-alpha-200 px-1 rounded">{"\\{{text}}"}</code>
+                </p>
               </div>
 
               {/* System Message */}

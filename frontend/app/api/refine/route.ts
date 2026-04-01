@@ -6,13 +6,13 @@ export async function POST(req: NextRequest) {
   try {
     body = await req.json();
   } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
+    return NextResponse.json({ error: "invalid_request_json" }, { status: 400 });
   }
 
   return proxyPublicJsonRequest({
     path: "/refine",
     method: "POST",
     body,
-    fallbackError: "Failed to refine prompt",
+    fallbackError: "tutor_review_unavailable",
   });
 }

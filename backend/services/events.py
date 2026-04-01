@@ -45,6 +45,11 @@ ALLOWED_EVENT_TYPES: set[str] = {
     "backtracking_detected",
     # Explicit feedback on UI level
     "ui_level_feedback_given",
+    # Tutor modal flow
+    "refine_questions_answered",
+    "refine_second_pass_requested",
+    "refine_second_pass_accepted",
+    "refine_second_pass_rejected",
 }
 
 

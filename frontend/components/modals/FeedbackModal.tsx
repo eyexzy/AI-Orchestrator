@@ -7,9 +7,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { Frown, Meh, Smile, ThumbsUp, ThumbsDown } from "lucide-react";
 import { toast } from "sonner";
 import { useTranslation } from "@/lib/store/i18nStore";
+import { getErrorMessage } from "@/lib/request";
 import { useUserLevelStore } from "@/lib/store/userLevelStore";
-
-const LEVEL_LABELS: Record<number, string> = { 1: "Beginner", 2: "Intermediate", 3: "Advanced" };
 
 export function FeedbackModal({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
   const { t } = useTranslation();
@@ -68,16 +67,13 @@ export function FeedbackModal({ open, onOpenChange }: { open: boolean; onOpenCha
         }
       }
 
-      toast.success(t("feedback.success") ?? "Feedback sent!");
+      toast.success(t("feedback.success"));
       setText("");
       setMood(null);
       setLevelAgree(null);
       onOpenChange(false);
     } catch (err) {
-      toast.error(
-        t("feedback.error") ??
-          `Failed to send feedback: ${err instanceof Error ? err.message : "Unknown error"}`,
-      );
+      toast.error(getErrorMessage(err, t("feedback.error")));
     } finally {
       setSending(false);
     }
@@ -112,7 +108,7 @@ export function FeedbackModal({ open, onOpenChange }: { open: boolean; onOpenCha
           {/* Level agreement — adaptation feedback */}
           <div className="flex items-center justify-between rounded-lg border border-gray-alpha-200 px-3 py-2">
             <span className="text-[13px] text-ds-text-secondary">
-              {t("feedback.levelQuestion") ?? `Your level: ${LEVEL_LABELS[level] ?? level}. Correct?`}
+              {t("feedback.levelQuestion")}
             </span>
             <div className="flex items-center gap-1 rounded-full border border-gray-alpha-200 bg-gray-alpha-100 p-0.5">
               {[

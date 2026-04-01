@@ -14,7 +14,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from slowapi.errors import RateLimitExceeded
 
-from database import AsyncSessionLocal, ENGINE_RUNTIME_CONFIG, MLModelCache, engine, init_db
+from database import (
+    AsyncSessionLocal,
+    DatabaseUnavailableError,
+    ENGINE_RUNTIME_CONFIG,
+    MLModelCache,
+    engine,
+    init_db,
+)
 from dependencies import get_rate_limit_strategy_summary, is_production_env, limiter
 from logging_utils import (
     configure_logging,
@@ -137,7 +144,7 @@ _validate_env()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    await init_db()
+    db_ready = await init_db()
     await cache.initialize()
     logger.info(
         "[app] runtime_strategy",
@@ -163,43 +170,51 @@ async def lifespan(app: FastAPI):
 
     logger.info("[app] startup")
 
-    async with AsyncSessionLocal() as db:
-        cache_meta = None
+    if db_ready:
         try:
-            cache_meta = await ml_classifier.load_latest_model_from_db(db)
-        except Exception as exc:
-            logger.warning("[ml] failed_to_load_cached_model", extra={"error": str(exc)})
+            async with AsyncSessionLocal() as db:
+                cache_meta = None
+                try:
+                    cache_meta = await ml_classifier.load_latest_model_from_db(db)
+                except Exception as exc:
+                    logger.warning("[ml] failed_to_load_cached_model", extra={"error": str(exc)})
 
-        if cache_meta:
-            logger.info(
-                "[ml] model_loaded_from_database",
-                extra={
-                    "model_id": cache_meta["id"],
-                    "model_type": cache_meta["model_type"],
-                    "f1_score": cache_meta["f1_score"],
-                },
-            )
-        else:
+                if cache_meta:
+                    logger.info(
+                        "[ml] model_loaded_from_database",
+                        extra={
+                            "model_id": cache_meta["id"],
+                            "model_type": cache_meta["model_type"],
+                            "f1_score": cache_meta["f1_score"],
+                        },
+                    )
+                else:
+                    ml_classifier._train_fresh()
+                    weights_json = json.dumps(ml_classifier.get_classifier().to_dict(), ensure_ascii=False)
+                    db.add(MLModelCache(
+                        weights_json=weights_json,
+                        model_type="LogisticRegression",
+                        accuracy=0.0,
+                        f1_score=0.0,
+                        classification_report_json="{}",
+                        samples_used=0,
+                    ))
+                    try:
+                        await db.commit()
+                    except Exception as exc:
+                        await db.rollback()
+                        logger.warning(
+                            "[ml] failed_to_persist_synthetic_model",
+                            extra={"error": str(exc)},
+                        )
+                    else:
+                        logger.info("[ml] synthetic_model_trained_and_saved")
+        except Exception as exc:
+            logger.warning("[app] startup_db_phase_failed", extra={"error": str(exc)})
             ml_classifier._train_fresh()
-            weights_json = json.dumps(ml_classifier.get_classifier().to_dict(), ensure_ascii=False)
-            db.add(MLModelCache(
-                weights_json=weights_json,
-                model_type="LogisticRegression",
-                accuracy=0.0,
-                f1_score=0.0,
-                classification_report_json="{}",
-                samples_used=0,
-            ))
-            try:
-                await db.commit()
-            except Exception as exc:
-                await db.rollback()
-                logger.warning(
-                    "[ml] failed_to_persist_synthetic_model",
-                    extra={"error": str(exc)},
-                )
-            else:
-                logger.info("[ml] synthetic_model_trained_and_saved")
+    else:
+        logger.warning("[app] startup_without_database")
+        ml_classifier._train_fresh()
 
     try:
         yield
@@ -284,6 +299,19 @@ async def http_exception_handler(request: Request, exc: HTTPException):
         },
     )
     return _error_response(exc.status_code, message, detail=detail)
+
+
+@app.exception_handler(DatabaseUnavailableError)
+async def database_unavailable_handler(request: Request, exc: DatabaseUnavailableError):
+    logger.warning(
+        "request.database_unavailable",
+        extra={
+            "method": request.method,
+            "path": request.url.path,
+            "status_code": 503,
+        },
+    )
+    return _error_response(503, str(exc))
 
 
 @app.exception_handler(RequestValidationError)

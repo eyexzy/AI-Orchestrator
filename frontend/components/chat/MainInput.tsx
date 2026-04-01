@@ -10,8 +10,7 @@ import { extractVarNames } from "@/components/chat/extractVarNames";
 import { REQUEST_TIMEOUT_MS } from "@/lib/config";
 import { resolveVariables } from "@/lib/api";
 import { readResponseError } from "@/lib/request";
-import { toast } from "sonner";
-import { TutorModal } from "./input/TutorModal";
+import { TutorModal, TutorReview } from "./input/TutorModal";
 import { L1Chips } from "./input/L1Chips";
 import { L3StrategyChips } from "./input/L3StrategyChips";
 import { useTranslation } from "@/lib/store/i18nStore";
@@ -21,6 +20,25 @@ import { useMicroFeedbackStore } from "@/lib/store/microFeedbackStore";
 
 const MIN_WORDS = 5;
 const VARIABLE_SYNC_DEBOUNCE_MS = 120;
+const GENERIC_TUTOR_ERRORS = new Set([
+  "Backend unreachable",
+  "Request failed",
+  "Invalid JSON",
+  "Failed to refine prompt",
+  "invalid_request_json",
+  "tutor_review_unavailable",
+  "tutor_review_timeout",
+  "invalid_tutor_review",
+]);
+
+function normalizeTutorErrorMessage(message: string | undefined, fallback: string): string {
+  const trimmed = message?.trim();
+  if (!trimmed) return fallback;
+  if (GENERIC_TUTOR_ERRORS.has(trimmed) || /^HTTP \d{3}$/.test(trimmed)) {
+    return fallback;
+  }
+  return trimmed;
+}
 
 interface ChatParams {
   model: string;
@@ -65,15 +83,17 @@ export function MainInput({
   isEmpty = false,
 }: MainInputProps) {
   const isMountedRef = useRef(true);
-  const { t } = useTranslation();
+  const { t, language } = useTranslation();
   const { data: session } = useSession();
   const level = useUserLevelStore((s) => s.level);
 
   const [isRefining, setIsRefining] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
   const [originalPrompt, setOriginalPrompt] = useState("");
-  const [improvedPrompt, setImprovedPrompt] = useState("");
-  const [clarifyingQuestions, setClarifyingQuestions] = useState<string[]>([]);
+  const [tutorReview, setTutorReview] = useState<TutorReview | null>(null);
+  const [refineError, setRefineError] = useState<string | null>(null);
+  const [improvedPromptDraft, setImprovedPromptDraft] = useState("");
+  const [clarificationAnswers, setClarificationAnswers] = useState<Record<string, string>>({});
   const [draft, setDraft] = useState("");
   const refineAbortRef = useRef<AbortController | null>(null);
   const refineRequestIdRef = useRef(0);
@@ -116,6 +136,7 @@ export function MainInput({
     await flushEvents();
     setDraft("");
     onVariableNamesChange?.([]);
+    setRefineError(null);
     setModalOpen(false);
 
     const finalPrompt = chatParams.variables
@@ -154,7 +175,10 @@ export function MainInput({
     }
   }, [sendMessage, analyzePrompt, userEmail, chatParams, onRawResponse, onVariableNamesChange]);
 
-  const _callRefine = useCallback(async (text: string): Promise<boolean> => {
+  const _callRefine = useCallback(async (
+    text: string,
+    answers?: Record<string, string>,
+  ): Promise<boolean> => {
     refineAbortRef.current?.abort();
     const requestId = refineRequestIdRef.current + 1;
     refineRequestIdRef.current = requestId;
@@ -166,23 +190,38 @@ export function MainInput({
       controller.abort();
     }, REQUEST_TIMEOUT_MS);
 
-    trackEvent("refine_opened", { prompt_length: text.length });
+    const isSecondPass = !!answers;
+    trackEvent(isSecondPass ? "refine_second_pass_requested" : "refine_opened", { prompt_length: text.length });
     setOriginalPrompt(text);
     setIsRefining(true);
-    setImprovedPrompt("");
-    setClarifyingQuestions([]);
-    setModalOpen(false);
+    setRefineError(null);
+    if (!isSecondPass) {
+      setTutorReview(null);
+      setImprovedPromptDraft("");
+      setClarificationAnswers({});
+    }
+    setModalOpen(true); // open immediately — show loading
 
     try {
+      const payload: Record<string, unknown> = { prompt: text, language, level };
+      if (answers && Object.values(answers).some((v) => v.trim())) {
+        payload.clarification_answers = answers;
+      }
+
       const res = await fetch("/api/refine", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt: text }),
+        body: JSON.stringify(payload),
         signal: controller.signal,
       });
 
       if (!res.ok) {
-        throw new Error(await readResponseError(res, t("input.enhanceError")));
+        throw new Error(
+          normalizeTutorErrorMessage(
+            await readResponseError(res, ""),
+            t("tutor.errorDescription"),
+          ),
+        );
       }
 
       const data = await res.json();
@@ -194,9 +233,23 @@ export function MainInput({
         return false;
       }
 
-      setImprovedPrompt(data.improved_prompt ?? text);
-      setClarifyingQuestions(data.clarifying_questions ?? []);
-      setModalOpen(true);
+      const review: TutorReview = {
+        opening_message: data.opening_message ?? "",
+        strengths: data.strengths ?? [],
+        gaps: data.gaps ?? [],
+        clarifying_questions: Array.isArray(data.clarifying_questions)
+          ? data.clarifying_questions.map((q: { id?: string; question?: string } | string, i: number) =>
+              typeof q === "string" ? { id: `q${i + 1}`, question: q } : { id: q.id ?? `q${i + 1}`, question: q.question ?? "" },
+            )
+          : [],
+        improved_prompt: data.improved_prompt ?? "",
+        why_this_is_better: data.why_this_is_better ?? [],
+        next_step: data.next_step ?? "",
+      };
+
+      setTutorReview(review);
+      setImprovedPromptDraft(review.improved_prompt ?? "");
+      setRefineError(null);
       return true;
     } catch (error) {
       const isAbort = error instanceof DOMException && error.name === "AbortError";
@@ -205,14 +258,18 @@ export function MainInput({
         return false;
       }
 
-      toast.error(
-        timedOut
-          ? t("input.enhanceError")
-          : error instanceof Error && error.message
-            ? error.message
-            : t("input.enhanceError"),
-      );
-      return false;
+      if (isMountedRef.current) {
+        setRefineError(
+          timedOut
+            ? t("tutor.errorDescription")
+            : normalizeTutorErrorMessage(
+                error instanceof Error ? error.message : undefined,
+                t("tutor.errorDescription"),
+              ),
+        );
+        setModalOpen(true);
+      }
+      return true;
     } finally {
       window.clearTimeout(timeoutId);
       if (refineAbortRef.current === controller) {
@@ -222,7 +279,7 @@ export function MainInput({
         setIsRefining(false);
       }
     }
-  }, [t]);
+  }, [t, language, level]);
 
   const handleSend = useCallback(async (text?: string) => {
     const trimmed = (text ?? draft).trim();
@@ -302,14 +359,45 @@ export function MainInput({
       {aiTutor && (
         <TutorModal
           open={modalOpen}
-          onOpenChange={(v) => !isRefining && setModalOpen(v)}
-          isRefining={isRefining}
-          originalPrompt={originalPrompt}
-          improvedPrompt={improvedPrompt}
-          clarifyingQuestions={clarifyingQuestions}
+          onOpenChange={(v) => {
+            if (isRefining) return;
+            if (!v) setRefineError(null);
+            setModalOpen(v);
+          }}
+          isLoading={isRefining}
+          review={tutorReview}
+          errorMessage={refineError}
+          improvedPromptValue={improvedPromptDraft}
+          clarificationAnswers={clarificationAnswers}
+          onClarificationAnswerChange={(id, value) =>
+            setClarificationAnswers((prev) => ({ ...prev, [id]: value }))
+          }
+          onImprovedPromptChange={setImprovedPromptDraft}
+          onRefineAgain={() => {
+            const answeredCount = Object.values(clarificationAnswers).filter((value) => value.trim()).length;
+            if (answeredCount > 0) {
+              trackEvent("refine_questions_answered", { answered_count: answeredCount });
+            }
+            _callRefine(originalPrompt, clarificationAnswers);
+          }}
+          onRetry={() => _callRefine(
+            originalPrompt,
+            Object.values(clarificationAnswers).some((value) => value.trim()) ? clarificationAnswers : undefined,
+          )}
           onSendOriginal={() => { trackEvent("refine_rejected"); _dispatch(originalPrompt); }}
-          onSendImproved={() => { trackEvent("refine_accepted"); _dispatch(improvedPrompt || originalPrompt); useMicroFeedbackStore.getState().tryTrigger("scenario_complete"); }}
-          onCancel={() => { trackEvent("cancel_action", { context: "refine_modal" }); trackCancelAction(); setModalOpen(false); }}
+          onSendImproved={(value) => {
+            const improved = value.trim() || tutorReview?.improved_prompt || originalPrompt;
+            trackEvent("refine_accepted");
+            _dispatch(improved);
+            useMicroFeedbackStore.getState().tryTrigger("scenario_complete");
+          }}
+          onCancel={() => {
+            if (isRefining) return;
+            trackEvent("cancel_action", { context: "refine_modal" });
+            trackCancelAction();
+            setRefineError(null);
+            setModalOpen(false);
+          }}
         />
       )}
 

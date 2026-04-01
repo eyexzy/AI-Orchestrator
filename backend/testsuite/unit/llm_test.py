@@ -1,3 +1,8 @@
+import json
+from types import SimpleNamespace
+
+import pytest
+
 from schemas.api import GenerateRequest, HistoryMessage
 from services import llm
 
@@ -34,3 +39,70 @@ def test_get_mock_mode_uses_legacy_flag(monkeypatch):
     monkeypatch.delenv("LLM_MOCK_MODE", raising=False)
     monkeypatch.setenv("ALLOW_MOCK", "true")
     assert llm.get_mock_mode() == "fallback"
+
+
+class _FakeCompletions:
+    def __init__(self, handler):
+        self._handler = handler
+
+    async def create(self, **kwargs):
+        return await self._handler(**kwargs)
+
+
+class _FakeClient:
+    def __init__(self, handler):
+        self.chat = SimpleNamespace(completions=_FakeCompletions(handler))
+
+
+@pytest.mark.asyncio
+async def test_refine_prompt_falls_back_to_next_provider(monkeypatch):
+    calls: list[str] = []
+
+    async def fail_create(**kwargs):
+        calls.append(kwargs["model"])
+        raise RuntimeError("insufficient_quota")
+
+    async def success_create(**kwargs):
+        calls.append(kwargs["model"])
+        return SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    message=SimpleNamespace(
+                        content=json.dumps(
+                            {
+                                "opening_message": "Your prompt has a clear goal.",
+                                "strengths": ["The task is already recognizable."],
+                                "gaps": ["The output format is still unclear."],
+                                "clarifying_questions": [
+                                    {"id": "q1", "question": "Who is the audience?"},
+                                    {"id": "q2", "question": "What format do you want?"},
+                                    {"id": "q3", "question": "What should the answer include?"},
+                                ],
+                                "improved_prompt": "Write a structured explanation for beginners with bullet points and one example.",
+                                "why_this_is_better": ["It defines the audience.", "It defines the format."],
+                                "next_step": "Add a success criterion.",
+                            }
+                        )
+                    )
+                )
+            ]
+        )
+
+    monkeypatch.setattr(
+        llm,
+        "clients",
+        {
+            "openai": _FakeClient(fail_create),
+            "groq": _FakeClient(success_create),
+        },
+    )
+
+    review = await llm.refine_prompt_with_llm(
+        "Help me explain recursion",
+        language="en",
+        level=1,
+    )
+
+    assert review["improved_prompt"].startswith("Write a structured explanation")
+    assert len(review["clarifying_questions"]) == 3
+    assert calls[:2] == ["gpt-4o-mini", "llama-3.1-8b-instant"]

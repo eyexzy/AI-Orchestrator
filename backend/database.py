@@ -1,5 +1,8 @@
+import asyncio
 import json
+import logging
 import os
+import socket
 import uuid
 from datetime import datetime, timezone
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
@@ -21,6 +24,8 @@ from sqlalchemy import (
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase, relationship
 
+logger = logging.getLogger("ai-orchestrator")
+
 
 def _get_env_int(name: str, default: int) -> int:
     raw = os.getenv(name)
@@ -28,6 +33,16 @@ def _get_env_int(name: str, default: int) -> int:
         return default
     try:
         return int(raw)
+    except (TypeError, ValueError):
+        return default
+
+
+def _get_env_float(name: str, default: float) -> float:
+    raw = os.getenv(name)
+    if raw is None or not str(raw).strip():
+        return default
+    try:
+        return float(raw)
     except (TypeError, ValueError):
         return default
 
@@ -71,7 +86,45 @@ def _ensure_asyncpg_stable_url(url: str) -> str:
 
 DATABASE_URL = _ensure_asyncpg_stable_url(DATABASE_URL)
 
-_connect_args = {"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {}
+_DB_STARTUP_MAX_RETRIES = _get_env_int("DB_STARTUP_MAX_RETRIES", 5)
+_DB_STARTUP_RETRY_DELAY_SECONDS = _get_env_float("DB_STARTUP_RETRY_DELAY_SECONDS", 2.0)
+_DB_CONNECT_TIMEOUT_SECONDS = _get_env_int("DB_CONNECT_TIMEOUT_SECONDS", 10)
+
+
+def _prefer_ipv4_addrinfo(addrinfo_rows: list[tuple]) -> list[tuple]:
+    ipv4_rows = [row for row in addrinfo_rows if row[0] == socket.AF_INET]
+    return ipv4_rows or addrinfo_rows
+
+
+def _should_prefer_ipv4() -> bool:
+    raw = os.getenv("DB_PREFER_IPV4", "true").strip().lower()
+    return raw not in {"0", "false", "no", "off"}
+
+
+_db_host = urlsplit(DATABASE_URL).hostname
+_original_getaddrinfo = socket.getaddrinfo
+
+
+def _install_db_ipv4_preference() -> None:
+    if not _db_host or DATABASE_URL.startswith("sqlite") or not _should_prefer_ipv4():
+        return
+
+    def _db_aware_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
+        rows = _original_getaddrinfo(host, port, family, type, proto, flags)
+        if host != _db_host:
+            return rows
+        return _prefer_ipv4_addrinfo(rows)
+
+    socket.getaddrinfo = _db_aware_getaddrinfo
+
+
+_install_db_ipv4_preference()
+
+_connect_args = (
+    {"check_same_thread": False}
+    if DATABASE_URL.startswith("sqlite")
+    else {"timeout": _DB_CONNECT_TIMEOUT_SECONDS}
+)
 ENGINE_RUNTIME_CONFIG = {
     "db_backend": "sqlite" if DATABASE_URL.startswith("sqlite") else "postgresql",
     "pool_pre_ping": not DATABASE_URL.startswith("sqlite"),
@@ -80,6 +133,8 @@ ENGINE_RUNTIME_CONFIG = {
     "max_overflow": _get_env_int("DB_MAX_OVERFLOW", 20),
     "pool_timeout": _get_env_int("DB_POOL_TIMEOUT_SECONDS", 30),
     "pool_recycle": _get_env_int("DB_POOL_RECYCLE_SECONDS", 1800),
+    "connect_timeout": _DB_CONNECT_TIMEOUT_SECONDS if not DATABASE_URL.startswith("sqlite") else None,
+    "prefer_ipv4": _should_prefer_ipv4() if not DATABASE_URL.startswith("sqlite") else None,
 }
 
 _engine_kwargs = {"connect_args": _connect_args} if _connect_args else {}
@@ -97,6 +152,11 @@ if not DATABASE_URL.startswith("sqlite"):
 
 engine = create_async_engine(DATABASE_URL, **_engine_kwargs)
 AsyncSessionLocal = async_sessionmaker(bind=engine, class_=AsyncSession, expire_on_commit=False)
+DB_READY = False
+
+
+class DatabaseUnavailableError(RuntimeError):
+    pass
 
 
 def _uuid() -> str:
@@ -385,16 +445,63 @@ class AdaptationDecision(Base):
 
 # DB helpers
 
-async def init_db():
-    """Initialize database connection. Schema is managed by Alembic migrations.
-    Run: cd backend && alembic upgrade head
-    """
-    # Verify the engine can connect
+async def _check_db_connection() -> None:
     async with engine.begin():
         pass
 
 
+async def init_db(
+    *,
+    startup_retries: int | None = None,
+    retry_delay_seconds: float | None = None,
+    raise_on_failure: bool = False,
+) -> bool:
+    """Initialize database connection. Schema is managed by Alembic migrations.
+    Run: cd backend && alembic upgrade head
+    """
+    global DB_READY
+
+    attempts = max(1, startup_retries if startup_retries is not None else _DB_STARTUP_MAX_RETRIES)
+    delay_seconds = retry_delay_seconds if retry_delay_seconds is not None else _DB_STARTUP_RETRY_DELAY_SECONDS
+    last_exc: Exception | None = None
+
+    for attempt in range(1, attempts + 1):
+        try:
+            await _check_db_connection()
+            DB_READY = True
+            if attempt > 1:
+                logger.info("[db] recovered_after_retry", extra={"attempt": attempt})
+            return True
+        except Exception as exc:
+            last_exc = exc
+            DB_READY = False
+            logger.warning(
+                "[db] connect_attempt_failed",
+                extra={
+                    "attempt": attempt,
+                    "max_attempts": attempts,
+                    "error": f"{type(exc).__name__}: {exc}",
+                },
+            )
+            if attempt < attempts and delay_seconds > 0:
+                await asyncio.sleep(delay_seconds)
+
+    if raise_on_failure and last_exc is not None:
+        raise last_exc
+    return False
+
+
+async def ensure_db_ready() -> None:
+    if DB_READY:
+        return
+
+    ready = await init_db(startup_retries=1, retry_delay_seconds=0.0, raise_on_failure=False)
+    if not ready:
+        raise DatabaseUnavailableError("Database unavailable")
+
+
 async def get_db():
+    await ensure_db_ready()
     async with AsyncSessionLocal() as db:
         try:
             yield db
