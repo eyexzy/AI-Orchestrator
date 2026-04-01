@@ -20,6 +20,7 @@ import { getErrorMessage } from "@/lib/request";
 import { patchProfilePreferences } from "@/lib/profilePreferences";
 import { Select } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
+import { Separator } from "@/components/ui/separator";
 import { toast } from "sonner";
 
 /* Theme toggle group (Monitor / Sun / Moon) */
@@ -219,6 +220,8 @@ export function UserMenuDropdown({
 
   const menuBtn =
     "w-full justify-start gap-2.5 px-3 text-[14px] text-ds-text-secondary hover:bg-gray-alpha-200 hover:text-ds-text shadow-none";
+  const menuPanel =
+    "absolute right-0 top-full z-50 mt-2 w-64 rounded-2xl border border-gray-alpha-200 bg-background p-1.5 shadow-geist-lg animate-fade-in";
 
   if (!user) return null;
 
@@ -254,7 +257,7 @@ export function UserMenuDropdown({
           ref={panelRef}
           role="menu"
           onKeyDown={handleMenuKeyDown}
-          className="absolute right-0 top-full z-50 mt-2 w-64 rounded-xl p-1.5 shadow-geist-lg bg-background animate-fade-in"
+          className={menuPanel}
         >
           {/* Email section */}
           <div className="px-3 py-2.5">
@@ -268,47 +271,45 @@ export function UserMenuDropdown({
             )}
           </div>
 
-          <div className="divider my-1" />
+          <Separator className="-mx-1.5 my-1 w-auto" />
 
-          {/* Account Settings */}
-          <Button
-            type="button"
-            variant="tertiary"
-            size="sm"
-            data-user-menu-item="true"
-            role="menuitem"
-            className={menuBtn}
-            leftIcon={<Settings size={16} strokeWidth={2} className="shrink-0 opacity-60" />}
-            onClick={() => {
-              shouldRestoreFocusRef.current = false;
-              setOpen(false);
-              onOpenAccountSettings?.();
-            }}
-          >
-            {t("menu.accountSettings")}
-          </Button>
+          <div className="space-y-0.5">
+            {/* Account Settings */}
+            <Button
+              type="button"
+              variant="tertiary"
+              size="sm"
+              data-user-menu-item="true"
+              role="menuitem"
+              className={menuBtn}
+              leftIcon={<Settings size={16} strokeWidth={2} className="shrink-0 opacity-60" />}
+              onClick={() => {
+                shouldRestoreFocusRef.current = false;
+                setOpen(false);
+                onOpenAccountSettings?.();
+              }}
+            >
+              {t("menu.accountSettings")}
+            </Button>
 
-          <div className="divider my-1" />
-
-          {/* Feedback */}
-          <Button
-            type="button"
-            variant="tertiary"
-            size="sm"
-            data-user-menu-item="true"
-            role="menuitem"
-            className={menuBtn}
-            leftIcon={<MessageSquare size={16} strokeWidth={2} className="shrink-0 opacity-60" />}
-            onClick={() => {
-              shouldRestoreFocusRef.current = false;
-              setOpen(false);
-              onOpenFeedback?.();
-            }}
-          >
-            {t("menu.feedback")}
-          </Button>
-
-          <div className="divider my-1" />
+            {/* Feedback */}
+            <Button
+              type="button"
+              variant="tertiary"
+              size="sm"
+              data-user-menu-item="true"
+              role="menuitem"
+              className={menuBtn}
+              leftIcon={<MessageSquare size={16} strokeWidth={2} className="shrink-0 opacity-60" />}
+              onClick={() => {
+                shouldRestoreFocusRef.current = false;
+                setOpen(false);
+                onOpenFeedback?.();
+              }}
+            >
+              {t("menu.feedback")}
+            </Button>
+          </div>
 
           {/* Preferences section */}
           <div className="px-3 pt-2 pb-1">
@@ -345,7 +346,7 @@ export function UserMenuDropdown({
             </div>
           </div>
 
-          <div className="divider my-1" />
+          <Separator className="-mx-1.5 my-1 w-auto" />
 
           {/* Sign Out */}
           <Button

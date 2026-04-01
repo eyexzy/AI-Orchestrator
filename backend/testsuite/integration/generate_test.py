@@ -85,14 +85,17 @@ async def test_generate_multi_compare_persists_comparison_metadata(db, req, monk
 
 
 @pytest.mark.asyncio
-async def test_refine_fallback_returns_improved_prompt(req, monkeypatch):
-    async def fail(prompt: str):
+async def test_refine_returns_error_when_tutor_review_is_unavailable(req, monkeypatch):
+    async def fail(prompt: str, **kwargs):
         raise RuntimeError("boom")
 
     monkeypatch.setattr(generate_router, "refine_prompt_with_llm", fail)
-    result = await generate_router.refine(
-        request=req(path="/refine"),
-        body=RefineRequest(prompt="make it better"),
-    )
-    assert "improved_prompt" in result
-    assert len(result["clarifying_questions"]) == 3
+
+    with pytest.raises(HTTPException) as exc:
+        await generate_router.refine(
+            request=req(path="/refine"),
+            body=RefineRequest(prompt="make it better"),
+        )
+
+    assert exc.value.status_code == 502
+    assert exc.value.detail == "tutor_review_unavailable"

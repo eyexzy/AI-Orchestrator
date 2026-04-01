@@ -6,6 +6,7 @@ import { Search, MessageSquare, Plus, Clock } from "lucide-react";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { ErrorState } from "@/components/ui/error-state";
 import { Input } from "@/components/ui/input";
+import { Separator } from "@/components/ui/separator";
 import { useChatStore, type ChatSession } from "@/lib/store/chatStore";
 import { SEARCH_DEBOUNCE_MS, REQUEST_TIMEOUT_MS } from "@/lib/config";
 import { useTranslation } from "@/lib/store/i18nStore";
@@ -135,7 +136,7 @@ export function ChatSearchModal({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="p-0 gap-0 overflow-hidden bg-background border border-gray-alpha-200 shadow-geist-lg max-w-2xl">
+      <DialogContent className="max-w-2xl p-0">
         {/* Search input */}
         <div className="flex items-center gap-3 px-4 h-14">
           <Search size={18} strokeWidth={2} className="shrink-0 text-gray-500" />
@@ -155,7 +156,7 @@ export function ChatSearchModal({
         </div>
 
         {/* Divider */}
-        <div className="h-px bg-gray-alpha-200" />
+        <Separator />
 
         {/* Results area */}
         <div className="max-h-[60vh] overflow-y-auto p-2">

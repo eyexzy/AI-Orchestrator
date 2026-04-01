@@ -147,7 +147,7 @@ export function OnboardingModal() {
 
   return (
     <Dialog open={open} onOpenChange={(v) => !v && handleCloseCompletely()}>
-      <DialogContent className="max-w-[540px] border-gray-alpha-200 shadow-geist-lg text-ds-text">
+      <DialogContent className="max-w-[540px] text-ds-text">
         <DialogHeader>
           <div className="flex items-center justify-between">
             <div>
@@ -226,7 +226,7 @@ export function OnboardingModal() {
           </div>
         </div>
 
-        <DialogFooter className="flex items-center justify-between px-6 py-4">
+        <DialogFooter className="flex items-center justify-between">
           {step === 1 ? (
             <Button
               type="button"

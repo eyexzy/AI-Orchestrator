@@ -205,6 +205,7 @@ function ActiveChatTitle() {
 /* Root page */
 export default function HomePage() {
   const { data: session } = useSession();
+  const { t } = useTranslation();
   const [sheetOpen, setSheetOpen] = useState(false);
   const [accountSettingsOpen, setAccountSettingsOpen] = useState(false);
   const [feedbackOpen, setFeedbackOpen] = useState(false);
@@ -322,8 +323,8 @@ export default function HomePage() {
       {/* Score Sheet — rendered outside header to avoid clipping */}
       <SheetContent>
         <SheetHeader>
-          <SheetTitle>Experience Score</SheetTitle>
-          <SheetDescription>Prompt and behavior analysis</SheetDescription>
+          <SheetTitle>{t("scoreSheet.title")}</SheetTitle>
+          <SheetDescription>{t("scoreSheet.description")}</SheetDescription>
         </SheetHeader>
         <div className="mt-4 flex-1 overflow-y-auto">
           <ScoreDashboard />

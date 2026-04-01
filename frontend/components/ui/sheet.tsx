@@ -43,12 +43,12 @@ function SheetContent({ children, className, side = "right" }: { children: React
   return createPortal(
     <>
       <div 
-        className="fixed -inset-4 z-[100] bg-black/60 backdrop-blur-sm dark:bg-black/70 transition-all duration-200 animate-in fade-in" 
+        className="fixed -inset-4 z-[100] bg-black/55 dark:bg-black/70 transition-opacity duration-150 animate-fade-in [will-change:opacity]" 
         onClick={() => onOpenChange(false)} 
       />
       <div
         className={cn(
-          "fixed inset-y-0 z-[101] flex w-[380px] max-w-[90vw] flex-col border-gray-alpha-200 bg-background-100 shadow-geist-lg transition-transform duration-300",
+          "fixed inset-y-0 z-[101] flex w-[380px] max-w-[90vw] flex-col border-gray-alpha-200 bg-background-100 shadow-geist-lg transition-transform duration-300 transform-gpu [will-change:transform]",
           side === "right" ? "right-0 border-l animate-slide-in-right" : "left-0 border-r animate-slide-in-left",
           className,
         )}

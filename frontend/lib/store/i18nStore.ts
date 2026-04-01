@@ -154,6 +154,7 @@ const translations: Record<Language, Record<string, string>> = {
     "templateManager.builtin": "built-in",
     "templateManager.unstar": "Unstar",
     "templateManager.templateActions": "Template actions",
+    "templateManager.escapeVariableHelp": "To use literal double curly braces without creating a variable, escape them with a backslash:",
 
     // FewShotEditor
     "fewShotEditor.editExample": "Edit Example",
@@ -166,6 +167,8 @@ const translations: Record<Language, Record<string, string>> = {
     // ConfigSidebar — mobile
     "config.mobileTitle": "Configuration",
     "config.mobileDescription": "Model and generation parameters",
+    "scoreSheet.title": "Experience Score",
+    "scoreSheet.description": "Prompt and behavior analysis",
 
     // ChatSidebar
     "sidebar.newChat": "New Chat",
@@ -309,6 +312,29 @@ const translations: Record<Language, Record<string, string>> = {
     "chat.loadErrorDescription": "We couldn't load this conversation.",
     "chat.sendError": "Failed to generate a response. Check your connection and try again.",
     "chat.retrySend": "Retry send",
+
+    // Tutor Modal
+    "tutor.title": "AI Tutor",
+    "tutor.description": "AI tutor helps you sharpen the task, context, and output of your prompt.",
+    "tutor.loading": "AI tutor is analyzing your prompt...",
+    "tutor.currentPrompt": "Current prompt",
+    "tutor.notes": "Coach notes",
+    "tutor.learnFromThis": "Learn from this revision",
+    "tutor.strengths": "What already works",
+    "tutor.gaps": "What is missing",
+    "tutor.questions": "Quick questions",
+    "tutor.answerPlaceholder": "Your answer...",
+    "tutor.refineAgain": "Refine again",
+    "tutor.improvedPrompt": "Improved prompt",
+    "tutor.whyBetter": "Why this works better",
+    "tutor.nextStep": "Next step",
+    "tutor.takeaway": "Pattern to reuse",
+    "tutor.errorTitle": "Tutor review is unavailable",
+    "tutor.errorDescription": "AI tutor could not generate a review right now. Try again.",
+    "tutor.sendOriginal": "Send original",
+    "tutor.sendImproved": "Send improved",
+    "tutor.close": "Close",
+    "tutor.noImprovedPrompt": "No improved prompt was generated.",
 
     "common.retry": "Retry",
   },
@@ -462,6 +488,7 @@ const translations: Record<Language, Record<string, string>> = {
     "templateManager.builtin": "вбудований",
     "templateManager.unstar": "Зняти з обраного",
     "templateManager.templateActions": "Дії з шаблоном",
+    "templateManager.escapeVariableHelp": "Щоб використати подвійні фігурні дужки буквально і не створювати змінну, екрануйте їх зворотним слешем:",
 
     // FewShotEditor
     "fewShotEditor.editExample": "Редагувати приклад",
@@ -474,6 +501,8 @@ const translations: Record<Language, Record<string, string>> = {
     // ConfigSidebar — mobile
     "config.mobileTitle": "Конфігурація",
     "config.mobileDescription": "Модель та параметри генерації",
+    "scoreSheet.title": "Рівень досвіду",
+    "scoreSheet.description": "Аналіз промптів і поведінки",
 
     // ChatSidebar
     "sidebar.newChat": "Новий чат",
@@ -617,6 +646,29 @@ const translations: Record<Language, Record<string, string>> = {
     "chat.loadErrorDescription": "Не вдалося завантажити цю розмову.",
     "chat.sendError": "Не вдалося згенерувати відповідь. Перевірте з'єднання і спробуйте ще раз.",
     "chat.retrySend": "Повторити надсилання",
+
+    // Tutor Modal
+    "tutor.title": "AI-тьютор",
+    "tutor.description": "AI-тьютор допоможе уточнити задачу, контекст і формат відповіді у вашому промпті.",
+    "tutor.loading": "AI-тьютор аналізує ваш промпт...",
+    "tutor.currentPrompt": "Поточний промпт",
+    "tutor.notes": "Нотатки тьютора",
+    "tutor.learnFromThis": "Що взяти з цієї правки",
+    "tutor.strengths": "Що вже добре",
+    "tutor.gaps": "Чого бракує",
+    "tutor.questions": "Короткі питання",
+    "tutor.answerPlaceholder": "Ваша відповідь...",
+    "tutor.refineAgain": "Покращити ще раз",
+    "tutor.improvedPrompt": "Покращений промпт",
+    "tutor.whyBetter": "Чому це працює краще",
+    "tutor.nextStep": "Наступний крок",
+    "tutor.takeaway": "Що запам'ятати",
+    "tutor.errorTitle": "Розбір від AI-тьютора недоступний",
+    "tutor.errorDescription": "AI-тьютор зараз не зміг згенерувати розбір. Спробуйте ще раз.",
+    "tutor.sendOriginal": "Надіслати оригінал",
+    "tutor.sendImproved": "Надіслати покращений",
+    "tutor.close": "Закрити",
+    "tutor.noImprovedPrompt": "Не вдалося згенерувати покращений промпт.",
 
     "common.retry": "Повторити",
   },

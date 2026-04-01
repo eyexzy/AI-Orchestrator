@@ -248,8 +248,14 @@ async def generate(
                     yield f"data: {json.dumps({'error': str(exc), 'done': True})}\n\n"
                 finally:
                     if body.session_id and full_text:
-                        async with AsyncSessionLocal() as db2:
-                            await _save_assistant_message(db2, body, full_text, {})
+                        try:
+                            async with AsyncSessionLocal() as db2:
+                                await _save_assistant_message(db2, body, full_text, {})
+                        except Exception as exc:
+                            logger.warning(
+                                "[stream] assistant_message_persist_failed",
+                                extra={"error": f"{type(exc).__name__}: {exc}"},
+                            )
 
         else:
             try:
@@ -393,30 +399,18 @@ async def refine(request: Request, body: RefineRequest) -> dict:
         raise HTTPException(status_code=422, detail="prompt is required")
 
     try:
-        return await refine_prompt_with_llm(prompt)
+        return await refine_prompt_with_llm(
+            prompt,
+            language=body.language,
+            level=body.level,
+            clarification_answers=body.clarification_answers,
+        )
     except Exception as exc:
         logger.error(f"[refine] Failed: {type(exc).__name__}: {exc}")
-
-        is_ukrainian = any(ch in prompt for ch in "іїєґІЇЄҐ")
-        if is_ukrainian:
-            improved = (
-                "Будь ласка, надай детальну та структуровану відповідь на наступний запит: "
-                f"{prompt}. Розкрий тему покроково, додай приклади та поясни кожен крок."
-            )
-            questions = [
-                "Який рівень деталізації вам потрібен?",
-                "Для якої мети ви використовуєте цю інформацію?",
-                "Чи є бажаний формат або стиль відповіді?",
-            ]
-        else:
-            improved = (
-                f"Please provide a detailed and well-structured response to the following request: {prompt}. "
-                "Break the topic down step by step, add examples, and explain each step clearly."
-            )
-            questions = [
-                "What level of detail do you need?",
-                "What is the purpose of this information?",
-                "Is there a preferred answer format or style?",
-            ]
-
-        return {"improved_prompt": improved, "clarifying_questions": questions}
+        if isinstance(exc, asyncio.TimeoutError):
+            raise HTTPException(status_code=504, detail="tutor_review_timeout") from exc
+        if isinstance(exc, (ValueError, json.JSONDecodeError)):
+            raise HTTPException(status_code=502, detail="invalid_tutor_review") from exc
+        if isinstance(exc, RuntimeError) and str(exc) == "no_client":
+            raise HTTPException(status_code=503, detail="tutor_review_unavailable") from exc
+        raise HTTPException(status_code=502, detail="tutor_review_unavailable") from exc
