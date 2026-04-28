@@ -18,14 +18,17 @@ import { Select } from "@/components/ui/select";
 import { Slider } from "@/components/ui/slider";
 import { Note } from "@/components/ui/note";
 import { Textarea } from "@/components/ui/textarea";
-import { Badge, type BadgeProps } from "@/components/ui/badge";
+import { TemplateCardContent } from "./sidebar/TemplateCard";
 import { Button } from "@/components/ui/button";
 import { Tooltip } from "@/components/ui/tooltip";
 import { SegmentedControl } from "@/components/ui/segmented-control";
-import { Divider, SectionHeader } from "./sidebar/SidebarUI";
+import { SectionHeader } from "./sidebar/SidebarUI";
+import { Separator } from "@/components/ui/separator";
+import { EmptyState } from "@/components/ui/empty-state";
 import { VariableEditor } from "./sidebar/VariableEditor";
 import { FewShotEditor } from "./sidebar/FewShotEditor";
 import { TemplateManagerModal } from "./sidebar/TemplateManagerModal";
+import { Badge } from "@/components/ui/badge";
 
 export { getDefaultSystem, isDefaultSystem };
 export type { SidebarConfig };
@@ -33,72 +36,34 @@ export type { FewShotExample } from "./sidebar/config";
 
 const SIDEBAR_WIDTH_CSS = "clamp(280px, 25vw, 340px)";
 
-const TEMPLATE_BADGE_VARIANTS = {
-  gray: "gray-subtle",
-  blue: "blue-subtle",
-  purple: "purple-subtle",
-  pink: "pink-subtle",
-  red: "red-subtle",
-  amber: "amber-subtle",
-  green: "green-subtle",
-  teal: "teal-subtle",
-} satisfies Record<string, NonNullable<BadgeProps["variant"]>>;
+const LEVEL_META: Record<1 | 2 | 3, {
+  tag: string;
+  variant: "green-subtle" | "blue-subtle" | "amber-subtle";
+}> = {
+  1: { tag: "Guided", variant: "green-subtle" },
+  2: { tag: "Constructor", variant: "blue-subtle" },
+  3: { tag: "Engineer", variant: "amber-subtle" },
+};
 
-function isTemplateBadgeColor(
-  value: string,
-): value is keyof typeof TEMPLATE_BADGE_VARIANTS {
-  return value in TEMPLATE_BADGE_VARIANTS;
-}
 
-function getTemplateBadgeVariant(
-  color: string,
-): NonNullable<BadgeProps["variant"]> {
-  return isTemplateBadgeColor(color)
-    ? TEMPLATE_BADGE_VARIANTS[color]
-    : "gray-subtle";
-}
 
 function SidebarTemplateItem({ tpl, config }: { tpl: PromptTemplate; config: SidebarConfig }) {
   return (
-    <Material className="group relative flex w-full cursor-pointer flex-col px-3.5 py-3 text-left hover:bg-gray-alpha-200">
-      <div
-        className="flex flex-1 flex-col"
-        onClick={() => {
-          trackEvent("template_inserted", { template_id: tpl.id, category: tpl.category_name });
-          const vars = tpl.variables ?? [];
-          const nv: Record<string, string> = {};
-          if (vars.length > 0 && config.variables) {
-            for (const v of vars) nv[v] = config.variables[v] ?? "";
-          }
-          config.onLoadTemplate!(tpl.prompt, nv, tpl.system_message || undefined);
-          config.setShowTpl!(false);
-        }}
-      >
-        <div className="flex min-w-0 items-center gap-2 pb-1 pr-16">
-          <span className="block min-w-0 truncate text-[14px] font-semibold leading-snug text-ds-text">
-            {tpl.title}
-          </span>
-        </div>
-        <Description className="line-clamp-2 break-words">{tpl.description}</Description>
-        {tpl.variables && tpl.variables.length > 0 && (
-          <div className="mt-2 flex flex-wrap gap-1.5">
-            {tpl.variables.map((v: string) => (
-              <span
-                key={v}
-                className="max-w-[100px] truncate rounded bg-gray-alpha-200 px-1.5 py-0.5 font-mono text-[10px] text-ds-text-tertiary"
-              >
-                {`{{${v}}}`}
-              </span>
-            ))}
-          </div>
-        )}
-      </div>
-
-      <div className="pointer-events-none absolute right-3 top-3">
-        <Badge variant={getTemplateBadgeVariant(tpl.category_color)}>
-          <span className="max-w-[120px] truncate">{tpl.category_name}</span>
-        </Badge>
-      </div>
+    <Material
+      variant="base"
+      className="group relative flex w-full cursor-pointer flex-col px-3.5 py-3 text-left hover:bg-gray-alpha-200"
+      onClick={() => {
+        trackEvent("template_inserted", { template_id: tpl.id, category: tpl.category_name });
+        const vars = tpl.variables ?? [];
+        const nv: Record<string, string> = {};
+        if (vars.length > 0 && config.variables) {
+          for (const v of vars) nv[v] = config.variables[v] ?? "";
+        }
+        config.onLoadTemplate!(tpl.prompt, nv, tpl.system_message || undefined);
+        config.setShowTpl!(false);
+      }}
+    >
+      <TemplateCardContent tpl={tpl} />
     </Material>
   );
 }
@@ -116,6 +81,7 @@ const ConfigSidebarComponent = ({ config, forceVisible }: { config: SidebarConfi
     () => getMergedTemplates(customTemplates, level, language as "en" | "uk", hiddenTemplates),
     [customTemplates, level, language, hiddenTemplates],
   );
+  const levelMeta = LEVEL_META[level];
 
   const handleTooltipOpen = useCallback((id: string) => {
     trackTooltipClick();
@@ -129,14 +95,17 @@ const ConfigSidebarComponent = ({ config, forceVisible }: { config: SidebarConfi
   const scrollRef = useRef<HTMLDivElement>(null);
   const [showScrollTop, setShowScrollTop] = useState(false);
   const [isScrolled, setIsScrolled] = useState(false);
+  const shouldHydrateSidebar = forceVisible || level >= 2;
 
   useEffect(() => {
+    if (!shouldHydrateSidebar) return;
     fetchModels();
-  }, [fetchModels]);
+  }, [fetchModels, shouldHydrateSidebar]);
 
   useEffect(() => {
+    if (!shouldHydrateSidebar) return;
     fetchTemplates();
-  }, [fetchTemplates]);
+  }, [fetchTemplates, shouldHydrateSidebar]);
 
   useEffect(() => {
     const el = scrollRef.current;
@@ -154,8 +123,8 @@ const ConfigSidebarComponent = ({ config, forceVisible }: { config: SidebarConfi
   const fallbackModelB = models?.[1]?.value ?? models?.[0]?.value ?? config.model;
 
   const presets = useMemo(() => ([
-    { id: "precise", label: t("config.precise"), t: 0.1, m: 1024, p: 0.9 },
-    { id: "balanced", label: t("config.balanced"), t: 0.4, m: 2048, p: 0.95 },
+    { id: "precise", label: t("config.precise"), t: 0.1, m: 2048, p: 0.9 },
+    { id: "balanced", label: t("config.balanced"), t: 0.4, m: 3072, p: 0.95 },
     { id: "creative", label: t("config.creative"), t: 0.9, m: 4096, p: 0.99 },
   ]), [t]);
 
@@ -280,7 +249,7 @@ const ConfigSidebarComponent = ({ config, forceVisible }: { config: SidebarConfi
             </div>
 
             {(config.compareModelA ?? config.model) === (config.compareModelB ?? fallbackModelB) && (
-              <Note variant="warning" size="sm">
+              <Note variant="warning">
                 {t("config.sameModelWarning")}
               </Note>
             )}
@@ -416,21 +385,16 @@ const ConfigSidebarComponent = ({ config, forceVisible }: { config: SidebarConfi
                 {favorites.map((tpl) => <SidebarTemplateItem key={tpl.id} tpl={tpl} config={config} />)}
               </div>
             ) : (
-              <div className="flex w-full flex-col gap-1 rounded-xl border border-gray-alpha-200 bg-gray-alpha-100 p-4 text-center">
-                <p className="text-[13px] font-semibold text-ds-text-secondary">
-                  {t("config.pinHintTitle")}
-                </p>
-                <p className="text-[11px] leading-relaxed text-ds-text-tertiary">
-                  {t("config.pinHint")}
-                </p>
-              </div>
+              <EmptyState.Placeholder className="mx-0 w-full">
+                {t("config.pinHint")}
+              </EmptyState.Placeholder>
             )}
             <Button
               variant="secondary"
               size="sm"
               className="w-full"
               onClick={() => setIsTemplateModalOpen(true)}
-              leftIcon={<Settings size={14} />}
+              leftIcon={<Settings size={18} strokeWidth={2} />}
             >
               {t("config.manageTemplates")}
             </Button>
@@ -470,10 +434,10 @@ const ConfigSidebarComponent = ({ config, forceVisible }: { config: SidebarConfi
                 <button
                   type="button"
                   onClick={() => config.setSystem!(getDefaultSystem())}
-                  className="text-xs font-medium text-blue-600 transition-colors hover:text-blue-500"
-                  >
-                    {t("config.systemReset")}
-                  </button>
+                  className="text-xs font-medium text-[var(--geist-link-color)] transition-colors hover:text-blue-700"
+                >
+                  {t("config.systemReset")}
+                </button>
               )}
             </div>
           </div>
@@ -534,15 +498,21 @@ const ConfigSidebarComponent = ({ config, forceVisible }: { config: SidebarConfi
       <div ref={scrollRef} className="config-scroll h-full overflow-y-auto bg-background-100 relative">
 
         {/* Sticky header */}
-        <div className={cn("sticky top-0 z-30 bg-background-100 px-5 py-3.5 transition-shadow duration-200", isScrolled ? "shadow-sm border-b border-gray-alpha-200" : "border-b border-transparent")}>
-          <h3 className="text-base font-semibold tracking-tight text-ds-text">{t("config.title")}</h3>
+        <div className="sticky top-0 z-30 bg-background-100 flex flex-col transition-all duration-200">
+          <div className="flex items-center gap-2.5 px-5 py-3.5">
+            <h3 className="text-base font-semibold tracking-tight text-ds-text">{t("config.title")}</h3>
+            <Badge variant={levelMeta.variant} size="md">
+              {levelMeta.tag}
+            </Badge>
+          </div>
+          <Separator className={cn("transition-all duration-200", isScrolled ? "opacity-100" : "opacity-0")} />
         </div>
 
         {/* Content */}
         <div className="flex flex-col gap-6 px-5 py-6 pb-24">
           {sections.map((section, index) => (
             <Fragment key={section.key}>
-              {index > 0 && <Divider />}
+              {index > 0 && <Separator />}
               {section.content}
             </Fragment>
           ))}
@@ -559,7 +529,7 @@ const ConfigSidebarComponent = ({ config, forceVisible }: { config: SidebarConfi
               className="shadow-elevated-panel"
               aria-label="Scroll to top"
             >
-              <ChevronUp size={16} strokeWidth={2} />
+              <ChevronUp size={18} strokeWidth={2} />
             </Button>
           </div>
         )}

@@ -1,4 +1,6 @@
 import { create } from "zustand";
+import { USER_LEVEL_SNAPSHOT_STORAGE_KEY } from "@/lib/config";
+import { makeScopedStorageKey, readPersistedState, writePersistedState } from "@/lib/persistedState";
 
 function generateSessionId(): string {
   if (typeof crypto !== "undefined" && crypto.randomUUID) {
@@ -63,6 +65,12 @@ export function toBehavioralMetricsPayload(
   };
 }
 
+export interface LevelTransition {
+  fromLevel: UserLevel;
+  toLevel: UserLevel;
+  direction: "up" | "down";
+}
+
 interface UserLevelState {
   /** Behavioral session UUID — generated once per page load (NOT the chat UUID). */
   sessionId: string;
@@ -82,8 +90,17 @@ interface UserLevelState {
   hasAnalyzed: boolean;
   groundTruth: number | null;
   hiddenTemplates: string[];
+  displayName: string | null;
+  notifyLevelUp: boolean;
+  notifyMicroFeedback: boolean;
+  notifyTutorSuggestions: boolean;
+  trackingEnabled: boolean;
   onboardingCompleted: boolean;
   profileLoaded: boolean;
+  /** True after hydrateUserLevelStoreFromPersistence() runs — level is now from localStorage, not the L1 default. */
+  levelReady: boolean;
+  /** Pending level transition to show in the transition modal (null = nothing to show). */
+  pendingLevelTransition: LevelTransition | null;
   setSessionId: (id: string) => void;
   setChatId: (id: string | null) => void;
   setUserEmail: (email: string) => void;
@@ -98,6 +115,28 @@ interface UserLevelState {
   restoreFromMessages: (userTexts: string[]) => Promise<void>;
   hideTemplate: (id: string) => Promise<void>;
   initProfile: () => Promise<void>;
+  dismissLevelTransition: () => void;
+}
+
+interface PersistedUserLevelSnapshot {
+  userEmail: string;
+  level: UserLevel;
+  lastLevelChangeTs: number;
+  confidence: number;
+  reasoning: string[];
+  score: number;
+  normalizedScore: number;
+  breakdown: ScoreBreakdown[];
+  thresholds: { L2: number; L3: number };
+  hasAnalyzed: boolean;
+  hiddenTemplates: string[];
+  displayName: string | null;
+  notifyLevelUp: boolean;
+  notifyMicroFeedback: boolean;
+  notifyTutorSuggestions: boolean;
+  trackingEnabled: boolean;
+  onboardingCompleted: boolean;
+  profileLoaded: boolean;
 }
 
 const initialMetrics: BehavioralMetrics = {
@@ -118,34 +157,126 @@ const initialMetrics: BehavioralMetrics = {
   sessionStartTime: Date.now(),
 };
 
+function readPersistedUserLevelSnapshot(userEmail?: string | null): PersistedUserLevelSnapshot | null {
+  if (userEmail && userEmail !== "anonymous") {
+    const scoped = readPersistedState<PersistedUserLevelSnapshot>(
+      makeScopedStorageKey(USER_LEVEL_SNAPSHOT_STORAGE_KEY, userEmail),
+    );
+    if (scoped) {
+      return scoped;
+    }
+  }
+
+  return readPersistedState<PersistedUserLevelSnapshot>(USER_LEVEL_SNAPSHOT_STORAGE_KEY);
+}
+
+function writePersistedUserLevelSnapshot(
+  snapshot: PersistedUserLevelSnapshot,
+  userEmail?: string | null,
+): void {
+  writePersistedState(USER_LEVEL_SNAPSHOT_STORAGE_KEY, snapshot);
+
+  if (userEmail && userEmail !== "anonymous") {
+    writePersistedState(
+      makeScopedStorageKey(USER_LEVEL_SNAPSHOT_STORAGE_KEY, userEmail),
+      snapshot,
+    );
+  }
+}
+
+function buildPersistedUserLevelSnapshot(state: UserLevelState): PersistedUserLevelSnapshot {
+  return {
+    userEmail: state.userEmail,
+    level: state.level,
+    lastLevelChangeTs: state.lastLevelChangeTs,
+    confidence: state.confidence,
+    reasoning: state.reasoning,
+    score: state.score,
+    normalizedScore: state.normalizedScore,
+    breakdown: state.breakdown,
+    thresholds: state.thresholds,
+    hasAnalyzed: state.hasAnalyzed,
+    hiddenTemplates: state.hiddenTemplates,
+    displayName: state.displayName,
+    notifyLevelUp: state.notifyLevelUp,
+    notifyMicroFeedback: state.notifyMicroFeedback,
+    notifyTutorSuggestions: state.notifyTutorSuggestions,
+    trackingEnabled: state.trackingEnabled,
+    onboardingCompleted: state.onboardingCompleted,
+    profileLoaded: state.profileLoaded,
+  };
+}
+
+// On the client, read persisted snapshot immediately at store creation time
+// (inside `create`) so the very first render already has the correct level.
+// On the server window is undefined → snapshot is null → SSR-safe defaults.
+// levelReady:true is set here when a snapshot exists so components that gate
+// on it (ConfigSidebar, ChatSidebar) render the correct UI on the first client
+// render — no flash, no useLayoutEffect delay needed.
+const _initSnapshot = typeof window !== "undefined" ? readPersistedUserLevelSnapshot() : null;
+
 export const useUserLevelStore = create<UserLevelState>((set, get) => ({
   sessionId: generateSessionId(),
   chatId: null,
-  userEmail: "anonymous",
-  level: 1,
-  lastLevelChangeTs: 0,
-  confidence: 0,
-  reasoning: [],
-  score: 0,
-  normalizedScore: 0,
-  breakdown: [],
-  thresholds: { L2: 0.25, L3: 0.55 },
+  userEmail: _initSnapshot?.userEmail ?? "anonymous",
+  level: _initSnapshot?.level ?? 1,
+  lastLevelChangeTs: _initSnapshot?.lastLevelChangeTs ?? 0,
+  confidence: _initSnapshot?.confidence ?? 0,
+  reasoning: _initSnapshot?.reasoning ?? [],
+  score: _initSnapshot?.score ?? 0,
+  normalizedScore: _initSnapshot?.normalizedScore ?? 0,
+  breakdown: _initSnapshot?.breakdown ?? [],
+  thresholds: _initSnapshot?.thresholds ?? { L2: 0.25, L3: 0.55 },
   metrics: { ...initialMetrics },
   isAnalyzing: false,
-  hasAnalyzed: false,
+  hasAnalyzed: _initSnapshot?.hasAnalyzed ?? false,
   groundTruth: null,
-  hiddenTemplates: [],
-  onboardingCompleted: false,
+  hiddenTemplates: _initSnapshot?.hiddenTemplates ?? [],
+  displayName: _initSnapshot?.displayName ?? null,
+  notifyLevelUp: _initSnapshot?.notifyLevelUp ?? true,
+  notifyMicroFeedback: _initSnapshot?.notifyMicroFeedback ?? true,
+  notifyTutorSuggestions: _initSnapshot?.notifyTutorSuggestions ?? true,
+  trackingEnabled: _initSnapshot?.trackingEnabled ?? true,
+  onboardingCompleted: _initSnapshot?.onboardingCompleted ?? false,
   profileLoaded: false,
+  levelReady: _initSnapshot !== null,
+  pendingLevelTransition: null,
 
   setSessionId: (id) => set({ sessionId: id }),
 
   setChatId: (id) => set({ chatId: id }),
 
-  setUserEmail: (email) => set({ userEmail: email }),
+  setUserEmail: (email) => {
+    const persisted = readPersistedUserLevelSnapshot(email);
+    set((state) => ({
+      userEmail: email,
+      ...(persisted
+        ? {
+            level: persisted.level,
+            lastLevelChangeTs: persisted.lastLevelChangeTs,
+            confidence: persisted.confidence,
+            reasoning: persisted.reasoning,
+            score: persisted.score,
+            normalizedScore: persisted.normalizedScore,
+            breakdown: persisted.breakdown,
+            thresholds: persisted.thresholds,
+            hasAnalyzed: persisted.hasAnalyzed,
+            hiddenTemplates: persisted.hiddenTemplates,
+            displayName: persisted.displayName,
+            notifyLevelUp: persisted.notifyLevelUp,
+            notifyMicroFeedback: persisted.notifyMicroFeedback,
+            notifyTutorSuggestions: persisted.notifyTutorSuggestions,
+            trackingEnabled: persisted.trackingEnabled,
+            onboardingCompleted: persisted.onboardingCompleted,
+            profileLoaded: persisted.profileLoaded || state.profileLoaded,
+          }
+        : {}),
+    }));
+  },
 
   setLevel: (level) => set({ level }),
   setGroundTruth: (level) => set({ groundTruth: level }),
+  dismissLevelTransition: () => set({ pendingLevelTransition: null }),
 
   trackAdvancedFeature: (feature: string) =>
     set((s) => {
@@ -235,6 +366,9 @@ export const useUserLevelStore = create<UserLevelState>((set, get) => ({
         set((s) => {
           const finalLevel = Number(data.final_level) as UserLevel;
           const levelChanged = finalLevel !== s.level;
+          const transition: LevelTransition | null = levelChanged
+            ? { fromLevel: s.level, toLevel: finalLevel, direction: finalLevel > s.level ? "up" : "down" }
+            : null;
 
           return {
             level: finalLevel,
@@ -247,6 +381,7 @@ export const useUserLevelStore = create<UserLevelState>((set, get) => ({
             thresholds: data.thresholds ?? { L2: 0.25, L3: 0.55 },
             isAnalyzing: false,
             hasAnalyzed: true,
+            pendingLevelTransition: transition,
             metrics: {
               ...s.metrics,
               levelTransitionCount: levelChanged
@@ -351,3 +486,47 @@ export const useUserLevelStore = create<UserLevelState>((set, get) => ({
       hasAnalyzed: false,
     }),
 }));
+
+useUserLevelStore.subscribe((state) => {
+  writePersistedUserLevelSnapshot(
+    buildPersistedUserLevelSnapshot(state),
+    state.userEmail,
+  );
+});
+
+let userLevelStoreHydrated = false;
+
+export function hydrateUserLevelStoreFromPersistence(): void {
+  if (userLevelStoreHydrated) return;
+  userLevelStoreHydrated = true;
+
+  const persisted = readPersistedUserLevelSnapshot();
+
+  if (!persisted) {
+    useUserLevelStore.setState({ levelReady: true });
+    return;
+  }
+
+  useUserLevelStore.setState((state) => ({
+    ...state,
+    userEmail: persisted.userEmail,
+    level: persisted.level,
+    lastLevelChangeTs: persisted.lastLevelChangeTs,
+    confidence: persisted.confidence,
+    reasoning: persisted.reasoning,
+    score: persisted.score,
+    normalizedScore: persisted.normalizedScore,
+    breakdown: persisted.breakdown,
+    thresholds: persisted.thresholds,
+    hasAnalyzed: persisted.hasAnalyzed,
+    hiddenTemplates: persisted.hiddenTemplates,
+    displayName: persisted.displayName,
+    notifyLevelUp: persisted.notifyLevelUp,
+    notifyMicroFeedback: persisted.notifyMicroFeedback,
+    notifyTutorSuggestions: persisted.notifyTutorSuggestions,
+    trackingEnabled: persisted.trackingEnabled,
+    onboardingCompleted: persisted.onboardingCompleted,
+    profileLoaded: persisted.profileLoaded,
+    levelReady: true,
+  }));
+}

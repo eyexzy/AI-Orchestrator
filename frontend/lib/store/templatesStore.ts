@@ -1,8 +1,10 @@
 import { create } from "zustand";
-import { toast } from "sonner";
+import { actionToast } from "@/components/ui/action-toast";
+import { TEMPLATES_CACHE_STORAGE_KEY, TEMPLATES_CACHE_TTL_MS } from "@/lib/config";
 import { getDefaultFavoriteVirtualIds, getVirtualTemplates } from "@/lib/defaultTemplates";
 import { useUserLevelStore, type UserLevel } from "@/lib/store/userLevelStore";
-import { useI18nStore, type Language } from "@/lib/store/i18nStore";
+import { getTranslation, useI18nStore, type Language } from "@/lib/store/i18nStore";
+import { makeScopedStorageKey, readPersistedState, writePersistedState } from "@/lib/persistedState";
 
 export interface PromptTemplate {
   id: string;
@@ -130,23 +132,79 @@ interface TemplatesState {
   toggleFavorite: (id: string) => Promise<void>;
 }
 
+let templatesInflight: Promise<void> | null = null;
+let templatesInflightScopeKey: string | null = null;
+type PersistedTemplatesCache = {
+  templates: PromptTemplate[];
+  fetchedAt: number;
+};
+
+function getTemplatesCacheKey(userEmail?: string | null): string {
+  return makeScopedStorageKey(TEMPLATES_CACHE_STORAGE_KEY, userEmail);
+}
+
+function readPersistedTemplatesCache(userEmail?: string | null): PersistedTemplatesCache | null {
+  const persisted = readPersistedState<PersistedTemplatesCache>(getTemplatesCacheKey(userEmail));
+  if (!persisted || !Array.isArray(persisted.templates) || typeof persisted.fetchedAt !== "number") {
+    return null;
+  }
+  return persisted;
+}
+
+function writePersistedTemplatesCache(data: PersistedTemplatesCache, userEmail?: string | null): void {
+  writePersistedState(getTemplatesCacheKey(userEmail), data);
+}
+
+let templatesLastFetchedAt = 0;
+
 export const useTemplatesStore = create<TemplatesState>((set, get) => ({
   templates: [],
   isLoading: false,
 
   fetchTemplates: async () => {
-    if (get().isLoading) return;
+    const { isLoading, templates } = get();
+    const userEmail = useUserLevelStore.getState().userEmail;
+    const scopeKey = getTemplatesCacheKey(userEmail);
+    const hasFreshCache =
+      (templates.length > 0 || templatesLastFetchedAt > 0) &&
+      Date.now() - templatesLastFetchedAt < TEMPLATES_CACHE_TTL_MS;
+
+    if (hasFreshCache || isLoading) return;
+    if (templatesInflight && templatesInflightScopeKey === scopeKey) return templatesInflight;
+
     set({ isLoading: true });
-    try {
-      const res = await fetch("/api/templates", { cache: "no-store" });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data: PromptTemplate[] = await res.json();
-      set({ templates: data });
-    } catch {
-      toast.error("Failed to load templates");
-    } finally {
-      set({ isLoading: false });
-    }
+    templatesInflightScopeKey = scopeKey;
+    templatesInflight = (async () => {
+      try {
+        const res = await fetch("/api/templates", { cache: "no-store" });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data: PromptTemplate[] = await res.json();
+        writePersistedTemplatesCache(
+          { templates: data, fetchedAt: Date.now() },
+          userEmail,
+        );
+        const isCurrentScope =
+          getTemplatesCacheKey(useUserLevelStore.getState().userEmail) === scopeKey;
+        if (!isCurrentScope) {
+          return;
+        }
+        templatesLastFetchedAt = Date.now();
+        set({ templates: data });
+      } catch {
+        const isCurrentScope =
+          getTemplatesCacheKey(useUserLevelStore.getState().userEmail) === scopeKey;
+        if (!isCurrentScope) {
+          return;
+        }
+        actionToast.error(getTranslation("templateManager.loadError"));
+      } finally {
+        templatesInflight = null;
+        templatesInflightScopeKey = null;
+        set({ isLoading: false });
+      }
+    })();
+
+    return templatesInflight;
   },
 
   createTemplate: async (data) => {
@@ -158,10 +216,17 @@ export const useTemplatesStore = create<TemplatesState>((set, get) => ({
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const created: PromptTemplate = await res.json();
-      set({ templates: [...get().templates, created] });
+      templatesLastFetchedAt = Date.now();
+      const nextTemplates = [...get().templates, created];
+      writePersistedTemplatesCache(
+        { templates: nextTemplates, fetchedAt: templatesLastFetchedAt },
+        useUserLevelStore.getState().userEmail,
+      );
+      set({ templates: nextTemplates });
+      actionToast.success(getTranslation("templateManager.createSuccess"));
       return created;
     } catch {
-      toast.error("Failed to create template");
+      actionToast.error(getTranslation("templateManager.createError"));
       return null;
     }
   },
@@ -175,11 +240,16 @@ export const useTemplatesStore = create<TemplatesState>((set, get) => ({
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const updated: PromptTemplate = await res.json();
-      set({
-        templates: get().templates.map((t) => (t.id === id ? updated : t)),
-      });
+      templatesLastFetchedAt = Date.now();
+      const nextTemplates = get().templates.map((t) => (t.id === id ? updated : t));
+      writePersistedTemplatesCache(
+        { templates: nextTemplates, fetchedAt: templatesLastFetchedAt },
+        useUserLevelStore.getState().userEmail,
+      );
+      set({ templates: nextTemplates });
+      actionToast.saved(getTranslation("templateManager.updateSuccess"));
     } catch {
-      toast.error("Failed to update template");
+      actionToast.error(getTranslation("templateManager.updateError"));
     }
   },
 
@@ -187,9 +257,16 @@ export const useTemplatesStore = create<TemplatesState>((set, get) => ({
     try {
       const res = await fetch(`/api/templates/${id}`, { method: "DELETE" });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      set({ templates: get().templates.filter((t) => t.id !== id) });
+      templatesLastFetchedAt = Date.now();
+      const nextTemplates = get().templates.filter((t) => t.id !== id);
+      writePersistedTemplatesCache(
+        { templates: nextTemplates, fetchedAt: templatesLastFetchedAt },
+        useUserLevelStore.getState().userEmail,
+      );
+      set({ templates: nextTemplates });
+      actionToast.deleted(getTranslation("templateManager.deleteSuccess"));
     } catch {
-      toast.error("Failed to delete template");
+      actionToast.error(getTranslation("templateManager.deleteError"));
     }
   },
 
@@ -252,10 +329,16 @@ export const useTemplatesStore = create<TemplatesState>((set, get) => ({
         body: JSON.stringify(items),
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      templatesLastFetchedAt = Date.now();
+      writePersistedTemplatesCache(
+        { templates: nextCustom, fetchedAt: templatesLastFetchedAt },
+        useUserLevelStore.getState().userEmail,
+      );
+      actionToast.neutral(getTranslation("templateManager.reorderSuccess"));
     } catch {
       // Rollback on failure
       set({ templates: prev });
-      toast.error("Failed to reorder templates");
+      actionToast.error(getTranslation("templateManager.reorderError"));
     }
   },
 
@@ -279,7 +362,7 @@ export const useTemplatesStore = create<TemplatesState>((set, get) => ({
     if (willBeFavorite) {
       const currentFavCount = activeTemplates.filter((t) => t.is_favorite).length;
       if (currentFavCount >= 5) {
-        toast.error(
+        actionToast.warning(
           lang === "uk"
             ? "Можна закріпити до 5 шаблонів"
             : "You can only pin up to 5 templates",
@@ -310,7 +393,13 @@ export const useTemplatesStore = create<TemplatesState>((set, get) => ({
         });
         if (!res.ok) throw new Error();
         const updated = await res.json();
-        set({ templates: get().templates.map((t) => (t.id === id ? updated : t)) });
+        templatesLastFetchedAt = Date.now();
+        const nextTemplates = get().templates.map((t) => (t.id === id ? updated : t));
+        writePersistedTemplatesCache(
+          { templates: nextTemplates, fetchedAt: templatesLastFetchedAt },
+          useUserLevelStore.getState().userEmail,
+        );
+        set({ templates: nextTemplates });
       } else {
         // Create in DB explicitly with the "default-xxx" ID to preserve dynamic translation!
         const payload = {
@@ -333,11 +422,28 @@ export const useTemplatesStore = create<TemplatesState>((set, get) => ({
         });
         if (!res.ok) throw new Error();
         const created = await res.json();
-        set({ templates: [...customTemplates, created] });
+        templatesLastFetchedAt = Date.now();
+        const nextTemplates = [...customTemplates, created];
+        writePersistedTemplatesCache(
+          { templates: nextTemplates, fetchedAt: templatesLastFetchedAt },
+          useUserLevelStore.getState().userEmail,
+        );
+        set({ templates: nextTemplates });
       }
+      actionToast.info(
+        getTranslation(
+          willBeFavorite ? "toast.addedToFavorites" : "toast.removedFromFavorites",
+        ),
+      );
     } catch {
       set({ templates: customTemplates }); // Rollback
-      toast.error("Failed to update favorite");
+      actionToast.error(getTranslation("templateManager.favoriteError"));
     }
   },
 }));
+
+export function hydrateTemplatesStoreFromPersistence(userEmail?: string | null): void {
+  const persistedTemplatesCache = readPersistedTemplatesCache(userEmail);
+  templatesLastFetchedAt = persistedTemplatesCache?.fetchedAt ?? 0;
+  useTemplatesStore.setState({ templates: persistedTemplatesCache?.templates ?? [] });
+}

@@ -31,7 +31,7 @@ export function SegmentedControl({ options, value, onValueChange, className }: S
             title={plainLabel}
             aria-label={plainLabel}
             className={cn(
-              "flex-1 min-w-0 h-full flex items-center justify-center px-2 text-[13px] font-medium rounded-[5px] transition-colors duration-150 ease-in-out select-none outline-none overflow-hidden",
+              "flex-1 min-w-0 h-full flex items-center justify-center px-2 text-[13px] font-medium rounded-[3px] transition-colors duration-150 ease-in-out select-none outline-none overflow-hidden",
               isActive
                 ? "bg-[var(--segmented-control-pill-bg)] text-[var(--segmented-control-active-text)]"
                 : "bg-transparent text-[var(--segmented-control-inactive-text)] hover:text-[var(--segmented-control-active-text)] cursor-pointer"

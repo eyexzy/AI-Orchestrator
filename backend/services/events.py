@@ -21,10 +21,26 @@ ALLOWED_EVENT_TYPES: set[str] = {
     # Prompt lifecycle
     "prompt_started",
     "prompt_submitted",
-    # Refine flow
+    # Refine / tutor flow (legacy names kept for backward compat)
     "refine_opened",
     "refine_accepted",
     "refine_rejected",
+    "refine_questions_answered",
+    "refine_second_pass_requested",
+    "refine_second_pass_accepted",
+    "refine_second_pass_rejected",
+    # Tutor-specific events (richer teaching signal)
+    "tutor_opened",               # tutor modal shown (mode: quick|guided)
+    "tutor_quick_accepted",       # user sent improved prompt without editing
+    "tutor_quick_rejected",       # user sent original instead
+    "tutor_guided_started",       # user chose guided coaching mode
+    "tutor_guided_completed",     # user finished all guided steps
+    "tutor_guided_abandoned",     # user closed mid-way through guided flow
+    "tutor_weakness_viewed",      # user expanded a weakness card
+    "tutor_why_better_viewed",    # user expanded why-this-is-better section
+    "tutor_next_step_clicked",    # user clicked the next-step CTA
+    "tutor_questions_skipped",    # user skipped clarifying questions
+    "tutor_helpfulness_rated",    # explicit helpfulness rating submitted
     # Help / guidance
     "tooltip_opened",
     # Templates & suggestions
@@ -45,11 +61,15 @@ ALLOWED_EVENT_TYPES: set[str] = {
     "backtracking_detected",
     # Explicit feedback on UI level
     "ui_level_feedback_given",
-    # Tutor modal flow
-    "refine_questions_answered",
-    "refine_second_pass_requested",
-    "refine_second_pass_accepted",
-    "refine_second_pass_rejected",
+    # Level transition events
+    "level_upgrade_shown",        # upgrade modal displayed (from_level, to_level)
+    "level_upgrade_acknowledged", # user clicked "Got it" on upgrade modal
+    "level_downgrade_shown",      # downgrade explanation shown
+    "level_downgrade_acknowledged",
+    # Onboarding
+    "onboarding_started",
+    "onboarding_completed",       # with self_assessed_level, computed_level
+    "onboarding_skipped",
 }
 
 

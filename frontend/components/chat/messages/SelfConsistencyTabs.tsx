@@ -41,6 +41,12 @@ export function SelfConsistencyTabs({
         tokens: run.total_tokens,
         latency_ms: run.latency_ms,
         run: idx + 1,
+        generation_summary: {
+          duration_ms: run.latency_ms,
+          first_token_ms: run.latency_ms,
+          estimated_tokens: run.total_tokens,
+          model_label: modelLabel,
+        },
       });
     },
     [messageId, modelLabel, resolveMultiResponse, runs],

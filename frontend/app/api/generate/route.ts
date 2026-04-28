@@ -58,7 +58,10 @@ export async function POST(req: NextRequest) {
       headers.set("X-Request-ID", requestId);
     }
 
-    return new NextResponse(response.body, {
+    headers.set("Connection", "keep-alive");
+    headers.set("X-Accel-Buffering", "no");
+
+    return new Response(response.body, {
       status: response.status,
       headers,
     });

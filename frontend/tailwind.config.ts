@@ -37,6 +37,7 @@ const config: Config = {
           1000: "var(--ds-gray-1000)",
         },
         "gray-alpha": {
+          50: "var(--ds-gray-alpha-50)",
           100: "var(--ds-gray-alpha-100)",
           200: "var(--ds-gray-alpha-200)",
           300: "var(--ds-gray-alpha-300)",
@@ -48,6 +49,19 @@ const config: Config = {
           900: "var(--ds-gray-alpha-900)",
           1000: "var(--ds-gray-alpha-1000)",
         },
+        "ds-text": {
+          DEFAULT: "var(--geist-foreground)",
+          secondary: "var(--ds-gray-900)",
+          tertiary: "var(--ds-gray-700)",
+        },
+        "geist-success": "var(--ds-green-700)",
+        "geist-error": "var(--ds-red-700)",
+        "geist-warning": "var(--ds-amber-700)",
+        "geist-blue": "var(--ds-blue-700)",
+        "geist-amber": "var(--ds-amber-700)",
+        "geist-purple": "var(--ds-purple-700)",
+        "geist-pink": "var(--ds-pink-700)",
+        "geist-teal": "var(--ds-teal-700)",
         blue: {
           100: "var(--ds-blue-100)",
           200: "var(--ds-blue-200)",
@@ -149,9 +163,18 @@ const config: Config = {
       },
       boxShadow: {
         "geist-sm": "0 0 0 1px var(--ds-gray-alpha-200)",
-        "geist-border": "0 0 0 1px var(--ds-gray-alpha-200)",
+        "geist-border": "0 0 0 1px var(--ds-gray-alpha-200), 0 0 0 1px var(--ds-background-200)",
         "geist-md": "0 2px 4px rgba(0,0,0,.08), 0 0 0 1px var(--ds-gray-alpha-100)",
         "geist-lg": "var(--ds-shadow-lg, 0 8px 30px rgba(0,0,0,.12), 0 0 0 1px var(--ds-gray-alpha-100))",
+      },
+      keyframes: {
+        skeleton: {
+          "0%": { backgroundPosition: "200% 0" },
+          "100%": { backgroundPosition: "-200% 0" },
+        },
+      },
+      animation: {
+        skeleton: "skeleton 2s ease-in-out infinite",
       },
     },
   },

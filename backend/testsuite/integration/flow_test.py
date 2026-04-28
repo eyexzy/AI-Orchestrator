@@ -87,4 +87,4 @@ class TestEventVocabularyConsistency:
 
     def test_vocabulary_size(self):
         from services.events import ALLOWED_EVENT_TYPES
-        assert len(ALLOWED_EVENT_TYPES) == 19
+        assert len(ALLOWED_EVENT_TYPES) == 41

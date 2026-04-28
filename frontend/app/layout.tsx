@@ -3,6 +3,7 @@ import { GeistSans } from "geist/font/sans";
 import { GeistMono } from "geist/font/mono";
 import { ThemeProvider } from "next-themes";
 import { Toaster } from "sonner";
+import { auth } from "@/auth";
 import { SessionProvider } from "@/components/SessionProvider";
 import "@/app/globals.css";
 
@@ -13,17 +14,19 @@ export const metadata: Metadata = {
   keywords: ["AI", "LLM", "Adaptive UX", "ChatGPT", "Claude", "Prompt Engineering"],
 };
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
+  const session = await auth();
+
   return (
     <html lang="en" className={`${GeistSans.variable} ${GeistMono.variable}`} suppressHydrationWarning>
       <body className="font-sans" suppressHydrationWarning>
         <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange>
           <Toaster position="bottom-right" />
-          <SessionProvider>{children}</SessionProvider>
+          <SessionProvider session={session}>{children}</SessionProvider>
         </ThemeProvider>
       </body>
     </html>

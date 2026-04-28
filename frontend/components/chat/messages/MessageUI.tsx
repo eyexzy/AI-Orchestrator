@@ -5,6 +5,7 @@ import {
   Copy,
   Check,
   RotateCcw,
+  ChevronsDown,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -44,7 +45,7 @@ export function ActionBtn({
         iconOnly
         onClick={onClick}
         aria-label={label}
-        className="text-ds-text-tertiary"
+        className="text-ds-text-tertiary transition-colors hover:text-ds-text"
       >
         {children}
       </Button>
@@ -56,9 +57,13 @@ export function ActionBtn({
 export function AssistantActionBar({
   content,
   onRegenerate,
+  onContinue,
+  canContinue = false,
 }: {
   content: string;
   onRegenerate: () => void;
+  onContinue?: () => void;
+  canContinue?: boolean;
 }) {
   const { t } = useTranslation();
   const [copied, setCopied] = useState(false);
@@ -81,6 +86,11 @@ export function AssistantActionBar({
           : <Copy size={14} strokeWidth={2} />
         }
       </ActionBtn>
+      {canContinue && onContinue && (
+        <ActionBtn onClick={onContinue} label={t("msg.continueGeneration")}>
+          <ChevronsDown size={14} strokeWidth={2} />
+        </ActionBtn>
+      )}
       <ActionBtn onClick={onRegenerate} label={t("msg.regenerate")}>
         <RotateCcw size={14} strokeWidth={2} />
       </ActionBtn>

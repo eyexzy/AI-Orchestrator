@@ -4,8 +4,8 @@ import { useState, useRef } from "react";
 import { Plus, MoreHorizontal, Pencil, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ActionMenu } from "@/components/ui/action-menu";
+import { EmptyState } from "@/components/ui/empty-state";
 import { Textarea } from "@/components/ui/textarea";
-import { Badge } from "@/components/ui/badge";
 import { Material } from "@/components/ui/material";
 import {
   Dialog,
@@ -29,49 +29,52 @@ function FewShotCard({
   onDelete: () => void;
 }) {
   const { t } = useTranslation();
-  const dotsRef = useRef<HTMLButtonElement>(null);
+  const dotsRef = useRef<HTMLElement>(null);
   const [menuOpen, setMenuOpen] = useState(false);
 
   return (
     <Material
-      className="group relative flex w-full cursor-default flex-col px-3.5 py-3 text-left shadow-geist-sm hover:bg-gray-alpha-200"
+      variant="base"
+      className="group relative flex w-full cursor-default flex-col px-3.5 py-3 text-left hover:bg-gray-alpha-200"
     >
       <div className="flex items-center justify-between mb-2">
         <span className="text-[14px] font-semibold leading-snug text-ds-text">
           {t("config.fewShotExample")} {index + 1}
         </span>
-        <button
+        <Button
           ref={dotsRef}
           type="button"
+          variant="tertiary"
+          size="tiny"
+          iconOnly
           onClick={(e) => {
             e.stopPropagation();
             setMenuOpen((v) => !v);
           }}
-          className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-md border-0 bg-transparent p-0 leading-none text-ds-text-tertiary hover:bg-gray-alpha-300 hover:text-ds-text -mr-1 ${
+          className={`shrink-0 text-ds-text-tertiary hover:bg-gray-alpha-300 hover:text-ds-text -mr-1 shadow-none ${
             menuOpen ? "opacity-100" : "opacity-0 transition-opacity group-hover:opacity-100"
           }`}
           aria-label={t("fewShotEditor.exampleActions")}
-        >
-          <MoreHorizontal size={14} strokeWidth={2} />
-        </button>
+          leftIcon={<MoreHorizontal size={14} strokeWidth={2} />}
+        />
       </div>
 
       <div className="flex flex-col gap-2 leading-relaxed">
         {ex.input ? (
-          <div className="flex items-start gap-2">
-            <Badge variant="blue-subtle" size="sm" className="mt-0.5 shrink-0 text-[10px] font-medium">
-              {t("config.fewShotInputLabel")}
-            </Badge>
-            <span className="line-clamp-1 break-all text-[12px] text-ds-text-secondary mt-0.5">
+          <div className="flex min-w-0 items-center gap-1.5">
+            <p className="shrink-0 text-[12px] font-medium leading-none text-ds-text">
+              {t("config.fewShotInputLabel")}:
+            </p>
+            <span className="min-w-0 truncate text-[12px] text-ds-text-secondary">
               {ex.input}
             </span>
           </div>
         ) : null}
-        <div className="flex items-start gap-2">
-          <Badge variant="green-subtle" size="sm" className="mt-0.5 shrink-0 text-[10px] font-medium">
-            {t("config.fewShotOutputLabel")}
-          </Badge>
-          <span className="line-clamp-1 break-all text-[12px] text-ds-text-secondary mt-0.5">
+        <div className="flex min-w-0 items-center gap-1.5">
+          <p className="shrink-0 text-[12px] font-medium leading-none text-ds-text">
+            {t("config.fewShotOutputLabel")}:
+          </p>
+          <span className="min-w-0 truncate text-[12px] text-ds-text-secondary">
             {ex.output || <span className="italic opacity-50">{t("fewShotEditor.empty")}</span>}
           </span>
         </div>
@@ -84,7 +87,17 @@ function FewShotCard({
           onClose={() => setMenuOpen(false)}
           items={[
             { label: t("config.fewShotEdit"), icon: <Pencil size={14} />, onClick: onEdit },
-            { label: t("config.fewShotDelete"), icon: <Trash2 size={14} />, onClick: onDelete, variant: "danger" },
+            {
+              label: t("config.fewShotDelete"),
+              icon: <Trash2 size={14} />,
+              onClick: onDelete,
+              confirm: {
+                title: t("confirm.deleteExampleTitle"),
+                description: t("confirm.deleteExampleDescription"),
+                actionLabel: t("config.fewShotDelete"),
+              },
+              variant: "danger",
+            },
           ]}
         />
       )}
@@ -141,14 +154,9 @@ export function FewShotEditor({
   return (
     <div className="w-full space-y-3">
       {examples.length === 0 ? (
-        <Material className="flex w-full flex-col gap-1 p-4 text-center shadow-geist-sm">
-          <p className="text-[13px] font-semibold text-ds-text-secondary">
-            {t("config.fewShotEmptyTitle")}
-          </p>
-          <p className="text-[11px] leading-relaxed text-ds-text-tertiary">
-            {t("config.fewShotEmptyDescription")}
-          </p>
-        </Material>
+        <EmptyState.Placeholder className="mx-0 w-full">
+          {t("config.fewShotEmptyDescription")}
+        </EmptyState.Placeholder>
       ) : (
         <div className="flex w-full flex-col gap-2">
           {examples.map((ex, idx) => (
@@ -209,11 +217,12 @@ export function FewShotEditor({
 
           <DialogFooter>
             <div className="flex items-center justify-end w-full gap-2">
-              <Button variant="secondary" onClick={() => setIsModalOpen(false)}>
+              <Button variant="secondary" size="sm" onClick={() => setIsModalOpen(false)}>
                 {t("fewShotEditor.cancel")}
               </Button>
               <Button
                 variant="default"
+                size="sm"
                 onClick={handleSave}
                 disabled={!draftOutput.trim()}
               >

@@ -1,33 +1,38 @@
-import * as React from "react";
-import { cn } from "@/lib/utils";
+import * as React from "react"
+import { cn } from "@/lib/utils"
 
-interface ProgressProps extends React.HTMLAttributes<HTMLDivElement> {
-  value: number;
-  max?: number;
-  indicatorClassName?: string;
+export type ProgressVariant = "default" | "error" | "warning" | "gray"
+
+const VARIANT_COLOR: Record<ProgressVariant, string> = {
+  default: "var(--ds-blue-700)",
+  error:   "var(--ds-red-700)",
+  warning: "var(--ds-amber-700)",
+  gray:    "var(--ds-gray-700)",
 }
 
-const Progress = React.forwardRef<HTMLDivElement, ProgressProps>(
-  ({ className, value, max = 100, indicatorClassName, ...props }, ref) => {
-    const pct = Math.min(100, Math.max(0, (value / max) * 100));
-    return (
-      <div
-        ref={ref}
-        role="progressbar"
-        aria-valuenow={value}
-        aria-valuemin={0}
-        aria-valuemax={max}
-        className={cn("relative h-1 w-full overflow-hidden rounded-full bg-gray-alpha-200", className)}
-        {...props}
-      >
-        <div
-          className={cn("h-full rounded-full bg-primary transition-all duration-500 ease-out", indicatorClassName)}
-          style={{ width: `${pct}%` }}
-        />
-      </div>
-    );
-  },
-);
-Progress.displayName = "Progress";
+export interface ProgressProps extends React.HTMLAttributes<HTMLProgressElement> {
+  value: number
+  max?: number
+  variant?: ProgressVariant
+}
 
-export { Progress };
+function Progress({
+  value,
+  max = 100,
+  variant = "default",
+  className,
+  style,
+  ...props
+}: ProgressProps) {
+  return (
+    <progress
+      value={value}
+      max={max}
+      className={cn("geist-progress", className)}
+      style={{ "--progress-fg": VARIANT_COLOR[variant], ...style } as React.CSSProperties}
+      {...props}
+    />
+  )
+}
+
+export { Progress }

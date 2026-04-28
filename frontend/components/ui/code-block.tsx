@@ -3,7 +3,7 @@
 import React, { useCallback, useMemo, useRef, useState } from "react";
 import { useTheme } from "next-themes";
 import {
-  PrismAsyncLight as SyntaxHighlighter,
+  PrismLight as SyntaxHighlighter,
   type SyntaxHighlighterProps,
 } from "react-syntax-highlighter";
 import bashLanguage from "react-syntax-highlighter/dist/esm/languages/prism/bash";
@@ -48,7 +48,7 @@ type SyntaxTheme = NonNullable<SyntaxHighlighterProps["style"]>;
 type SyntaxLanguageDefinition = Parameters<typeof SyntaxHighlighter.registerLanguage>[1];
 type ResolvedThemeMode = "light" | "dark";
 
-export { PrismAsyncLight as SyntaxHighlighter } from "react-syntax-highlighter";
+export { PrismLight as SyntaxHighlighter } from "react-syntax-highlighter";
 export { type SyntaxHighlighterProps } from "react-syntax-highlighter";
 
 export const CODE_FONT_FAMILY = "var(--font-geist-mono), monospace";
@@ -222,7 +222,7 @@ export function CodeSurface({
           cursor: selectableLines ? "pointer" : "default",
           borderLeft: selectableLines
             ? isSelected
-              ? `2px solid ${isDark ? "var(--ds-blue-700)" : "var(--ds-blue-900)"}`
+              ? "2px solid var(--ds-blue-700)"
               : "2px solid transparent"
             : undefined,
           background: isSelected
@@ -302,7 +302,7 @@ export function CodeBlock({ language, code }: { language: string; code: string }
   const lang = language || "text";
 
   return (
-    <div className="my-6 overflow-hidden rounded-md border border-gray-alpha-400 bg-background-100">
+    <div className="my-3 overflow-hidden rounded-md border border-gray-alpha-400 bg-background-100">
       {/* Header */}
       <div className="flex items-center justify-between pl-3 pr-4 h-12 border-b border-gray-alpha-400 bg-background-200">
         {/* Left: file icon + language label */}
@@ -321,6 +321,7 @@ export function CodeBlock({ language, code }: { language: string; code: string }
             iconOnly
             onClick={handleCopy}
             aria-label="Copy code"
+            className="text-ds-text-tertiary hover:text-ds-text"
           >
             {copied ? <Check size={14} strokeWidth={2} /> : <Copy size={14} strokeWidth={2} />}
           </Button>

@@ -1,16 +1,39 @@
 import json
 
 from fastapi import APIRouter, Depends, Request
-from sqlalchemy import select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from database import UserProfile, UserExperienceProfile, AdaptationDecision
+from database import (
+    AdaptationDecision,
+    AdaptationFeedback,
+    ChatMessage,
+    ChatSession,
+    DailyUsage,
+    InteractionLog,
+    MLFeedback,
+    Project,
+    ProductFeedback,
+    PromptTemplateDB,
+    SessionMetrics,
+    UserEvent,
+    UserExperienceProfile,
+    UserProfile,
+)
 from dependencies import limiter, get_db, get_current_user
+from routers.generate import (
+    get_daily_usage, get_weekly_usage, get_usage_history,
+    DAILY_TOKEN_LIMIT, WEEKLY_TOKEN_LIMIT, _today_utc,
+)
+from sqlalchemy import func as sa_func
 from schemas.api import (
-    ProfilePreferencesUpdate,
-    ProfilePreferencesResponse,
-    DashboardResponse,
+    AccountDeletionResponse,
+    AccountStatsResponse,
+    BulkDeleteResponse,
     DashboardDecisionItem,
+    DashboardResponse,
+    ProfilePreferencesResponse,
+    ProfilePreferencesUpdate,
 )
 
 router = APIRouter()
@@ -64,6 +87,11 @@ def _build_response(
         hidden_templates=json.loads(
             (profile.hidden_templates_json if profile else None) or "[]"
         ),
+        display_name=(profile.display_name if profile else None),
+        notify_level_up=bool(profile.notify_level_up) if profile else True,
+        notify_micro_feedback=bool(profile.notify_micro_feedback) if profile else True,
+        notify_tutor_suggestions=bool(profile.notify_tutor_suggestions) if profile else True,
+        tracking_enabled=bool(profile.tracking_enabled) if profile else True,
     )
 
 
@@ -114,6 +142,17 @@ async def update_preferences(
         profile.language = body.language
     if body.hidden_templates is not None:
         profile.hidden_templates_json = json.dumps(body.hidden_templates)
+    if "display_name" in body.model_fields_set:
+        trimmed = (body.display_name or "").strip()
+        profile.display_name = trimmed or None
+    if body.notify_level_up is not None:
+        profile.notify_level_up = bool(body.notify_level_up)
+    if body.notify_micro_feedback is not None:
+        profile.notify_micro_feedback = bool(body.notify_micro_feedback)
+    if body.notify_tutor_suggestions is not None:
+        profile.notify_tutor_suggestions = bool(body.notify_tutor_suggestions)
+    if body.tracking_enabled is not None:
+        profile.tracking_enabled = bool(body.tracking_enabled)
 
     # Handle experience-profile level fields
     # UserExperienceProfile is the source of truth — always ensure it exists
@@ -212,3 +251,150 @@ async def get_dashboard(
         recent_decisions=decision_items,
         updated_at=exp.updated_at,
     )
+
+
+async def _count(db: AsyncSession, model, user_email: str) -> int:
+    stmt = select(func.count()).select_from(model).where(model.user_email == user_email)
+    result = await db.execute(stmt)
+    return int(result.scalar() or 0)
+
+
+@limiter.limit("30/minute")
+@router.get("/profile/stats", response_model=AccountStatsResponse)
+async def get_account_stats(
+    request: Request,
+    user_email: str = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """User-scoped counters for the settings page."""
+    chats_count = await _count(db, ChatSession, user_email)
+    projects_count = await _count(db, Project, user_email)
+    templates_count = await _count(db, PromptTemplateDB, user_email)
+    events_count = await _count(db, UserEvent, user_email)
+    decisions_count = await _count(db, AdaptationDecision, user_email)
+
+    # Messages count requires a join through ChatSession to stay user-scoped
+    messages_stmt = (
+        select(func.count(ChatMessage.id))
+        .join(ChatSession, ChatMessage.session_id == ChatSession.id)
+        .where(ChatSession.user_email == user_email)
+    )
+    messages_count = int((await db.execute(messages_stmt)).scalar() or 0)
+
+    return AccountStatsResponse(
+        chats_count=chats_count,
+        messages_count=messages_count,
+        projects_count=projects_count,
+        templates_count=templates_count,
+        events_count=events_count,
+        decisions_count=decisions_count,
+    )
+
+
+@limiter.limit("6/minute")
+@router.delete("/profile/chats", response_model=BulkDeleteResponse)
+async def delete_all_chats(
+    request: Request,
+    user_email: str = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete every chat session (and its messages via cascade) owned by user."""
+    chat_ids_stmt = select(ChatSession.id).where(ChatSession.user_email == user_email)
+    chat_ids = [row[0] for row in (await db.execute(chat_ids_stmt)).all()]
+
+    if chat_ids:
+        await db.execute(delete(ChatMessage).where(ChatMessage.session_id.in_(chat_ids)))
+        await db.execute(delete(ChatSession).where(ChatSession.id.in_(chat_ids)))
+        await db.commit()
+
+    return BulkDeleteResponse(ok=True, deleted=len(chat_ids))
+
+
+@limiter.limit("3/minute")
+@router.delete("/profile/account", response_model=AccountDeletionResponse)
+async def delete_account(
+    request: Request,
+    user_email: str = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete all user data. Irreversible."""
+    deleted: dict[str, int] = {}
+
+    chat_ids_stmt = select(ChatSession.id).where(ChatSession.user_email == user_email)
+    chat_ids = [row[0] for row in (await db.execute(chat_ids_stmt)).all()]
+
+    if chat_ids:
+        result = await db.execute(delete(ChatMessage).where(ChatMessage.session_id.in_(chat_ids)))
+        deleted["messages"] = int(result.rowcount or 0)
+
+    scoped_models = [
+        ("chats",                ChatSession),
+        ("projects",             Project),
+        ("templates",            PromptTemplateDB),
+        ("events",               UserEvent),
+        ("session_metrics",      SessionMetrics),
+        ("interaction_logs",     InteractionLog),
+        ("adaptation_decisions", AdaptationDecision),
+        ("adaptation_feedback",  AdaptationFeedback),
+        ("product_feedback",     ProductFeedback),
+        ("ml_feedback",          MLFeedback),
+        ("experience_profile",   UserExperienceProfile),
+        ("profile",              UserProfile),
+    ]
+
+    for key, model in scoped_models:
+        result = await db.execute(
+            delete(model).where(model.user_email == user_email)
+        )
+        deleted[key] = int(result.rowcount or 0)
+
+    await db.commit()
+
+    return AccountDeletionResponse(ok=True, deleted=deleted)
+
+
+@limiter.limit("60/minute")
+@router.get("/profile/usage")
+async def get_usage(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user_email: str = Depends(get_current_user),
+):
+    from datetime import datetime, timezone, timedelta
+    daily_used, daily_limit = await get_daily_usage(db, user_email)
+    weekly_used, weekly_limit = await get_weekly_usage(db, user_email)
+    now = datetime.now(timezone.utc)
+    tomorrow = (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+    days_until_monday = (7 - now.weekday()) % 7 or 7
+    next_monday = (now + timedelta(days=days_until_monday)).replace(hour=0, minute=0, second=0, microsecond=0)
+    return {
+        "daily": {
+            "used": daily_used,
+            "limit": daily_limit,
+            "remaining": max(0, daily_limit - daily_used),
+            "reset_at": tomorrow.isoformat(),
+        },
+        "weekly": {
+            "used": weekly_used,
+            "limit": weekly_limit,
+            "remaining": max(0, weekly_limit - weekly_used),
+            "reset_at": next_monday.isoformat(),
+        },
+        "date": _today_utc(),
+    }
+
+
+@limiter.limit("60/minute")
+@router.get("/profile/usage/history")
+async def get_usage_history_endpoint(
+    request: Request,
+    days: int = 30,
+    page: int = 1,
+    page_size: int = 10,
+    db: AsyncSession = Depends(get_db),
+    user_email: str = Depends(get_current_user),
+):
+    page_size = min(max(1, page_size), 50)
+    page = max(1, page)
+    days = min(max(1, days), 365)
+    return await get_usage_history(db, user_email, days=days, page=page, page_size=page_size)

@@ -1,18 +1,22 @@
 import NextAuth from "next-auth";
 import GitHub from "next-auth/providers/github";
+import Google from "next-auth/providers/google";
 import Resend from "next-auth/providers/resend";
 import { PrismaAdapter } from "@auth/prisma-adapter";
 import { prisma } from "@/lib/prisma";
 
+const providers = [
+  GitHub,
+  ...(process.env.AUTH_GOOGLE_ID && process.env.AUTH_GOOGLE_SECRET ? [Google] : []),
+  Resend({
+    from: "onboarding@resend.dev",
+  }),
+];
+
 export const { handlers, auth, signIn, signOut } = NextAuth({
   adapter: PrismaAdapter(prisma),
   session: { strategy: "jwt" },
-  providers: [
-    GitHub,
-    Resend({
-      from: "onboarding@resend.dev",
-    }),
-  ],
+  providers,
   pages: {
     signIn: "/login",
     verifyRequest: "/login?verify=1",
@@ -27,7 +31,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       if (isAuthApi) return true;
 
       if (isOnLogin) {
-        if (isLoggedIn) return Response.redirect(new URL("/", request.nextUrl));
+        if (isLoggedIn) return Response.redirect(new URL("/chat", request.nextUrl));
         return true;
       }
 

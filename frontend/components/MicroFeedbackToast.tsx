@@ -5,6 +5,7 @@ import { MessageCircleQuestion, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useTranslation } from "@/lib/store/i18nStore";
 import { useMicroFeedbackStore } from "@/lib/store/microFeedbackStore";
+import { useUserLevelStore } from "@/lib/store/userLevelStore";
 
 const AUTO_DISMISS_MS = 20_000;
 
@@ -13,6 +14,7 @@ export function MicroFeedbackToast() {
   const activePrompt = useMicroFeedbackStore((s) => s.activePrompt);
   const answer = useMicroFeedbackStore((s) => s.answer);
   const dismiss = useMicroFeedbackStore((s) => s.dismiss);
+  const notifyMicroFeedback = useUserLevelStore((s) => s.notifyMicroFeedback);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
@@ -25,15 +27,15 @@ export function MicroFeedbackToast() {
     };
   }, [activePrompt, dismiss]);
 
-  if (!activePrompt) return null;
+  if (!activePrompt || !notifyMicroFeedback) return null;
 
   const questionText = t(activePrompt.textKey) ?? activePrompt.textKey;
 
   return (
     <div className="fixed bottom-8 left-1/2 z-50 -translate-x-1/2 animate-toast">
-      <div className="flex items-center gap-3 rounded-xl border border-geist-blue/30 bg-background px-5 py-3.5 shadow-geist-lg min-w-[340px] max-w-[520px]">
-        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-geist-blue/[0.09]">
-          <MessageCircleQuestion size={16} strokeWidth={2} className="text-geist-blue" />
+      <div className="flex items-center gap-3 rounded-xl border border-blue-300 bg-background px-5 py-3.5 shadow-geist-lg min-w-[340px] max-w-[520px]">
+        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-blue-100">
+          <MessageCircleQuestion size={16} strokeWidth={2} className="text-blue-700" />
         </div>
 
         <div className="flex-1 min-w-0">
