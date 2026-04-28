@@ -14,9 +14,6 @@ export const GEIST_RGB: Record<GeistColor, string> = {
   teal: "57,142,74",
 };
 
-export function Divider() {
-  return <div className="h-px bg-gray-alpha-200 opacity-40" />;
-}
 
 export function SectionLabel({ children }: { children: React.ReactNode }) {
   return (
@@ -28,8 +25,8 @@ export function SectionLabel({ children }: { children: React.ReactNode }) {
 
 export function SectionHeader({ icon: Icon, children }: { icon: LucideIcon; children: React.ReactNode }) {
   return (
-    <div className="flex items-center gap-2.5">
-      <Icon size={16} strokeWidth={2} className="shrink-0 text-ds-text-secondary" />
+    <div className="flex items-center gap-2">
+      <Icon size={18} strokeWidth={2} className="shrink-0 text-ds-text" />
       <SectionLabel>{children}</SectionLabel>
     </div>
   );

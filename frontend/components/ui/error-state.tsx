@@ -9,8 +9,10 @@ interface ErrorStateProps {
   description: string;
   actionLabel?: string;
   onAction?: () => void;
-  centered?: boolean;
   className?: string;
+  /** Kept for backward compat, ignored */
+  centered?: boolean;
+  fill?: boolean;
 }
 
 export function ErrorState({
@@ -18,29 +20,22 @@ export function ErrorState({
   description,
   actionLabel,
   onAction,
-  centered = false,
   className,
+  centered: _centered,
+  fill: _fill,
 }: ErrorStateProps) {
-  return (
-    <Note
-      variant="error"
-      size="sm"
-      className={cn(
-        "flex flex-col gap-3",
-        centered ? "items-center text-center" : undefined,
-        className,
-      )}
-    >
-      <div className="space-y-1">
-        {title && <p className="font-semibold">{title}</p>}
-        <p className="opacity-85">{description}</p>
-      </div>
+  const action = actionLabel && onAction ? (
+    <Button type="button" variant="default" size="sm" onClick={onAction}>
+      {actionLabel}
+    </Button>
+  ) : undefined;
 
-      {actionLabel && onAction && (
-        <Button type="button" variant="secondary" size="sm" onClick={onAction}>
-          {actionLabel}
-        </Button>
-      )}
+  return (
+    <Note variant="error" action={action} className={cn(className)}>
+      <div className="space-y-0.5">
+        {title && <p className="font-semibold text-[13px]">{title}</p>}
+        <p className="text-[13px] opacity-90">{description}</p>
+      </div>
     </Note>
   );
 }

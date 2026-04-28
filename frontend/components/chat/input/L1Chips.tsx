@@ -5,6 +5,7 @@ import { User, Smile, FileText } from "lucide-react";
 import { useTemplatesStore } from "@/lib/store/templatesStore";
 import { useTranslation } from "@/lib/store/i18nStore";
 import { Button } from "@/components/ui/button";
+import { EmptyState } from "@/components/ui/empty-state";
 import { DropdownMenu, MenuBtn } from "./DropdownMenu";
 import { trackEvent } from "@/lib/eventTracker";
 
@@ -66,7 +67,7 @@ export function L1Chips({ input, setInput, onSendSuggestion }: L1ChipsProps) {
   const applyPrefix = (prefix: string) => { setInput(input.trim() ? `${prefix}${input}` : prefix); setActiveMenu(null); };
   const applySuffix = (suffix: string) => { setInput(input.trim() ? `${input}${suffix}` : suffix.trimStart()); setActiveMenu(null); };
 
-  const chipActive = "bg-[var(--ds-blue-200)] text-[var(--ds-blue-900)] shadow-[0_0_0_1px_var(--ds-blue-400)] hover:bg-[var(--ds-blue-300)] hover:text-[var(--ds-blue-900)]";
+  const chipActive = "bg-blue-100 text-blue-900 shadow-[0_0_0_1px_var(--ds-blue-300)] hover:bg-blue-200 hover:text-blue-900";
 
   return (
     <>
@@ -134,7 +135,11 @@ export function L1Chips({ input, setInput, onSendSuggestion }: L1ChipsProps) {
       {activeMenu === "templates" && (
         <DropdownMenu anchorEl={getAnchor()} onClose={() => setActiveMenu(null)} minWidth={280}>
           {templates.length === 0 ? (
-            <p className="px-3.5 py-3 text-sm text-ds-text-tertiary">{t("chips.noTemplates")}</p>
+            <div className="p-1.5">
+              <EmptyState.Placeholder>
+                {t("templateManager.noTemplatesDesc")}
+              </EmptyState.Placeholder>
+            </div>
           ) : (
             templates.map((tpl) => (
               <MenuBtn key={tpl.id} column onClick={() => { trackEvent("template_inserted", { template_id: tpl.id }); setInput(tpl.prompt); setActiveMenu(null); }}>

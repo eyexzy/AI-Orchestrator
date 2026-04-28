@@ -17,6 +17,7 @@ export interface SelectProps {
   align?: "start" | "end";
   dropdownMinWidth?: number | string;
   dropdownWidthMode?: "trigger" | "content";
+  triggerWidthMode?: "full" | "content";
 }
 
 type MenuPlacement = "top" | "bottom";
@@ -44,7 +45,8 @@ const Select = React.forwardRef<HTMLDivElement, SelectProps>(
       size = "md",
       align = "start",
       dropdownMinWidth,
-      dropdownWidthMode = "trigger",
+      dropdownWidthMode,
+      triggerWidthMode = "full",
     },
     ref,
   ) => {
@@ -167,7 +169,10 @@ const Select = React.forwardRef<HTMLDivElement, SelectProps>(
     }, [open, scheduleLayoutUpdate]);
 
     const selectedOption = options.find((option) => option.value === value);
-    const isContentDropdown = dropdownWidthMode === "content";
+    const isContentTrigger = triggerWidthMode === "content";
+    const resolvedDropdownWidthMode = dropdownWidthMode
+      ?? (isContentTrigger ? "content" : "trigger");
+    const isContentDropdown = resolvedDropdownWidthMode === "content";
 
     const menuPortal = open && !disabled && mounted && menu && createPortal(
       <div
@@ -209,7 +214,10 @@ const Select = React.forwardRef<HTMLDivElement, SelectProps>(
                     setOpen(false);
                   }}
                   className={cn(
-                    "cursor-pointer whitespace-nowrap rounded-md border-none bg-transparent py-1.5 text-left text-[13px] transition-colors hover:bg-gray-alpha-200 hover:text-ds-text",
+                    "group cursor-pointer whitespace-nowrap rounded-md border-none bg-transparent py-1.5 text-left text-[13px] transition-colors",
+                    isSelected
+                      ? "text-blue-700 hover:bg-blue-100 hover:text-blue-700"
+                      : "text-ds-text hover:bg-gray-alpha-200 hover:text-ds-text",
                     isContentDropdown
                       ? "grid w-full grid-cols-[14px_auto] items-center gap-2 px-3"
                       : "flex w-full items-center gap-2 px-2",
@@ -221,9 +229,15 @@ const Select = React.forwardRef<HTMLDivElement, SelectProps>(
                       ? "flex w-[14px] items-center justify-start"
                       : "flex w-4 items-center justify-center",
                   )}>
-                    {isSelected && <Check size={14} strokeWidth={2.5} className="text-blue-600" />}
+                    {isSelected && <Check size={14} strokeWidth={2.5} className="text-blue-700" />}
                   </div>
-                  <span className={cn(isSelected ? "font-medium text-blue-600" : "text-ds-text-secondary")}>
+                  <span
+                    className={cn(
+                      isSelected
+                        ? "font-medium text-blue-700"
+                        : "text-ds-text",
+                    )}
+                  >
                     {option.label}
                   </span>
                 </button>
@@ -236,7 +250,13 @@ const Select = React.forwardRef<HTMLDivElement, SelectProps>(
     );
 
     return (
-      <div ref={setContainerRef} className="relative inline-block w-full">
+      <div
+        ref={setContainerRef}
+        className={cn(
+          "relative max-w-full",
+          isContentTrigger ? "inline-block w-fit" : "block w-full",
+        )}
+      >
         <button
           type="button"
           disabled={disabled}
@@ -252,16 +272,28 @@ const Select = React.forwardRef<HTMLDivElement, SelectProps>(
               variant: "default",
               size: size === "sm" ? "sm" : "md",
             }),
-            "flex w-full items-center justify-between gap-2 bg-[var(--ds-background-100)] text-ds-text outline-none",
+            "group min-w-0 max-w-full items-center bg-[var(--ds-background-100)] text-ds-text outline-none",
+            isContentTrigger
+              ? "inline-flex"
+              : "flex w-full justify-between",
             disabled && "cursor-not-allowed opacity-50",
-            size === "sm" ? "px-2.5 text-[13px]" : "px-3 text-[14px]",
+            size === "sm" ? "gap-1 px-2 text-[13px]" : "gap-1.5 px-2.5 text-[14px]",
             className,
           )}
         >
-          <span className={cn("truncate", !selectedOption && "text-gray-500")}>
+          <span
+            className={cn(
+              "min-w-0 truncate transition-colors group-hover:text-ds-text",
+              !selectedOption && "text-gray-500 group-hover:text-ds-text-secondary",
+            )}
+          >
             {selectedOption ? selectedOption.label : placeholder || "Select..."}
           </span>
-          <ChevronDown size={14} strokeWidth={1.5} className="shrink-0 text-ds-text-tertiary" />
+          <ChevronDown
+            size={14}
+            strokeWidth={1.5}
+            className="shrink-0 text-ds-text-tertiary transition-colors group-hover:text-ds-text"
+          />
         </button>
         {menuPortal}
       </div>

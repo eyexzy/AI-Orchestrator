@@ -1,11 +1,17 @@
 "use client";
 
 import { useState } from "react";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { actionToast } from "@/components/ui/action-toast";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Frown, Meh, Smile, ThumbsUp, ThumbsDown } from "lucide-react";
-import { toast } from "sonner";
 import { useTranslation } from "@/lib/store/i18nStore";
 import { getErrorMessage } from "@/lib/request";
 import { useUserLevelStore } from "@/lib/store/userLevelStore";
@@ -67,13 +73,13 @@ export function FeedbackModal({ open, onOpenChange }: { open: boolean; onOpenCha
         }
       }
 
-      toast.success(t("feedback.success"));
+      actionToast.success(t("feedback.success"));
       setText("");
       setMood(null);
       setLevelAgree(null);
       onOpenChange(false);
     } catch (err) {
-      toast.error(getErrorMessage(err, t("feedback.error")));
+      actionToast.error(getErrorMessage(err, t("feedback.error")));
     } finally {
       setSending(false);
     }
@@ -89,12 +95,12 @@ export function FeedbackModal({ open, onOpenChange }: { open: boolean; onOpenCha
   return (
     <Dialog open={open} onOpenChange={onOpenChange} onCancel={handleCancel}>
       <DialogContent className="max-w-[440px]">
-        <DialogHeader className="pb-4">
+        <DialogHeader withSeparator={false} className="px-6 pt-6 pb-3">
           <DialogTitle>{t("feedback.title")}</DialogTitle>
           <DialogDescription>{t("feedback.description")}</DialogDescription>
         </DialogHeader>
 
-        <div className="p-6 pt-2 pb-4 space-y-4">
+        <div className="space-y-4 px-6 pb-6">
           <Textarea
             variant="default"
             value={text}
@@ -107,7 +113,7 @@ export function FeedbackModal({ open, onOpenChange }: { open: boolean; onOpenCha
 
           {/* Level agreement — adaptation feedback */}
           <div className="flex items-center justify-between rounded-lg border border-gray-alpha-200 px-3 py-2">
-            <span className="text-[13px] text-ds-text-secondary">
+            <span className="text-[14px] text-ds-text-secondary">
               {t("feedback.levelQuestion")}
             </span>
             <div className="flex items-center gap-1 rounded-full border border-gray-alpha-200 bg-gray-alpha-100 p-0.5">
@@ -119,14 +125,14 @@ export function FeedbackModal({ open, onOpenChange }: { open: boolean; onOpenCha
                   key={id}
                   type="button"
                   variant="tertiary"
-                  size="sm"
+                  size="tiny"
                   iconOnly
                   leftIcon={<Icon size={14} strokeWidth={2} />}
                   onClick={() => setLevelAgree(levelAgree === id ? null : id)}
-                  className={`h-7 w-7 rounded-full p-0 shadow-none ${
+                  className={`rounded-full shadow-none ${
                     levelAgree === id
                       ? "bg-background shadow-sm text-ds-text"
-                      : "text-ds-text-tertiary hover:text-ds-text-secondary hover:bg-gray-alpha-200"
+                      : "text-ds-text-tertiary hover:text-ds-text hover:bg-gray-alpha-200"
                   }`}
                 />
               ))}
@@ -148,10 +154,10 @@ export function FeedbackModal({ open, onOpenChange }: { open: boolean; onOpenCha
                   iconOnly
                   leftIcon={<Icon size={16} strokeWidth={2} />}
                   onClick={() => setMood(id as "sad" | "neutral" | "smile")}
-                  className={`h-8 w-8 rounded-full p-0 shadow-none ${
+                  className={`rounded-full shadow-none ${
                     mood === id
                       ? "bg-background shadow-sm text-ds-text"
-                      : "text-ds-text-tertiary hover:text-ds-text-secondary hover:bg-gray-alpha-200"
+                      : "text-ds-text-tertiary hover:text-ds-text hover:bg-gray-alpha-200"
                   }`}
                 />
               ))}

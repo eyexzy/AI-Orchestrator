@@ -1,10 +1,11 @@
 import { SignJWT } from "jose";
 
+const authSecret = new TextEncoder().encode(process.env.AUTH_SECRET ?? "");
+
 export async function createBackendToken(email: string): Promise<string> {
-  const secret = new TextEncoder().encode(process.env.AUTH_SECRET ?? "");
   return new SignJWT({ email })
     .setProtectedHeader({ alg: "HS256" })
     .setIssuedAt()
     .setExpirationTime("2m")
-    .sign(secret);
+    .sign(authSecret);
 }

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useState } from "react";
 import {
   Lightbulb, Zap, Download, PieChart,
   ArrowUpRight, ArrowDownRight, Minus,
@@ -8,7 +8,46 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Note } from "@/components/ui/note";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Separator } from "@/components/ui/separator";
 import { useUserLevelStore } from "@/lib/store/userLevelStore";
+import { DASHBOARD_STORAGE_KEY, PROFILE_PREFERENCES_CACHE_TTL_MS } from "@/lib/config";
+import { makeScopedStorageKey, readPersistedState, writePersistedState } from "@/lib/persistedState";
+
+function DashboardSkeleton() {
+  return (
+    <div className="space-y-5 px-5 py-4">
+      <div className="flex items-center gap-3">
+        <Skeleton width={40} height={40} className="rounded-xl" />
+        <Skeleton width={156} height={24} />
+      </div>
+
+      <Separator />
+
+      <div className="grid grid-cols-2 gap-2">
+        {Array.from({ length: 4 }).map((_, i) => (
+          <div
+            key={i}
+            className="rounded-xl border border-gray-alpha-200 bg-gray-alpha-100 p-3"
+          >
+            <Skeleton height={56} width="100%" className="rounded-lg" />
+          </div>
+        ))}
+      </div>
+
+      <Separator />
+
+      <div className="space-y-2">
+        <Skeleton height={18} width={112} />
+        <Skeleton height={10} width="100%" shape="pill" />
+      </div>
+
+      <Skeleton height={72} width="100%" className="rounded-xl" />
+      <Skeleton height={136} width="100%" className="rounded-xl" />
+      <Skeleton height={120} width="100%" className="rounded-xl" />
+    </div>
+  );
+}
 
 /* Types */
 
@@ -37,12 +76,57 @@ interface DashboardData {
   updated_at: string | null;
 }
 
+type PersistedDashboardCache = {
+  data: DashboardData;
+  fetchedAt: number;
+};
+
+const dashboardCache = new Map<string, PersistedDashboardCache>();
+const dashboardInflight = new Map<string, Promise<DashboardData | null>>();
+
+function getDashboardCacheKey(userEmail?: string | null): string {
+  return makeScopedStorageKey(DASHBOARD_STORAGE_KEY, userEmail);
+}
+
+function readPersistedDashboardCache(userEmail?: string | null): PersistedDashboardCache | null {
+  const persisted = readPersistedState<PersistedDashboardCache>(getDashboardCacheKey(userEmail));
+  if (!persisted || typeof persisted.fetchedAt !== "number" || !persisted.data) {
+    return null;
+  }
+  return persisted;
+}
+
+function hydrateDashboardCache(userEmail?: string | null): PersistedDashboardCache | null {
+  const cacheKey = getDashboardCacheKey(userEmail);
+  const cached = dashboardCache.get(cacheKey);
+  if (cached) {
+    return cached;
+  }
+
+  const persisted = readPersistedDashboardCache(userEmail);
+  if (persisted) {
+    dashboardCache.set(cacheKey, persisted);
+  }
+  return persisted;
+}
+
+function writeDashboardCache(data: DashboardData, userEmail?: string | null): PersistedDashboardCache {
+  const entry = {
+    data,
+    fetchedAt: Date.now(),
+  };
+  const cacheKey = getDashboardCacheKey(userEmail);
+  dashboardCache.set(cacheKey, entry);
+  writePersistedState(cacheKey, entry);
+  return entry;
+}
+
 /* Palette */
 
-const LEVEL_COLORS: Record<number, string> = {
-  1: "46, 125, 50",
-  2: "0, 100, 245",
-  3: "189, 119, 0",
+const LEVEL_COLORS: Record<number, { text: string; bg: string }> = {
+  1: { text: "var(--ds-green-700)", bg: "var(--ds-green-100)" },
+  2: { text: "var(--ds-blue-700)", bg: "var(--ds-blue-100)" },
+  3: { text: "var(--ds-amber-700)", bg: "var(--ds-amber-100)" },
 };
 
 const LEVEL_NAMES: Record<number, string> = {
@@ -59,7 +143,7 @@ function Bar({ value, max = 100, color }: { value: number; max?: number; color?:
     <div className="relative h-1 w-full overflow-hidden rounded-full bg-gray-alpha-200">
       <div
         className="h-full rounded-full transition-all duration-500"
-        style={{ width: `${pct}%`, background: color ?? "rgb(var(--text-2))" }}
+        style={{ width: `${pct}%`, background: color ?? "var(--ds-gray-900)" }}
       />
     </div>
   );
@@ -169,7 +253,6 @@ function TipCard({
 }
 
 /* Key factors extraction */
-
 function extractKeyFactors(features: Record<string, unknown>): { label: string; value: string; icon: typeof Brain }[] {
   const factors: { label: string; value: string; icon: typeof Brain }[] = [];
 
@@ -207,18 +290,17 @@ function extractKeyFactors(features: Record<string, unknown>): { label: string; 
 }
 
 /* Transition icon */
-
 function TransitionIcon({ action }: { action: string }) {
-  if (action === "promotion") return <ArrowUpRight size={12} className="text-geist-success" />;
-  if (action === "demotion") return <ArrowDownRight size={12} className="text-geist-error" />;
+  if (action === "promotion") return <ArrowUpRight size={12} className="text-green-700" />;
+  if (action === "demotion") return <ArrowDownRight size={12} className="text-red-700" />;
   return <Minus size={12} className="text-ds-text-tertiary" />;
 }
 
 /* Main dashboard */
-
 export function ScoreDashboard() {
   const {
     level,
+    userEmail,
     confidence: localConfidence,
     reasoning,
     score,
@@ -233,21 +315,69 @@ export function ScoreDashboard() {
   const [dashboard, setDashboard] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
 
+  useLayoutEffect(() => {
+    const cached = hydrateDashboardCache(userEmail);
+    if (!cached || cached.data.current_level !== level) {
+      return;
+    }
+
+    setDashboard(cached.data);
+    setLoading(false);
+  }, [level, userEmail]);
+
   useEffect(() => {
     let cancelled = false;
-    setLoading(true);
-    fetch("/api/profile/dashboard")
-      .then((r) => (r.ok ? r.json() : null))
+    const cacheKey = getDashboardCacheKey(userEmail);
+    const cached = hydrateDashboardCache(userEmail);
+    const hasMatchingCache = cached !== null && cached.data.current_level === level;
+    const hasFreshCache =
+      hasMatchingCache &&
+      Date.now() - cached.fetchedAt < PROFILE_PREFERENCES_CACHE_TTL_MS;
+
+    if (hasMatchingCache) {
+      setDashboard(cached.data);
+      setLoading(false);
+    } else {
+      setLoading(true);
+    }
+
+    if (hasFreshCache) {
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    let inflight = dashboardInflight.get(cacheKey);
+    if (!inflight) {
+      inflight = fetch("/api/profile/dashboard")
+        .then((r) => (r.ok ? r.json() : null))
+        .then((data) => {
+          if (data) {
+            writeDashboardCache(data, userEmail);
+          }
+          return data;
+        })
+        .catch(() => null)
+        .finally(() => {
+          dashboardInflight.delete(cacheKey);
+        });
+      dashboardInflight.set(cacheKey, inflight);
+    }
+
+    inflight
       .then((data) => {
         if (!cancelled && data) setDashboard(data);
       })
-      .catch(() => {})
-      .finally(() => { if (!cancelled) setLoading(false); });
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
     return () => { cancelled = true; };
-  }, [level]); // re-fetch when level changes
+  }, [level, userEmail]); // re-fetch when level changes
 
   const accent = LEVEL_COLORS[level] ?? LEVEL_COLORS[1];
   const progress = progressToNext(normalizedScore, level, thresholds);
+  const accentText = accent.text;
+  const accentBg = accent.bg;
 
   // Use persisted data when available, local state as fallback
   const ruleScore = dashboard?.rule_score ?? (hasAnalyzed ? score : null);
@@ -258,17 +388,19 @@ export function ScoreDashboard() {
   const recentDecisions = dashboard?.recent_decisions ?? [];
   const keyFactors = extractKeyFactors(profileFeatures);
 
+  if (loading && !dashboard) {
+    return <DashboardSkeleton />;
+  }
+
   if (!hasAnalyzed && !dashboard) {
     return (
       <div className="flex flex-col items-center justify-center py-20 text-center">
         <div className="mb-3 opacity-20">
           <PieChart size={32} strokeWidth={2} />
         </div>
-        <p className="text-[15px] text-ds-text-secondary">
-          {loading ? "Loading profile..." : "Waiting for input"}
-        </p>
+        <p className="text-[15px] text-ds-text-secondary">Waiting for input</p>
         <p className="mt-1 text-xs text-ds-text-tertiary">
-          {loading ? "" : "Send a message to see the analysis"}
+          Send a message to see the analysis
         </p>
       </div>
     );
@@ -281,7 +413,7 @@ export function ScoreDashboard() {
         <div className="flex items-center gap-3">
           <div
             className="flex h-10 w-10 items-center justify-center rounded-xl font-mono text-sm font-bold"
-            style={{ backgroundColor: `rgba(${accent}, 0.12)`, color: `rgb(${accent})` }}
+            style={{ backgroundColor: accentBg, color: accentText }}
           >
             {level}
           </div>
@@ -301,7 +433,7 @@ export function ScoreDashboard() {
                 key={d}
                 className="h-1.5 w-1.5 rounded-full"
                 style={{
-                  background: `rgb(${accent})`,
+                  background: accentText,
                   animation: `pulse-dot 1.2s ${d}ms infinite`,
                 }}
               />
@@ -347,7 +479,7 @@ export function ScoreDashboard() {
                 {score.toFixed(1)}/15.0
               </span>
             </div>
-            <Bar value={progress.percent} color={`rgb(${accent})`} />
+            <Bar value={progress.percent} color={accentText} />
             <p className="text-xs text-ds-text-tertiary">{progress.label}</p>
           </div>
         </>
@@ -480,7 +612,6 @@ export function ScoreDashboard() {
 }
 
 /* Export Button */
-
 function ExportButton() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -540,7 +671,7 @@ function ExportButton() {
         {loading ? "Exporting..." : "Export CSV"}
       </Button>
       {error && (
-        <Note variant="error" size="sm" className="py-2 text-center">
+        <Note variant="error" className="py-2">
           {error}
         </Note>
       )}

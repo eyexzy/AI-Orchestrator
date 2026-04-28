@@ -40,7 +40,7 @@ export function L3StrategyChips({
         onClick={handleCoT}
         leftIcon={<span className={cn("font-mono text-xs font-bold", cotActive ? "text-amber-700" : "text-ds-text-tertiary")}>+</span>}
         className={cn(
-          cotActive && "bg-[var(--ds-amber-200)] text-[var(--ds-amber-900)] shadow-[0_0_0_1px_var(--ds-amber-400)] hover:bg-[var(--ds-amber-300)] hover:text-[var(--ds-amber-900)]",
+          cotActive && "bg-amber-100 text-amber-900 shadow-[0_0_0_1px_var(--ds-amber-300)] hover:bg-amber-200 hover:text-amber-900",
         )}
         title={t("chips.cotTitle")}
       >
@@ -55,7 +55,7 @@ export function L3StrategyChips({
         onClick={handleStepBack}
         leftIcon={<span className={cn("font-mono text-xs font-bold", sbActive ? "text-teal-700" : "text-ds-text-tertiary")}>+</span>}
         className={cn(
-          sbActive && "bg-[var(--ds-teal-200)] text-[var(--ds-teal-900)] shadow-[0_0_0_1px_var(--ds-teal-400)] hover:bg-[var(--ds-teal-300)] hover:text-[var(--ds-teal-900)]",
+          sbActive && "bg-teal-100 text-teal-900 shadow-[0_0_0_1px_var(--ds-teal-300)] hover:bg-teal-200 hover:text-teal-900",
         )}
         title={t("chips.stepBackTitle")}
       >

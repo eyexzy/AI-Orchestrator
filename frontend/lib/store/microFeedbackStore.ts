@@ -10,7 +10,11 @@ export type MicroPromptId =
   | "low_confidence_self_assess"
   | "help_series_check"
   | "scenario_complete"
-  | "periodic_check";
+  | "periodic_check"
+  | "response_clarity"
+  | "response_fit"
+  | "tutor_helpfulness"
+  | "prompt_difficulty";
 
 export interface MicroPrompt {
   id: MicroPromptId;
@@ -67,6 +71,46 @@ export const MICRO_PROMPTS: Record<MicroPromptId, MicroPrompt> = {
     options: [
       { value: "agree", labelKey: "microFeedback.yes" },
       { value: "disagree", labelKey: "microFeedback.no" },
+    ],
+  },
+  response_clarity: {
+    id: "response_clarity",
+    questionType: "response_clarity",
+    textKey: "microFeedback.responseClarity",
+    options: [
+      { value: "very_clear", labelKey: "microFeedback.veryclear" },
+      { value: "ok", labelKey: "microFeedback.ok" },
+      { value: "confusing", labelKey: "microFeedback.confusing" },
+    ],
+  },
+  response_fit: {
+    id: "response_fit",
+    questionType: "response_fit",
+    textKey: "microFeedback.responseFit",
+    options: [
+      { value: "spot_on", labelKey: "microFeedback.spotOn" },
+      { value: "close", labelKey: "microFeedback.close" },
+      { value: "missed", labelKey: "microFeedback.missed" },
+    ],
+  },
+  tutor_helpfulness: {
+    id: "tutor_helpfulness",
+    questionType: "tutor_helpfulness",
+    textKey: "microFeedback.tutorHelpfulness",
+    options: [
+      { value: "very_helpful", labelKey: "microFeedback.veryHelpful" },
+      { value: "somewhat", labelKey: "microFeedback.somewhat" },
+      { value: "not_helpful", labelKey: "microFeedback.notHelpful" },
+    ],
+  },
+  prompt_difficulty: {
+    id: "prompt_difficulty",
+    questionType: "prompt_difficulty",
+    textKey: "microFeedback.promptDifficulty",
+    options: [
+      { value: "easy", labelKey: "microFeedback.easy" },
+      { value: "normal", labelKey: "microFeedback.normal" },
+      { value: "hard", labelKey: "microFeedback.hard" },
     ],
   },
 };
@@ -151,7 +195,30 @@ export const useMicroFeedbackStore = create<MicroFeedbackState>((set, get) => ({
 
     // Dynamic import to avoid circular deps
     const { useUserLevelStore } = await import("./userLevelStore");
-    const { level, sessionId, chatId } = useUserLevelStore.getState();
+    const {
+      level, sessionId, chatId, metrics, confidence, normalizedScore, hasAnalyzed,
+    } = useUserLevelStore.getState();
+
+    const featureSnapshot = {
+      ui_level: level,
+      normalized_score: normalizedScore,
+      confidence,
+      has_analyzed: hasAnalyzed,
+      session_message_count: metrics.sessionMessageCount,
+      avg_prompt_length: metrics.avgPromptLength,
+      chars_per_second: metrics.charsPerSecond,
+      changed_temperature: metrics.changedTemperature,
+      changed_model: metrics.changedModel,
+      used_system_prompt: metrics.usedSystemPrompt,
+      used_variables: metrics.usedVariables,
+      advanced_features_count: metrics.advancedFeaturesCount,
+      tooltip_click_count: metrics.tooltipClickCount,
+      suggestion_click_count: metrics.suggestionClickCount,
+      cancel_action_count: metrics.cancelActionCount,
+      level_transition_count: metrics.levelTransitionCount,
+      session_duration_seconds: metrics.sessionDurationSeconds,
+      prompt_shown_count: get().shownTimestamps.length,
+    };
 
     try {
       await fetch("/api/adaptation-feedback", {
@@ -163,7 +230,7 @@ export const useMicroFeedbackStore = create<MicroFeedbackState>((set, get) => ({
           ui_level_at_time: level,
           question_type: questionType,
           answer_value: value,
-          feature_snapshot: {},
+          feature_snapshot: featureSnapshot,
         }),
       });
     } catch {

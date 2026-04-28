@@ -34,9 +34,9 @@ const buttonVariants = cva(
         tertiary:
           "bg-transparent text-[var(--ds-gray-1000)] shadow-none hover:bg-[var(--ds-gray-100)] disabled:bg-transparent disabled:text-[var(--ds-gray-700)]",
         error:
-          "bg-[var(--ds-red-800)] text-[var(--geist-background)] shadow-none hover:bg-[var(--ds-red-900)] disabled:bg-[var(--ds-gray-100)] disabled:text-[var(--ds-gray-700)]",
+          "bg-[var(--ds-red-700)] text-white shadow-none hover:bg-[var(--ds-red-800)] disabled:bg-[var(--ds-gray-100)] disabled:text-[var(--ds-gray-700)]",
         warning:
-          "bg-[var(--ds-amber-800)] text-[var(--geist-background)] shadow-none hover:bg-[var(--ds-amber-900)] disabled:bg-[var(--ds-gray-100)] disabled:text-[var(--ds-gray-700)]",
+          "bg-[var(--ds-amber-700)] text-white shadow-none hover:bg-[var(--ds-amber-800)] disabled:bg-[var(--ds-gray-100)] disabled:text-[var(--ds-gray-700)]",
         link:
           "bg-transparent text-[var(--ds-gray-1000)] shadow-none hover:underline underline-offset-4 disabled:bg-transparent disabled:text-[var(--ds-gray-700)] disabled:no-underline",
       },

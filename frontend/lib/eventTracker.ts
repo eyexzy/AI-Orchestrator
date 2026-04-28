@@ -15,12 +15,15 @@ let queue: QueuedEvent[] = [];
 let flushTimer: ReturnType<typeof setInterval> | null = null;
 let sessionIdAccessor: (() => string) | null = null;
 let chatIdAccessor: (() => string | null) | null = null;
+let trackingEnabledAccessor: (() => boolean) | null = null;
 
 /** Register accessors so the tracker can read current session/chat IDs lazily. */
 export function initEventTracker(opts: {
   getSessionId: () => string;
   getChatId: () => string | null;
+  getTrackingEnabled?: () => boolean;
 }) {
+  trackingEnabledAccessor = opts.getTrackingEnabled ?? null;
   sessionIdAccessor = opts.getSessionId;
   chatIdAccessor = opts.getChatId;
 
@@ -38,6 +41,8 @@ export function trackEvent(
   payload: EventPayload = {},
   context: EventPayload = {},
 ) {
+  if (trackingEnabledAccessor && !trackingEnabledAccessor()) return;
+
   queue.push({
     event_type: eventType,
     session_id: sessionIdAccessor?.() ?? null,

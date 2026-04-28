@@ -118,6 +118,7 @@ function TableBlock({ children }: { children: React.ReactNode }) {
             iconOnly
             onClick={handleCopy}
             aria-label="Copy table"
+            className="text-ds-text-tertiary hover:text-ds-text"
           >
             {copied ? <Check size={14} strokeWidth={2} /> : <Copy size={14} strokeWidth={2} />}
           </Button>
@@ -153,9 +154,9 @@ function TaskListItem({ checked, children }: { checked?: boolean; children: Reac
     <li className="md-task-item">
       <span className="md-task-check">
         {checked ? (
-          <CheckSquare size={16} strokeWidth={2} className="text-[var(--ds-blue-700)]" />
+          <CheckSquare size={16} strokeWidth={2} className="text-blue-700" />
         ) : (
-          <Square size={16} strokeWidth={2} className="text-[var(--ds-gray-500)]" />
+          <Square size={16} strokeWidth={2} className="text-gray-500" />
         )}
       </span>
       <span className={checked ? "md-task-done" : ""}>{children}</span>

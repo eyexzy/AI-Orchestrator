@@ -1,13 +1,17 @@
 import { GENERATION_PREFERENCES_STORAGE_KEY } from "@/lib/config";
+import { makeScopedStorageKey, readPersistedState, writePersistedState } from "@/lib/persistedState";
 
 export interface GenerationPreferences {
   model?: string;
+  compareModelA?: string;
+  compareModelB?: string;
   temperature?: number;
   topP?: number;
   maxTokens?: number;
   system?: string;
   variables?: Record<string, string>;
   compareEnabled?: boolean;
+  rawJsonEnabled?: boolean;
   selfConsistencyEnabled?: boolean;
   fewShotExamples?: Array<{ input: string; output: string }>;
 }
@@ -24,25 +28,25 @@ function isBoolean(value: unknown): value is boolean {
   return typeof value === "boolean";
 }
 
-export function readGenerationPreferences(): GenerationPreferences {
-  if (typeof window === "undefined") {
-    return {};
-  }
+function getGenerationPreferencesKey(userEmail?: string | null): string {
+  return makeScopedStorageKey(GENERATION_PREFERENCES_STORAGE_KEY, userEmail);
+}
 
+export function readGenerationPreferences(userEmail?: string | null): GenerationPreferences {
   try {
-    const raw = window.localStorage.getItem(GENERATION_PREFERENCES_STORAGE_KEY);
-    if (!raw) return {};
-
-    const parsed = JSON.parse(raw);
+    const parsed = readPersistedState<unknown>(getGenerationPreferencesKey(userEmail));
     if (!isRecord(parsed)) return {};
 
     const result: GenerationPreferences = {
       model: typeof parsed.model === "string" ? parsed.model : undefined,
+      compareModelA: typeof parsed.compareModelA === "string" ? parsed.compareModelA : undefined,
+      compareModelB: typeof parsed.compareModelB === "string" ? parsed.compareModelB : undefined,
       temperature: isFiniteNumber(parsed.temperature) ? parsed.temperature : undefined,
       topP: isFiniteNumber(parsed.topP) ? parsed.topP : undefined,
       maxTokens: isFiniteNumber(parsed.maxTokens) ? parsed.maxTokens : undefined,
       system: typeof parsed.system === "string" ? parsed.system : undefined,
       compareEnabled: isBoolean(parsed.compareEnabled) ? parsed.compareEnabled : undefined,
+      rawJsonEnabled: isBoolean(parsed.rawJsonEnabled) ? parsed.rawJsonEnabled : undefined,
       selfConsistencyEnabled: isBoolean(parsed.selfConsistencyEnabled) ? parsed.selfConsistencyEnabled : undefined,
     };
 
@@ -72,16 +76,10 @@ export function readGenerationPreferences(): GenerationPreferences {
 
 export function writeGenerationPreferences(
   prefs: GenerationPreferences,
+  userEmail?: string | null,
 ): void {
-  if (typeof window === "undefined") {
-    return;
-  }
-
   try {
-    window.localStorage.setItem(
-      GENERATION_PREFERENCES_STORAGE_KEY,
-      JSON.stringify(prefs),
-    );
+    writePersistedState(getGenerationPreferencesKey(userEmail), prefs);
   } catch {
   }
 }

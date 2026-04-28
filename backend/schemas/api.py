@@ -4,7 +4,6 @@ from typing import Literal, Optional
 from pydantic import BaseModel, Field
 
 # Analyze endpoint schemas
-
 class BehavioralMetrics(BaseModel):
     chars_per_second:            float = Field(default=0, ge=0, le=50.0)
     session_message_count:       int   = Field(default=0, ge=0, le=10000)
@@ -55,10 +54,16 @@ class AnalyzeResponse(BaseModel):
 
 
 # Generate endpoint schemas
-
 class HistoryMessage(BaseModel):
-    role:    str  # "user" "assistant"
+    role:    str # "user" "assistant"
     content: str
+
+
+class InlineAttachment(BaseModel):
+    """File sent inline as base64 — processed directly by the LLM (vision/document)."""
+    filename: str
+    mime_type: str
+    data: str  # base64-encoded file bytes
 
 
 class GenerateRequest(BaseModel):
@@ -66,12 +71,17 @@ class GenerateRequest(BaseModel):
     system_message: str = ""
     model:          str = "gemini-2.0-flash"
     temperature:    float = Field(default=0.7, ge=0.0, le=2.0)
-    max_tokens:     int   = Field(default=1024, ge=1, le=4096)
+    max_tokens:     int   = Field(default=2048, ge=1, le=4096)
     top_p:          float = Field(default=1.0, ge=0.0, le=1.0)
     stream:         bool  = False
     session_id:     str | None = None
     history:        list[HistoryMessage] = Field(default_factory=list)
     history_limit:  int = Field(default=20, ge=0, le=100)
+    continuation_text: str = ""
+    continuation_message_id: int | None = None
+    attachment_ids: list[str] = Field(default_factory=list)
+    inline_attachments: list[InlineAttachment] = Field(default_factory=list)
+    project_id: str | None = None
 
 
 MultiGenerateMode = Literal["compare", "self_consistency"]
@@ -85,13 +95,14 @@ class MultiGenerateRequest(BaseModel):
     compare_model:       str | None = None
     compare_model_label: str | None = None
     temperature:         float = Field(default=0.7, ge=0.0, le=2.0)
-    max_tokens:          int   = Field(default=1024, ge=1, le=4096)
+    max_tokens:          int   = Field(default=2048, ge=1, le=4096)
     top_p:               float = Field(default=1.0, ge=0.0, le=1.0)
     session_id:          str
     history:             list[HistoryMessage] = Field(default_factory=list)
     history_limit:       int = Field(default=20, ge=0, le=100)
     mode:                MultiGenerateMode
     run_count:           int = Field(default=3, ge=2, le=5)
+    project_id:          str | None = None
 
 
 class UsageStats(BaseModel):
@@ -112,7 +123,7 @@ class GenerateResponse(BaseModel):
 
 class RefineRequest(BaseModel):
     prompt: str = Field(..., max_length=20000)
-    language: Optional[str] = None          # "en" | "uk"; auto-detected if None
+    language: Optional[str] = None # "en" | "uk"; auto-detected if None
     level: Optional[int] = Field(default=None, ge=1, le=3)
     clarification_answers: Optional[dict[str, str]] = None
 
@@ -137,15 +148,22 @@ class TutorReviewResponse(BaseModel):
 class CreateChatRequest(BaseModel):
     user_email: str = "anonymous"
     title:      str = "Новий чат"
+    project_id: Optional[str] = None
 
 
 class UpdateChatRequest(BaseModel):
     title: Optional[str] = None
     is_favorite: Optional[bool] = None
+    project_id: Optional[str] = None
+
+
+class ForkChatRequest(BaseModel):
+    message_id: int = Field(..., ge=1)
+    title: Optional[str] = Field(default=None, max_length=255)
+    project_id: Optional[str] = None
 
 
 # ML retrain schema
-
 class RetrainResponse(BaseModel):
     ok:             bool
     message:        str
@@ -163,8 +181,30 @@ class RetrainResponse(BaseModel):
 
 
 # Template schemas
-
 CategoryColor = Literal["gray", "blue", "purple", "pink", "red", "amber", "green", "teal"]
+ProjectAccentColor = Literal["gray", "blue", "purple", "pink", "red", "amber", "green", "teal"]
+ProjectIconName = Literal[
+    "folder",
+    "kanban",
+    "briefcase",
+    "graduation",
+    "notebook",
+    "book",
+    "code",
+    "flask",
+    "brain",
+    "palette",
+    "landmark",
+    "globe",
+    "plane",
+    "camera",
+    "music",
+    "megaphone",
+    "heart",
+    "gift",
+    "money",
+    "sparkles",
+]
 
 
 class TemplateBase(BaseModel):
@@ -206,40 +246,117 @@ class ReorderItem(BaseModel):
 
 
 # Chat search schema
-
 class ChatSearchResult(BaseModel):
     chat_id:         str
     chat_title:      str
+    project_id:      str | None = None
+    project_name:    str | None = None
     message_id:      int | None = None
     message_content: str | None = None
     role:            str | None = None
     updated_at:      str
 
 
-# Profile preferences schemas
+class ProjectBase(BaseModel):
+    name: str = Field(..., min_length=1, max_length=255)
+    description: str = Field(default="", max_length=2000)
+    accent_color: ProjectAccentColor = "blue"
+    icon_name: ProjectIconName = "folder"
+    starter_prompt: str = Field(default="", max_length=2000)
+    system_hint: str = Field(default="", max_length=4000)
+    is_favorite: bool = False
 
+
+class ProjectCreate(ProjectBase):
+    pass
+
+
+class ProjectUpdate(BaseModel):
+    name: Optional[str] = Field(default=None, min_length=1, max_length=255)
+    description: Optional[str] = Field(default=None, max_length=2000)
+    accent_color: Optional[ProjectAccentColor] = None
+    icon_name: Optional[ProjectIconName] = None
+    starter_prompt: Optional[str] = Field(default=None, max_length=2000)
+    system_hint: Optional[str] = Field(default=None, max_length=4000)
+    is_favorite: Optional[bool] = None
+
+
+class ProjectResponse(ProjectBase):
+    id: str
+    chat_count: int = 0
+    source_count: int = 0
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+
+class ProjectSourceResponse(BaseModel):
+    id: str
+    project_id: str
+    file_id: str
+    title: str | None = None
+    filename: str
+    mime_type: str
+    size_bytes: int
+    created_at: datetime | None = None
+    thumbnail_data: str | None = None  # base64 for images only
+
+
+class AddTextSourceRequest(BaseModel):
+    title: str = Field(..., min_length=1, max_length=255)
+    content: str = Field(..., min_length=1, max_length=50000)
+
+
+# Profile preferences schemas
 class ProfilePreferencesUpdate(BaseModel):
-    theme:                Optional[str] = None   # "light" "dark" "system"
-    language:             Optional[str] = None   # "en" "uk"
-    manual_level_override: Optional[int] = Field(default=None, ge=1, le=3)
-    hidden_templates:     Optional[list[str]] = None
-    self_assessed_level:  Optional[int] = Field(default=None, ge=1, le=3)
-    onboarding_completed: Optional[bool] = None
+    theme:                     Optional[str] = None # "light" "dark" "system"
+    language:                  Optional[str] = None # "en" "uk"
+    manual_level_override:     Optional[int] = Field(default=None, ge=1, le=3)
+    hidden_templates:          Optional[list[str]] = None
+    self_assessed_level:       Optional[int] = Field(default=None, ge=1, le=3)
+    onboarding_completed:      Optional[bool] = None
+    display_name:              Optional[str] = Field(default=None, max_length=120)
+    notify_level_up:           Optional[bool] = None
+    notify_micro_feedback:     Optional[bool] = None
+    notify_tutor_suggestions:  Optional[bool] = None
+    tracking_enabled:          Optional[bool] = None
 
 
 class ProfilePreferencesResponse(BaseModel):
-    theme:                str
-    language:             str
-    current_level:        int = Field(default=1, ge=1, le=3)
-    initial_level:        int = Field(default=1, ge=1, le=3)
-    self_assessed_level:  Optional[int] = None
-    manual_level_override: Optional[int] = None
-    onboarding_completed: bool = False
-    hidden_templates:     list[str] = Field(default_factory=list)
+    theme:                     str
+    language:                  str
+    current_level:             int = Field(default=1, ge=1, le=3)
+    initial_level:             int = Field(default=1, ge=1, le=3)
+    self_assessed_level:       Optional[int] = None
+    manual_level_override:     Optional[int] = None
+    onboarding_completed:      bool = False
+    hidden_templates:          list[str] = Field(default_factory=list)
+    display_name:              Optional[str] = None
+    notify_level_up:           bool = True
+    notify_micro_feedback:     bool = True
+    notify_tutor_suggestions:  bool = True
+    tracking_enabled:          bool = True
+
+
+class AccountStatsResponse(BaseModel):
+    chats_count:          int = 0
+    messages_count:       int = 0
+    projects_count:       int = 0
+    templates_count:      int = 0
+    events_count:         int = 0
+    decisions_count:      int = 0
+
+
+class BulkDeleteResponse(BaseModel):
+    ok:                   bool = True
+    deleted:              int = 0
+
+
+class AccountDeletionResponse(BaseModel):
+    ok:                   bool = True
+    deleted:              dict = Field(default_factory=dict)
 
 
 # User event schemas (Layer 1)
-
 class UserEventCreate(BaseModel):
     session_id:         str | None = None
     chat_id:            str | None = None
@@ -269,7 +386,6 @@ class UserEventResponse(BaseModel):
 
 
 # Session metrics schemas (Layer 2)
-
 class SessionMetricsResponse(BaseModel):
     id:                       int
     user_email:               str
@@ -291,7 +407,6 @@ class SessionMetricsResponse(BaseModel):
 
 
 # User experience profile schemas (Layer 3)
-
 class UserExperienceProfileResponse(BaseModel):
     user_email:            str
     self_assessed_level:   int | None = None
@@ -308,7 +423,6 @@ class UserExperienceProfileResponse(BaseModel):
 
 
 # Adaptation feedback schemas
-
 class AdaptationFeedbackCreate(BaseModel):
     session_id:               str | None = None
     chat_id:                  str | None = None
@@ -333,7 +447,6 @@ class AdaptationFeedbackResponse(BaseModel):
 
 
 # Adaptation decision schemas (Layer 6)
-
 class AdaptationDecisionResponse(BaseModel):
     id:                     int
     user_email:             str
@@ -352,8 +465,17 @@ class AdaptationDecisionResponse(BaseModel):
     created_at:             datetime | None = None
 
 
-# Dashboard schemas (user-scoped)
+# File upload schemas
+class UploadedFileResponse(BaseModel):
+    id: str
+    filename: str
+    mime_type: str
+    size_bytes: int
+    extracted_text: str
+    created_at: datetime | None = None
 
+
+# Dashboard schemas (user-scoped)
 class DashboardDecisionItem(BaseModel):
     rule_score:         float | None = None
     rule_level:         int | None = None

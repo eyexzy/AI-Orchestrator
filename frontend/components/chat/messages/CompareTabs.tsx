@@ -46,6 +46,12 @@ export function CompareTabs({
         modelLabel: source.modelLabel,
         tokens: source.total_tokens,
         latency_ms: source.latency_ms,
+        generation_summary: {
+          duration_ms: source.latency_ms,
+          first_token_ms: source.latency_ms,
+          estimated_tokens: source.total_tokens,
+          model_label: source.modelLabel,
+        },
       });
     },
     [messageId, modelA, modelB, resolveMultiResponse],

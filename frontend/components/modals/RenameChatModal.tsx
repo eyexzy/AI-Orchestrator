@@ -59,12 +59,12 @@ export function RenameChatModal({
     <Dialog open={open} onOpenChange={onOpenChange} onCancel={handleClose}>
       <DialogContent className="max-w-[540px]">
         <form onSubmit={handleSubmit}>
-          <DialogHeader>
+          <DialogHeader withSeparator={false} className="px-6 pt-6 pb-2">
             <DialogTitle>{t("renameChat.title")}</DialogTitle>
           </DialogHeader>
 
-          <div className="px-6 py-4">
-            <label className="mb-1.5 block text-[13px] font-medium text-ds-text">
+          <div className="space-y-2 px-6 pb-4">
+            <label className="block text-[13.5px] text-ds-text-secondary">
               {t("renameChat.label")}
             </label>
             <Input
@@ -79,12 +79,12 @@ export function RenameChatModal({
             />
           </div>
 
-          <DialogFooter>
+          <DialogFooter withSeparator={false} className="px-6 pt-1 pb-6">
             <div className="flex w-full items-center justify-end gap-2">
-              <Button type="button" variant="secondary" onClick={handleClose} disabled={isSaving}>
+              <Button type="button" variant="secondary" size="sm" onClick={handleClose} disabled={isSaving}>
                 {t("renameChat.cancel")}
               </Button>
-              <Button type="submit" variant="default" disabled={!canSave}>
+              <Button type="submit" variant="default" size="sm" disabled={!canSave}>
                 {isSaving ? t("renameChat.saving") : t("renameChat.save")}
               </Button>
             </div>

@@ -206,7 +206,6 @@ class InteractionLog(Base):
 
 
 # User profile (hysteresis state) — keyed by user_email
-
 class UserProfile(Base):
     __tablename__ = "user_profiles"
 
@@ -217,24 +216,55 @@ class UserProfile(Base):
     language = Column(String(8), default="en")
     manual_level_override = Column(Integer, nullable=True)
     hidden_templates_json = Column(Text, default="[]")
+    display_name = Column(String(120), nullable=True)
+    notify_level_up = Column(Boolean, default=True, nullable=False)
+    notify_micro_feedback = Column(Boolean, default=True, nullable=False)
+    notify_tutor_suggestions = Column(Boolean, default=True, nullable=False)
+    tracking_enabled = Column(Boolean, default=True, nullable=False)
     updated_at = Column(DateTime(timezone=True), default=_now, onupdate=_now)
 
 
 # Chat history
+class Project(Base):
+    __tablename__ = "projects"
+    __table_args__ = (
+        Index("ix_projects_user_email_updated_at", "user_email", "updated_at"),
+    )
+
+    id = Column(String(36), primary_key=True, default=_uuid)
+    user_email = Column(String(255), index=True, nullable=False, default="anonymous")
+    name = Column(String(255), nullable=False, default="New Project")
+    description = Column(Text, default="")
+    accent_color = Column(String(32), default="blue")
+    icon_name = Column(String(64), default="folder")
+    starter_prompt = Column(Text, default="")
+    system_hint = Column(Text, default="")
+    is_favorite = Column(Boolean, default=False)
+    created_at = Column(DateTime(timezone=True), default=_now)
+    updated_at = Column(DateTime(timezone=True), default=_now, onupdate=_now)
+
+    chats = relationship("ChatSession", back_populates="project")
+    sources = relationship("ProjectSource", back_populates="project", cascade="all, delete-orphan")
+
 
 class ChatSession(Base):
     __tablename__ = "chat_sessions"
     __table_args__ = (
         Index("ix_chat_sessions_user_email_updated_at", "user_email", "updated_at"),
+        Index("ix_chat_sessions_project_id_updated_at", "project_id", "updated_at"),
     )
 
     id = Column(String(36), primary_key=True, default=_uuid)
     user_email = Column(String(255), index=True, default="anonymous")
     title = Column(String(255), default="Новий чат")
     is_favorite = Column(Boolean, default=False)
+    project_id = Column(String(36), ForeignKey("projects.id", ondelete="SET NULL"), index=True, nullable=True)
+    parent_chat_id = Column(String(36), ForeignKey("chat_sessions.id", ondelete="SET NULL"), index=True, nullable=True)
+    forked_from_message_id = Column(Integer, index=True, nullable=True)
     created_at = Column(DateTime(timezone=True), default=_now)
     updated_at = Column(DateTime(timezone=True), default=_now, onupdate=_now)
 
+    project = relationship("Project", back_populates="chats")
     messages = relationship(
         "ChatMessage",
         back_populates="session",
@@ -259,8 +289,43 @@ class ChatMessage(Base):
     session = relationship("ChatSession", back_populates="messages")
 
 
-# ML feedback (replaces ml_feedback.csv)
+# Uploaded files for attachment context injection
+class UploadedFile(Base):
+    __tablename__ = "uploaded_files"
+    __table_args__ = (
+        Index("ix_uploaded_files_user_email_created_at", "user_email", "created_at"),
+    )
 
+    id = Column(String(36), primary_key=True, default=_uuid)
+    user_email = Column(String(255), index=True, nullable=False, default="anonymous")
+    filename = Column(String(255), nullable=False)
+    mime_type = Column(String(128), nullable=False)
+    size_bytes = Column(Integer, nullable=False)
+    storage_path = Column(String(512), nullable=False)
+    extracted_text = Column(Text, default="")
+    created_at = Column(DateTime(timezone=True), default=_now, index=True)
+
+    project_sources = relationship("ProjectSource", back_populates="file", cascade="all, delete-orphan")
+
+
+class ProjectSource(Base):
+    """Junction table linking uploaded files to projects as persistent knowledge sources."""
+    __tablename__ = "project_sources"
+    __table_args__ = (
+        Index("ix_project_sources_project_id_created_at", "project_id", "created_at"),
+    )
+
+    id = Column(String(36), primary_key=True, default=_uuid)
+    project_id = Column(String(36), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True)
+    file_id = Column(String(36), ForeignKey("uploaded_files.id", ondelete="CASCADE"), nullable=False, index=True)
+    title = Column(String(255), nullable=True)
+    created_at = Column(DateTime(timezone=True), default=_now)
+
+    project = relationship("Project", back_populates="sources")
+    file = relationship("UploadedFile", back_populates="project_sources")
+
+
+# ML feedback (replaces ml_feedback.csv)
 class MLFeedback(Base):
     __tablename__ = "ml_feedback"
 
@@ -281,7 +346,6 @@ class MLFeedback(Base):
 
 
 # Product feedback (mood / free-text from FeedbackModal — NOT for ML training)
-
 class ProductFeedback(Base):
     __tablename__ = "product_feedback"
 
@@ -294,7 +358,6 @@ class ProductFeedback(Base):
 
 
 # ML model cache (replaces ml_model.json)
-
 class PromptTemplateDB(Base):
     __tablename__ = "prompt_templates"
     __table_args__ = (
@@ -332,7 +395,6 @@ class MLModelCache(Base):
 
 
 # Raw user behavioral events (Layer 1)
-
 class UserEvent(Base):
     __tablename__ = "user_events"
     __table_args__ = (
@@ -351,7 +413,6 @@ class UserEvent(Base):
 
 
 # Session-level aggregated metrics (Layer 2)
-
 class SessionMetrics(Base):
     __tablename__ = "session_metrics"
     __table_args__ = (
@@ -379,7 +440,6 @@ class SessionMetrics(Base):
 
 
 # User experience profile — user-level aggregates (Layer 3)
-
 class UserExperienceProfile(Base):
     __tablename__ = "user_experience_profile"
 
@@ -399,7 +459,6 @@ class UserExperienceProfile(Base):
 
 
 # Explicit adaptation feedback from users
-
 class AdaptationFeedback(Base):
     __tablename__ = "adaptation_feedback"
     __table_args__ = (
@@ -418,8 +477,22 @@ class AdaptationFeedback(Base):
     created_at = Column(DateTime(timezone=True), default=_now, index=True)
 
 
-# Full adaptation decision log (Layer 6)
+# Daily token+request usage tracking
+class DailyUsage(Base):
+    __tablename__ = "daily_usage"
+    __table_args__ = (
+        Index("ix_daily_usage_user_email_date", "user_email", "date", unique=True),
+    )
 
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_email = Column(String(255), nullable=False, index=True)
+    date = Column(String(10), nullable=False)  # YYYY-MM-DD UTC
+    request_count = Column(Integer, nullable=False, default=0)
+    token_count = Column(Integer, nullable=False, default=0)
+    updated_at = Column(DateTime(timezone=True), default=_now, onupdate=_now)
+
+
+# Full adaptation decision log (Layer 6)
 class AdaptationDecision(Base):
     __tablename__ = "adaptation_decisions"
     __table_args__ = (
@@ -444,7 +517,6 @@ class AdaptationDecision(Base):
 
 
 # DB helpers
-
 async def _check_db_connection() -> None:
     async with engine.begin():
         pass

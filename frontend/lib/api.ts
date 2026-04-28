@@ -7,6 +7,8 @@ export interface GenerateParams {
   top_p?: number;
   session_id?: string;
   history?: Array<{ role: "user" | "assistant"; content: string }>;
+  continuation_text?: string;
+  continuation_message_id?: number;
 }
 
 export interface UsageStats {
@@ -51,6 +53,8 @@ export async function generate(params: GenerateParams): Promise<GenerateResult> 
       top_p:          params.top_p  ?? 1.0,
       stream:         false,
       session_id:     params.session_id ?? null,
+      continuation_text: params.continuation_text ?? "",
+      continuation_message_id: params.continuation_message_id ?? null,
     }),
   });
 

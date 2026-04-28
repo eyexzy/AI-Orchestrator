@@ -3,83 +3,46 @@
 import { useState, useRef, useEffect, useCallback, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { useSession, signOut } from "next-auth/react";
 import Image from "next/image";
+import Link from "next/link";
 import {
+  UserRound,
   Settings,
-  MessageSquare,
+  CircleHelp,
   LogOut,
-  Monitor,
-  Sun,
-  Moon,
+  ChevronsUpDown,
 } from "lucide-react";
-import { useTheme } from "next-themes";
 import { useTranslation, useI18nStore, type Language } from "@/lib/store/i18nStore";
+import { useDraftStore } from "@/lib/store/draftStore";
 import { useChatStore } from "@/lib/store/chatStore";
 import { useUserLevelStore } from "@/lib/store/userLevelStore";
 import { useTemplatesStore } from "@/lib/store/templatesStore";
+import { useUiShellStore } from "@/lib/store/uiShellStore";
 import { getErrorMessage } from "@/lib/request";
 import { patchProfilePreferences } from "@/lib/profilePreferences";
+import { actionToast } from "@/components/ui/action-toast";
 import { Select } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
-import { toast } from "sonner";
+import { ThemeSwitcher, type ThemeOption } from "@/components/ui/theme-switcher";
 
-/* Theme toggle group (Monitor / Sun / Moon) */
-function ThemeToggle({
-  onThemeSelect,
-}: {
-  onThemeSelect: (value: "system" | "light" | "dark", previousTheme: string) => void;
-}) {
-  const { theme } = useTheme();
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => setMounted(true), []);
-
-  const options = [
-    { value: "system", icon: Monitor },
-    { value: "light", icon: Sun },
-    { value: "dark", icon: Moon },
-  ] as const;
-
-  const current = mounted ? (theme ?? "system") : "system";
-
-  return (
-    <div className="inline-flex rounded-lg border border-gray-alpha-200 bg-gray-100 p-0.5">
-      {options.map(({ value, icon: Icon }) => (
-        <Button
-          key={value}
-          type="button"
-          variant="tertiary"
-          size="sm"
-          iconOnly
-          data-user-menu-item="true"
-          role="menuitem"
-          leftIcon={<Icon size={14} strokeWidth={2} />}
-          onClick={() => onThemeSelect(value, current)}
-          className={`h-7 w-8 rounded-md p-0 ${
-            current === value
-              ? "bg-background text-ds-text shadow-sm"
-              : "text-ds-text-tertiary hover:text-ds-text-secondary hover:bg-gray-alpha-200"
-          }`}
-          aria-label={value}
-        >
-        </Button>
-      ))}
-    </div>
-  );
+interface UserMenuDropdownProps {
+  triggerVariant?: "avatar" | "sidebar";
+  hideNameInMenu?: boolean;
+  openDirection?: "down" | "up";
+  sidebarOpen?: boolean;
 }
 
-/* Main dropdown */
 export function UserMenuDropdown({
-  onOpenAccountSettings,
-  onOpenFeedback,
-}: {
-  onOpenAccountSettings?: () => void;
-  onOpenFeedback?: () => void;
-}) {
+  triggerVariant = "avatar",
+  hideNameInMenu = false,
+  openDirection = "down",
+  sidebarOpen = true,
+}: UserMenuDropdownProps = {}) {
   const { t } = useTranslation();
-  const { data: session } = useSession();
-  const { setTheme } = useTheme();
+  const { data: session, status } = useSession();
   const language = useI18nStore((s) => s.language);
   const setLanguage = useI18nStore((s) => s.setLanguage);
+  const openFeedback = useUiShellStore((s) => s.openFeedback);
   const [open, setOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -87,7 +50,6 @@ export function UserMenuDropdown({
   const wasOpenRef = useRef(false);
   const shouldRestoreFocusRef = useRef(true);
 
-  /* Close on outside click */
   const handleClickOutside = useCallback((e: MouseEvent) => {
     const target = e.target as Node;
     const clickedInsideSelectPortal =
@@ -138,11 +100,14 @@ export function UserMenuDropdown({
       wasOpenRef.current = false;
     }
   }, [focusMenuItem, open]);
+
+  const storedDisplayName = useUserLevelStore((s) => s.displayName);
   const user = session?.user;
   const name = user?.name ?? null;
   const email = user?.email ?? null;
   const image = user?.image ?? null;
-  const displayName = name || email || "User";
+  const displayName = storedDisplayName || name || email || "User";
+  const planLabel = t("user.freePlan");
   const initials = displayName.slice(0, 2).toUpperCase();
 
   const handleLanguageChange = async (lang: Language) => {
@@ -151,36 +116,20 @@ export function UserMenuDropdown({
     useTemplatesStore.getState().fetchTemplates();
 
     try {
-      await patchProfilePreferences({ language: lang });
+      await patchProfilePreferences({ language: lang }, email);
     } catch (error) {
       setLanguage(previousLanguage);
       useTemplatesStore.getState().fetchTemplates();
-      toast.error(getErrorMessage(error, t("menu.preferenceSaveError")));
+      actionToast.error(getErrorMessage(error, t("menu.preferenceSaveError")));
     }
   };
 
-  const handleThemeChange = useCallback(async (
-    nextTheme: "system" | "light" | "dark",
-    previousTheme: string,
-  ) => {
-    document.documentElement.classList.add("theme-transitioning");
-    setTheme(nextTheme);
-
-    try {
-      await patchProfilePreferences({ theme: nextTheme });
-    } catch (error) {
-      const fallbackTheme =
-        previousTheme === "light" || previousTheme === "dark" || previousTheme === "system"
-          ? previousTheme
-          : "system";
-      setTheme(fallbackTheme);
-      toast.error(getErrorMessage(error, t("menu.preferenceSaveError")));
-    } finally {
-      window.setTimeout(() => {
-        document.documentElement.classList.remove("theme-transitioning");
-      }, 50);
-    }
-  }, [setTheme, t]);
+  const handleThemePersist = useCallback((nextTheme: ThemeOption) => {
+    // Fire-and-forget — don't block the switcher UI waiting for the network
+    patchProfilePreferences({ theme: nextTheme }, email).catch((error: unknown) => {
+      actionToast.error(getErrorMessage(error, t("menu.preferenceSaveError")));
+    });
+  }, [email, t]);
 
   const handleMenuKeyDown = useCallback((e: ReactKeyboardEvent<HTMLDivElement>) => {
     const items = getMenuItems();
@@ -219,39 +168,93 @@ export function UserMenuDropdown({
   }, [focusMenuItem, getMenuItems]);
 
   const menuBtn =
-    "w-full justify-start gap-2.5 px-3 text-[14px] text-ds-text-secondary hover:bg-gray-alpha-200 hover:text-ds-text shadow-none";
-  const menuPanel =
-    "absolute right-0 top-full z-50 mt-2 w-64 rounded-2xl border border-gray-alpha-200 bg-background p-1.5 shadow-geist-lg animate-fade-in";
+    "w-full justify-start !gap-2 px-3 text-[15px] font-medium text-ds-text hover:bg-gray-alpha-200 hover:text-ds-text shadow-none";
+  const sidebarWrapperClass = sidebarOpen
+    ? "relative w-full"
+    : "relative flex h-10 w-10 items-center justify-center";
+  const menuPanel = `absolute z-50 w-64 rounded-2xl border border-gray-alpha-200 bg-background p-2 shadow-geist-lg animate-fade-in ${
+    openDirection === "up"
+      ? triggerVariant === "sidebar" && !sidebarOpen
+        ? "bottom-0 left-[calc(100%+8px)]"
+        : "bottom-full left-0 mb-2"
+      : "right-0 top-full mt-2"
+  }`;
+
+  if (status === "loading" && triggerVariant === "sidebar") {
+    return sidebarOpen ? (
+      <div className="relative h-12 w-full rounded-xl">
+        <div className="absolute left-3 top-1/2 h-8 w-8 -translate-y-1/2 animate-pulse rounded-full bg-gray-alpha-200" />
+        <div className="absolute left-14 right-9 top-[calc(50%-9px)] h-3 animate-pulse rounded bg-gray-alpha-200" />
+        <div className="absolute left-14 w-16 top-[calc(50%+5px)] h-2 animate-pulse rounded bg-gray-alpha-200/80" />
+        <div className="absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 rounded bg-gray-alpha-200/80" />
+      </div>
+    ) : (
+      <div className="h-10 w-10 animate-pulse rounded-full bg-gray-alpha-200" />
+    );
+  }
 
   if (!user) return null;
 
   return (
-    <div ref={menuRef} className="relative">
-      {/* Avatar trigger */}
+    <div
+      ref={menuRef}
+      className={triggerVariant === "sidebar" ? sidebarWrapperClass : "relative"}
+    >
       <button
         ref={triggerRef}
         type="button"
         onClick={() => setOpen((v) => !v)}
         aria-haspopup="menu"
         aria-expanded={open}
-        className="flex h-8 w-8 items-center justify-center overflow-hidden rounded-full transition-all shadow-[0_0_0_1px_var(--ds-gray-alpha-300)] bg-gray-alpha-100"
+        className={
+          triggerVariant === "sidebar"
+            ? `text-ds-text flex items-center text-left transition-colors ${
+              sidebarOpen
+                ? "relative h-12 w-full rounded-xl bg-transparent pl-14 pr-9 appearance-none border-0 hover:bg-gray-alpha-200"
+                : "flex h-10 w-10 items-center justify-center rounded-full bg-transparent p-0 appearance-none border-0 hover:bg-gray-alpha-200"
+            }`
+            : "flex h-8 w-8 items-center justify-center overflow-hidden rounded-full transition-all shadow-[0_0_0_1px_var(--ds-gray-alpha-300)] bg-gray-alpha-100"
+        }
       >
-        {image ? (
-          <Image
-            src={image}
-            alt={displayName}
-            width={32}
-            height={32}
-            className="h-full w-full object-cover"
-          />
-        ) : (
-          <span className="text-sm font-medium text-ds-text-secondary">
-            {initials}
-          </span>
+        <span
+          className={`flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-full bg-gray-alpha-100 shadow-[0_0_0_1px_var(--ds-gray-alpha-300)] ${
+            triggerVariant === "sidebar" && sidebarOpen
+              ? "absolute left-3 top-1/2 -translate-y-1/2"
+              : ""
+          }`}
+        >
+          {image ? (
+            <Image
+              src={image}
+              alt={displayName}
+              width={32}
+              height={32}
+              className="h-full w-full object-cover"
+            />
+          ) : (
+            <span className={`text-sm font-medium ${triggerVariant === "sidebar" ? "text-ds-text" : "text-ds-text-secondary"}`}>
+              {initials}
+            </span>
+          )}
+        </span>
+
+        {triggerVariant === "sidebar" && sidebarOpen && (
+          <>
+            <div className="min-w-0">
+              <p className="truncate text-[14px] font-medium text-ds-text">{displayName}</p>
+              <p className="mt-0.5 truncate text-[12px] leading-4 text-ds-text-tertiary">
+                {planLabel}
+              </p>
+            </div>
+            <ChevronsUpDown
+              size={14}
+              strokeWidth={2}
+              className="absolute right-3 top-1/2 shrink-0 -translate-y-1/2 text-ds-text"
+            />
+          </>
         )}
       </button>
 
-      {/* Dropdown panel */}
       {open && (
         <div
           ref={panelRef}
@@ -259,107 +262,138 @@ export function UserMenuDropdown({
           onKeyDown={handleMenuKeyDown}
           className={menuPanel}
         >
-          {/* Email section */}
-          <div className="px-3 py-2.5">
-            {name && (
+          <div className="px-3 py-3">
+            {!hideNameInMenu && name && (
               <p className="text-[14px] font-medium text-ds-text">{name}</p>
             )}
             {email && (
-              <p className="text-[13px] text-ds-text-tertiary mt-0.5 truncate">
+              <p className={`text-[13px] text-ds-text-tertiary truncate ${!hideNameInMenu && name ? "mt-0.5" : ""}`}>
                 {email}
+              </p>
+            )}
+            {hideNameInMenu && !email && (
+              <p className="text-[13px] text-ds-text-tertiary truncate">
+                {displayName}
               </p>
             )}
           </div>
 
-          <Separator className="-mx-1.5 my-1 w-auto" />
+          <Separator className="-mx-2 my-1.5 w-auto" />
 
           <div className="space-y-0.5">
-            {/* Account Settings */}
-            <Button
-              type="button"
-              variant="tertiary"
-              size="sm"
+            <Link
+              href="/dashboard"
               data-user-menu-item="true"
               role="menuitem"
-              className={menuBtn}
-              leftIcon={<Settings size={16} strokeWidth={2} className="shrink-0 opacity-60" />}
-              onClick={() => {
-                shouldRestoreFocusRef.current = false;
-                setOpen(false);
-                onOpenAccountSettings?.();
-              }}
+              onClick={() => setOpen(false)}
+              className={`flex items-center ${menuBtn} rounded-lg h-10`}
             >
-              {t("menu.accountSettings")}
-            </Button>
+              <UserRound
+                size={16}
+                strokeWidth={2}
+                className="shrink-0 text-current"
+              />
+              <span>{t("menu.profile")}</span>
+            </Link>
 
-            {/* Feedback */}
+            <Link
+              href="/settings"
+              data-user-menu-item="true"
+              role="menuitem"
+              onClick={() => setOpen(false)}
+              className={`flex items-center ${menuBtn} rounded-lg h-10`}
+            >
+              <Settings
+                size={16}
+                strokeWidth={2}
+                className="shrink-0 text-current"
+              />
+              <span>{t("menu.accountSettings")}</span>
+            </Link>
+
             <Button
               type="button"
               variant="tertiary"
               size="sm"
               data-user-menu-item="true"
               role="menuitem"
-              className={menuBtn}
-              leftIcon={<MessageSquare size={16} strokeWidth={2} className="shrink-0 opacity-60" />}
+              className={`${menuBtn} rounded-lg h-10`}
+              leftIcon={
+                <CircleHelp
+                  size={16}
+                  strokeWidth={2}
+                  className="shrink-0 text-current"
+                />
+              }
               onClick={() => {
                 shouldRestoreFocusRef.current = false;
                 setOpen(false);
-                onOpenFeedback?.();
+                openFeedback();
               }}
-            >
-              {t("menu.feedback")}
-            </Button>
+              >
+                {t("menu.feedback")}
+              </Button>
           </div>
 
-          {/* Preferences section */}
-          <div className="px-3 pt-2 pb-1">
-            <p className="text-[11px] font-semibold uppercase tracking-wider text-ds-text-tertiary">
+          <Separator className="-mx-2 my-1.5 w-auto" />
+
+          <div className="px-3 py-1.5">
+            <p className="text-[13px] font-medium leading-4 text-ds-text-tertiary">
               {t("menu.preferences")}
             </p>
           </div>
 
-          {/* Theme row */}
-          <div className="flex items-center justify-between px-3 py-2">
-            <span className="text-[14px] text-ds-text-secondary">
-              {t("menu.theme")}
-            </span>
-            <ThemeToggle onThemeSelect={handleThemeChange} />
-          </div>
+          <div className="flex flex-col gap-0.5 px-0 pb-1">
+            <div className="flex h-10 items-center justify-between gap-4 rounded-md px-3">
+              <span className="text-[15px] font-medium text-ds-text">
+                {t("menu.theme")}
+              </span>
+              <ThemeSwitcher
+                size="small"
+                onPersist={handleThemePersist}
+              />
+            </div>
 
-          {/* Language row */}
-          <div className="flex items-center justify-between px-3 py-2">
-            <span className="text-[14px] text-ds-text-secondary">
-              {t("menu.language")}
-            </span>
-            <div className="w-[120px]">
+            <div className="flex h-10 items-center justify-between gap-4 rounded-md px-3">
+              <span className="text-[15px] font-medium text-ds-text">
+                {t("menu.language")}
+              </span>
               <Select
                 size="sm"
                 align="end"
                 dropdownWidthMode="content"
+                triggerWidthMode="content"
                 value={language}
                 onValueChange={(v) => handleLanguageChange(v as Language)}
                 options={[
                   { value: "en", label: t("menu.langEnglish") },
                   { value: "uk", label: t("menu.langUkrainian") },
                 ]}
+                className="h-8 gap-1.5 px-2.5 text-[15px] font-medium [&>svg]:h-3.5 [&>svg]:w-3.5"
               />
             </div>
           </div>
 
-          <Separator className="-mx-1.5 my-1 w-auto" />
+          <Separator className="-mx-2 my-1.5 w-auto" />
 
-          {/* Sign Out */}
           <Button
             type="button"
             variant="tertiary"
             size="sm"
             data-user-menu-item="true"
             role="menuitem"
-            className={menuBtn}
-            leftIcon={<LogOut size={16} strokeWidth={2} className="shrink-0 opacity-60" />}
+            className={`${menuBtn} rounded-lg h-10`}
+            leftIcon={
+              <LogOut
+                size={16}
+                strokeWidth={2}
+                className="shrink-0 text-current"
+              />
+            }
             onClick={() => {
               useChatStore.getState().clearMessages();
               useUserLevelStore.getState().resetMetrics();
+              useDraftStore.getState().clearAll();
               signOut({ callbackUrl: "/login" });
             }}
           >

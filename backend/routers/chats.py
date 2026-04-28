@@ -5,9 +5,14 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from database import ChatSession, ChatMessage
+from database import ChatMessage, ChatSession, Project
 from dependencies import get_current_user, get_db
-from schemas.api import CreateChatRequest, UpdateChatRequest, ChatSearchResult
+from schemas.api import (
+    ChatSearchResult,
+    CreateChatRequest,
+    ForkChatRequest,
+    UpdateChatRequest,
+)
 
 router = APIRouter()
 
@@ -21,11 +26,31 @@ def _message_to_response(message: ChatMessage) -> dict:
         metadata = {}
 
     return {
-        "id":         message.id,
-        "role":       message.role,
-        "content":    message.content,
+        "id": message.id,
+        "role": message.role,
+        "content": message.content,
         "created_at": message.created_at.isoformat() if message.created_at else None,
-        "metadata":   metadata,
+        "metadata": metadata,
+    }
+
+
+def _chat_to_response(
+    session: ChatSession,
+    *,
+    message_count: int = 0,
+    project_name: str | None = None,
+) -> dict:
+    return {
+        "id": session.id,
+        "title": session.title,
+        "is_favorite": session.is_favorite or False,
+        "project_id": session.project_id,
+        "project_name": project_name,
+        "parent_chat_id": session.parent_chat_id,
+        "forked_from_message_id": session.forked_from_message_id,
+        "created_at": session.created_at.isoformat() if session.created_at else None,
+        "updated_at": session.updated_at.isoformat() if session.updated_at else None,
+        "message_count": message_count,
     }
 
 
@@ -46,6 +71,23 @@ async def _get_owned_chat_session(
     return session
 
 
+async def _get_owned_project(
+    db: AsyncSession,
+    project_id: str,
+    user_email: str,
+) -> Project:
+    result = await db.execute(
+        select(Project).where(
+            Project.id == project_id,
+            Project.user_email == user_email,
+        )
+    )
+    project = result.scalars().first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    return project
+
+
 @router.get("/chats")
 async def list_chats(
     db: AsyncSession = Depends(get_db),
@@ -54,10 +96,15 @@ async def list_chats(
     offset: int = Query(default=0, ge=0),
 ):
     stmt = (
-        select(ChatSession, func.count(ChatMessage.id).label("msg_count"))
+        select(
+            ChatSession,
+            Project.name.label("project_name"),
+            func.count(ChatMessage.id).label("msg_count"),
+        )
+        .outerjoin(Project, ChatSession.project_id == Project.id)
         .outerjoin(ChatMessage, ChatSession.id == ChatMessage.session_id)
         .where(ChatSession.user_email == user_email)
-        .group_by(ChatSession.id)
+        .group_by(ChatSession.id, Project.name)
         .order_by(ChatSession.updated_at.desc())
         .limit(limit)
         .offset(offset)
@@ -65,15 +112,8 @@ async def list_chats(
     result = await db.execute(stmt)
     rows = result.all()
     return [
-        {
-            "id":            s.id,
-            "title":         s.title,
-            "is_favorite":   s.is_favorite or False,
-            "created_at":    s.created_at.isoformat() if s.created_at else None,
-            "updated_at":    s.updated_at.isoformat() if s.updated_at else None,
-            "message_count": msg_count,
-        }
-        for s, msg_count in rows
+        _chat_to_response(session, message_count=msg_count, project_name=project_name)
+        for session, project_name, msg_count in rows
     ]
 
 
@@ -83,19 +123,102 @@ async def create_chat(
     db: AsyncSession = Depends(get_db),
     user_email: str = Depends(get_current_user),
 ):
-    # user_email from JWT overrides anything in the request body
-    session = ChatSession(user_email=user_email, title=req.title)
+    project_id = None
+    if req.project_id:
+        project = await _get_owned_project(db, req.project_id, user_email)
+        project_id = project.id
+
+    session = ChatSession(
+        user_email=user_email,
+        title=req.title,
+        project_id=project_id,
+    )
     db.add(session)
     await db.commit()
     await db.refresh(session)
-    return {
-        "id":            session.id,
-        "title":         session.title,
-        "is_favorite":   session.is_favorite or False,
-        "created_at":    session.created_at.isoformat() if session.created_at else None,
-        "updated_at":    session.updated_at.isoformat() if session.updated_at else None,
-        "message_count": 0,
-    }
+
+    project_name = None
+    if project_id:
+        project_name = (await _get_owned_project(db, project_id, user_email)).name
+
+    return _chat_to_response(session, message_count=0, project_name=project_name)
+
+
+@router.post("/chats/{chat_id}/fork")
+async def fork_chat(
+    chat_id: str,
+    req: ForkChatRequest,
+    db: AsyncSession = Depends(get_db),
+    user_email: str = Depends(get_current_user),
+):
+    source_session = await _get_owned_chat_session(db, chat_id, user_email)
+
+    source_message = (
+        await db.execute(
+            select(ChatMessage).where(
+                ChatMessage.id == req.message_id,
+                ChatMessage.session_id == chat_id,
+            )
+        )
+    ).scalars().first()
+    if not source_message:
+        raise HTTPException(status_code=404, detail="Message not found")
+
+    request_data = req.model_dump(exclude_unset=True)
+    target_project_id = source_session.project_id
+    project_name = None
+
+    if "project_id" in request_data:
+        if req.project_id is None:
+            target_project_id = None
+        else:
+            project = await _get_owned_project(db, req.project_id, user_email)
+            target_project_id = project.id
+            project_name = project.name
+    elif source_session.project_id:
+        project = await _get_owned_project(db, source_session.project_id, user_email)
+        project_name = project.name
+
+    fork_title = (req.title or f"{source_session.title} (Fork)")[:255]
+    forked_session = ChatSession(
+        user_email=user_email,
+        title=fork_title,
+        project_id=target_project_id,
+        parent_chat_id=source_session.id,
+        forked_from_message_id=req.message_id,
+    )
+    db.add(forked_session)
+    await db.flush()
+
+    source_messages = (
+        await db.execute(
+            select(ChatMessage)
+            .where(
+                ChatMessage.session_id == chat_id,
+                ChatMessage.id <= req.message_id,
+            )
+            .order_by(ChatMessage.id.asc())
+        )
+    ).scalars().all()
+
+    for message in source_messages:
+        db.add(
+            ChatMessage(
+                session_id=forked_session.id,
+                role=message.role,
+                content=message.content,
+                created_at=message.created_at,
+                metadata_json=message.metadata_json,
+            )
+        )
+
+    await db.commit()
+    await db.refresh(forked_session)
+    return _chat_to_response(
+        forked_session,
+        message_count=len(source_messages),
+        project_name=project_name,
+    )
 
 
 @router.get("/chats/search")
@@ -110,10 +233,10 @@ async def search_chats(
     results: list[dict] = []
     seen_chat_ids: set[str] = set()
 
-    # 1) Messages whose content matches
     msg_stmt = (
-        select(ChatMessage, ChatSession)
+        select(ChatMessage, ChatSession, Project.name.label("project_name"))
         .join(ChatSession, ChatMessage.session_id == ChatSession.id)
+        .outerjoin(Project, ChatSession.project_id == Project.id)
         .where(
             ChatSession.user_email == user_email,
             ChatMessage.content.ilike(pattern),
@@ -122,23 +245,26 @@ async def search_chats(
         .limit(limit)
     )
     msg_rows = (await db.execute(msg_stmt)).all()
-    for msg, chat in msg_rows:
-        snippet = msg.content[:150]
-        results.append({
-            "chat_id":         chat.id,
-            "chat_title":      chat.title,
-            "message_id":      msg.id,
-            "message_content": snippet,
-            "role":            msg.role,
-            "updated_at":      (msg.created_at or chat.updated_at or "").isoformat()
-                               if hasattr(msg.created_at or chat.updated_at, "isoformat")
-                               else "",
-        })
+    for msg, chat, project_name in msg_rows:
+        results.append(
+            ChatSearchResult(
+                chat_id=chat.id,
+                chat_title=chat.title,
+                project_id=chat.project_id,
+                project_name=project_name,
+                message_id=msg.id,
+                message_content=msg.content[:150],
+                role=msg.role,
+                updated_at=(msg.created_at or chat.updated_at).isoformat()
+                if hasattr(msg.created_at or chat.updated_at, "isoformat")
+                else "",
+            ).model_dump()
+        )
         seen_chat_ids.add(chat.id)
 
-    # 2) Chats whose title matches (not already covered by message hits)
     title_stmt = (
-        select(ChatSession)
+        select(ChatSession, Project.name.label("project_name"))
+        .outerjoin(Project, ChatSession.project_id == Project.id)
         .where(
             ChatSession.user_email == user_email,
             ChatSession.title.ilike(pattern),
@@ -146,20 +272,24 @@ async def search_chats(
         .order_by(ChatSession.updated_at.desc())
         .limit(limit)
     )
-    title_rows = (await db.execute(title_stmt)).scalars().all()
-    for chat in title_rows:
-        if chat.id not in seen_chat_ids:
-            results.append({
-                "chat_id":         chat.id,
-                "chat_title":      chat.title,
-                "message_id":      None,
-                "message_content": None,
-                "role":            None,
-                "updated_at":      chat.updated_at.isoformat() if chat.updated_at else "",
-            })
+    title_rows = (await db.execute(title_stmt)).all()
+    for chat, project_name in title_rows:
+        if chat.id in seen_chat_ids:
+            continue
+        results.append(
+            ChatSearchResult(
+                chat_id=chat.id,
+                chat_title=chat.title,
+                project_id=chat.project_id,
+                project_name=project_name,
+                message_id=None,
+                message_content=None,
+                role=None,
+                updated_at=chat.updated_at.isoformat() if chat.updated_at else "",
+            ).model_dump()
+        )
 
-    # Sort combined results by updated_at desc, apply offset/limit
-    results.sort(key=lambda r: r["updated_at"], reverse=True)
+    results.sort(key=lambda item: item["updated_at"], reverse=True)
     return results[offset:offset + limit]
 
 
@@ -173,10 +303,10 @@ async def get_chat_messages(
     result = await db.execute(
         select(ChatMessage)
         .where(ChatMessage.session_id == chat_id)
-        .order_by(ChatMessage.created_at.asc())
+        .order_by(ChatMessage.created_at.asc(), ChatMessage.id.asc())
     )
-    msgs = result.scalars().all()
-    return [_message_to_response(m) for m in msgs]
+    messages = result.scalars().all()
+    return [_message_to_response(message) for message in messages]
 
 
 @router.delete("/chats/{chat_id}/messages/truncate")
@@ -218,10 +348,19 @@ async def update_chat(
     user_email: str = Depends(get_current_user),
 ):
     session = await _get_owned_chat_session(db, chat_id, user_email)
-    if req.title is not None:
+    updates = req.model_dump(exclude_unset=True)
+
+    if "title" in updates:
         session.title = req.title
-    if req.is_favorite is not None:
+    if "is_favorite" in updates:
         session.is_favorite = req.is_favorite
+    if "project_id" in updates:
+        if req.project_id is None:
+            session.project_id = None
+        else:
+            project = await _get_owned_project(db, req.project_id, user_email)
+            session.project_id = project.id
+
     await db.commit()
     return {"ok": True}
 

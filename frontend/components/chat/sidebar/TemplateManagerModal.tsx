@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { useState, useMemo, useRef } from "react";
 import { Pencil, Trash2, Plus, ArrowLeft, Star, GripVertical, Search, MoreHorizontal, ArrowUpDown, FileText } from "lucide-react";
@@ -24,53 +24,41 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { Badge, type BadgeProps } from "@/components/ui/badge";
+import { TemplateCardContent, TEMPLATE_BADGE_VARIANTS, getTemplateBadgeVariant } from "./TemplateCard";
 import { useTemplatesStore, getMergedTemplates, isVirtualTemplate, type PromptTemplate } from "@/lib/store/templatesStore";
 import { useUserLevelStore } from "@/lib/store/userLevelStore";
 import { useTranslation } from "@/lib/store/i18nStore";
+import { Material } from "@/components/ui/material";
 import { ActionMenu } from "@/components/ui/action-menu";
 
 /* Color palette */
-
 const COLOR_OPTIONS = [
   "gray", "blue", "purple", "pink", "red", "amber", "green", "teal",
 ] as const;
 
 const COLOR_BG: Record<string, string> = {
-  gray: "bg-[var(--ds-gray-800)]",
-  blue: "bg-[var(--ds-blue-800)]",
-  purple: "bg-[var(--ds-purple-800)]",
-  pink: "bg-[var(--ds-pink-800)]",
-  red: "bg-[var(--ds-red-800)]",
-  amber: "bg-[var(--ds-amber-800)]",
-  green: "bg-[var(--ds-green-800)]",
-  teal: "bg-[var(--ds-teal-800)]",
+  gray: "bg-black dark:bg-white shadow-[0_0_0_1px_var(--ds-gray-alpha-400)]",
+  blue: "bg-blue-700",
+  purple: "bg-purple-700",
+  pink: "bg-pink-700",
+  red: "bg-red-700",
+  amber: "bg-amber-700",
+  green: "bg-green-700",
+  teal: "bg-teal-700",
 };
 
-const TEMPLATE_BADGE_VARIANTS = {
-  gray: "gray-subtle",
-  blue: "blue-subtle",
-  purple: "purple-subtle",
-  pink: "pink-subtle",
-  red: "red-subtle",
-  amber: "amber-subtle",
-  green: "green-subtle",
-  teal: "teal-subtle",
-} satisfies Record<string, NonNullable<BadgeProps["variant"]>>;
+const COLOR_RING: Record<string, string> = {
+  gray: "ring-black dark:ring-white",
+  blue: "ring-blue-700",
+  purple: "ring-purple-700",
+  pink: "ring-pink-700",
+  red: "ring-red-700",
+  amber: "ring-amber-700",
+  green: "ring-green-700",
+  teal: "ring-teal-700",
+};
 
-function isTemplateBadgeColor(
-  value: string,
-): value is keyof typeof TEMPLATE_BADGE_VARIANTS {
-  return value in TEMPLATE_BADGE_VARIANTS;
-}
 
-function getTemplateBadgeVariant(
-  color: string,
-): NonNullable<BadgeProps["variant"]> {
-  return isTemplateBadgeColor(color)
-    ? TEMPLATE_BADGE_VARIANTS[color]
-    : "gray-subtle";
-}
 
 function ColorPicker({
   value,
@@ -86,8 +74,8 @@ function ColorPicker({
           key={c}
           type="button"
           onClick={() => onChange(c)}
-          className={`h-7 w-7 rounded-full transition-all ${COLOR_BG[c]} ${value === c
-            ? "ring-2 ring-foreground ring-offset-2 ring-offset-background"
+          className={`h-6 w-6 shrink-0 rounded-full transition-all ${COLOR_BG[c]} ${value === c
+            ? `ring-2 ring-offset-2 ring-offset-background ${COLOR_RING[c]}`
             : "hover:ring-1 hover:ring-gray-alpha-400 hover:ring-offset-1 hover:ring-offset-background"
             }`}
           aria-label={c}
@@ -98,7 +86,6 @@ function ColorPicker({
 }
 
 /* Form state */
-
 interface FormState {
   title: string;
   description: string;
@@ -146,12 +133,10 @@ function extractVariableNames(...texts: string[]): string[] {
 }
 
 /* Field helpers */
-
 const labelCls = "block text-[13px] font-medium text-ds-text mb-1.5";
 const textareaCls = "min-h-[80px] font-mono text-xs leading-relaxed";
 
 /* Sortable template item */
-
 function SortableTemplateItem({
   tpl,
   reorderMode,
@@ -186,13 +171,11 @@ function SortableTemplateItem({
   };
 
   return (
-    <div
-      ref={setNodeRef}
+    <Material
+      variant="base"
+      ref={setNodeRef as React.Ref<HTMLDivElement>}
       style={style}
-      className={`group flex items-center gap-3 rounded-lg px-4 py-3 transition-all ${isDragging
-        ? "bg-gray-alpha-200 shadow-[0_0_0_1px_var(--ds-gray-alpha-400),0_8px_30px_rgba(0,0,0,0.12)]"
-        : "bg-gray-alpha-100 shadow-[0_0_0_1px_var(--ds-gray-alpha-200)] hover:shadow-[0_0_0_1px_var(--ds-gray-alpha-400)]"
-        }`}
+      className={`group flex items-center gap-3 px-4 py-3 ${isDragging ? "opacity-50" : "hover:bg-gray-alpha-200"}`}
     >
       {/* Drag handle вЂ” only in reorder mode */}
       {reorderMode && (
@@ -201,7 +184,7 @@ function SortableTemplateItem({
           variant="tertiary"
           size="sm"
           iconOnly
-          className="h-8 w-8 shrink-0 cursor-grab text-ds-text-tertiary hover:bg-gray-alpha-200 hover:text-ds-text-secondary active:cursor-grabbing shadow-none"
+          className="shrink-0 cursor-grab text-ds-text-tertiary hover:bg-gray-alpha-200 hover:text-ds-text active:cursor-grabbing shadow-none"
           {...attributes}
           {...listeners}
           aria-label={t("templateManager.dragToReorder")}
@@ -211,34 +194,7 @@ function SortableTemplateItem({
 
       {/* Content */}
       <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2 min-w-0">
-          <span className="truncate text-[14px] font-medium text-ds-text">
-            {tpl.title}
-          </span>
-          <Badge variant={getTemplateBadgeVariant(tpl.category_color)} size="sm">
-            <span className="max-w-[120px] truncate">{tpl.category_name}</span>
-          </Badge>
-          {isVirtualTemplate(tpl.id) && (
-            <span className="text-[10px] font-mono text-ds-text-tertiary opacity-60">{t("templateManager.builtin")}</span>
-          )}
-        </div>
-        {tpl.description && (
-          <p className="mt-0.5 text-[12px] text-ds-text-tertiary line-clamp-2 break-words">
-            {tpl.description}
-          </p>
-        )}
-        {tpl.variables.length > 0 && (
-          <div className="mt-1 flex flex-wrap gap-1">
-            {tpl.variables.map((v) => (
-              <span
-                key={v}
-                className="font-mono text-[10px] rounded px-1.5 py-0.5 bg-gray-alpha-200 text-ds-text-tertiary truncate max-w-[100px]"
-              >
-                {`{{${v}}}`}
-              </span>
-            ))}
-          </div>
-        )}
+        <TemplateCardContent tpl={tpl} />
       </div>
 
       {/* Actions вЂ” hidden in reorder mode */}
@@ -251,7 +207,7 @@ function SortableTemplateItem({
             variant="tertiary"
             size="sm"
             iconOnly
-            className="h-8 w-8 opacity-0 transition-all group-hover:opacity-100 text-ds-text-tertiary hover:bg-gray-alpha-200 hover:text-ds-text-secondary shadow-none"
+            className="opacity-0 transition-all group-hover:opacity-100 text-ds-text-tertiary hover:bg-gray-alpha-200 hover:text-ds-text shadow-none"
             aria-label={t("templateManager.templateActions")}
             leftIcon={<MoreHorizontal size={16} strokeWidth={2} />}
           />
@@ -262,7 +218,7 @@ function SortableTemplateItem({
               onClose={() => setMenuOpen(false)}
               items={[
                 {
-                  label: tpl.is_favorite ? t("templateManager.unstar") : t("sidebar.star"),
+                  label: tpl.is_favorite ? t("templateManager.unstar") : t("templateManager.star"),
                   icon: <Star size={14} strokeWidth={2} fill={tpl.is_favorite ? "currentColor" : "none"} />,
                   onClick: onToggleFavorite,
                 },
@@ -275,6 +231,11 @@ function SortableTemplateItem({
                   label: t("sidebar.delete"),
                   icon: <Trash2 size={14} strokeWidth={2} />,
                   onClick: onDelete,
+                  confirm: {
+                    title: t("confirm.deleteTemplateTitle"),
+                    description: t("confirm.deleteTemplateDescription"),
+                    actionLabel: t("sidebar.delete"),
+                  },
                   variant: "danger",
                 },
               ]}
@@ -282,12 +243,11 @@ function SortableTemplateItem({
           )}
         </div>
       )}
-    </div>
+    </Material>
   );
 }
 
 /* Modal */
-
 interface TemplateManagerModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -438,7 +398,7 @@ export function TemplateManagerModal({ open, onOpenChange }: TemplateManagerModa
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>
-      <DialogContent className="max-w-xl">
+      <DialogContent className="max-w-xl max-h-[90vh] overflow-y-auto">
         {/* List View */}
         {view === "list" && (
           <>
@@ -446,7 +406,7 @@ export function TemplateManagerModal({ open, onOpenChange }: TemplateManagerModa
               <DialogTitle>{t("templateManager.title")}</DialogTitle>
             </DialogHeader>
 
-            <div className="px-5 py-3 space-y-3 max-h-[480px] overflow-y-auto">
+            <div className="px-5 py-3 space-y-3 h-[480px] overflow-y-auto flex flex-col">
               {/* Top controls: Search & Reorder Toggle */}
               <div className="flex items-center gap-2 mb-4">
                 {!reorderMode ? (
@@ -467,13 +427,14 @@ export function TemplateManagerModal({ open, onOpenChange }: TemplateManagerModa
                       variant="tertiary"
                       size="md"
                       iconOnly
+                      className="group"
                       onClick={() => {
                         setSearchQuery("");
                         setReorderMode(true);
                       }}
                       title={t("templateManager.reorder")}
                     >
-                      <ArrowUpDown size={18} strokeWidth={2} className="text-ds-text-secondary" />
+                      <ArrowUpDown size={18} strokeWidth={2} className="text-ds-text-secondary transition-colors group-hover:text-ds-text" />
                     </Button>
                   </>
                 ) : (
@@ -499,18 +460,8 @@ export function TemplateManagerModal({ open, onOpenChange }: TemplateManagerModa
 
               {/* Template lists */}
               {filteredTemplates.length === 0 && (
-                <div className="flex flex-col items-center justify-center py-12 px-4 text-center animate-in fade-in duration-300">
-                  <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-gray-alpha-100 shadow-[0_0_0_1px_var(--ds-gray-alpha-200)]">
-                    {searchQuery.trim() ? (
-                      <Search size={20} strokeWidth={1.5} className="text-ds-text-tertiary" />
-                    ) : (
-                      <FileText size={20} strokeWidth={1.5} className="text-ds-text-tertiary" />
-                    )}
-                  </div>
-                  <p className="text-[14px] font-medium text-ds-text">
-                    {searchQuery.trim() ? t("templateManager.noResults") : t("templateManager.noTemplates")}
-                  </p>
-                  <p className="mt-1.5 text-[13px] text-ds-text-tertiary max-w-[260px] leading-relaxed">
+                <div className="flex flex-1 items-center justify-center">
+                  <p className="text-center text-sm text-ds-text-tertiary">
                     {searchQuery.trim()
                       ? `${t("templateManager.noResultsDesc")} "${searchQuery}".`
                       : t("templateManager.noTemplatesDesc")}
@@ -541,7 +492,7 @@ export function TemplateManagerModal({ open, onOpenChange }: TemplateManagerModa
                 </DndContext>
               ) : (
                 <>
-                  {/* Starred section */}
+                  {/* Favorites section */}
                   {filteredTemplates.filter((t) => t.is_favorite).length > 0 && (
                     <div>
                       <h4 className="mb-3 text-xs font-semibold uppercase tracking-wider text-ds-text-tertiary font-mono">{t("templateManager.starred")}</h4>
@@ -588,10 +539,10 @@ export function TemplateManagerModal({ open, onOpenChange }: TemplateManagerModa
 
             <DialogFooter>
               <div className="flex items-center justify-between w-full">
-                <Button variant="secondary" onClick={() => handleClose(false)}>
+                <Button variant="secondary" size="sm" onClick={() => handleClose(false)}>
                   {t("templateManager.close")}
                 </Button>
-                <Button variant="default" onClick={openCreate} leftIcon={<Plus size={14} strokeWidth={2} />}>
+                <Button variant="default" size="sm" onClick={openCreate} leftIcon={<Plus size={14} strokeWidth={2} />}>
                   {t("templateManager.newTemplate")}
                 </Button>
               </div>
@@ -620,7 +571,7 @@ export function TemplateManagerModal({ open, onOpenChange }: TemplateManagerModa
               </div>
             </DialogHeader>
 
-            <div className="px-5 py-4 space-y-4 max-h-[480px] overflow-y-auto">
+            <div className="px-5 py-4 space-y-4">
               {/* Title */}
               <div>
                 <label className={labelCls}>{t("templateManager.fieldTitle")}</label>
@@ -683,7 +634,7 @@ export function TemplateManagerModal({ open, onOpenChange }: TemplateManagerModa
                   textareaClassName={textareaCls}
                 />
                 <p className="mt-1.5 text-[11px] text-ds-text-tertiary">
-                  {t("templateManager.escapeVariableHelp")} <code className="bg-gray-alpha-200 px-1 rounded">{"\\{{text}}"}</code>
+                  {t("templateManager.escapeVariableHelp")} <code className="bg-transparent px-0 py-0 font-mono text-blue-900">{"\\{{text}}"}</code>
                 </p>
               </div>
 
@@ -704,11 +655,12 @@ export function TemplateManagerModal({ open, onOpenChange }: TemplateManagerModa
 
             <DialogFooter>
               <div className="flex items-center justify-between w-full">
-                <Button variant="secondary" onClick={resetToList}>
+                <Button variant="secondary" size="sm" onClick={resetToList}>
                   {t("templateManager.cancel")}
                 </Button>
                 <Button
                   variant="default"
+                  size="sm"
                   onClick={handleSave}
                   disabled={saving || !form.title.trim() || !form.prompt.trim()}
                 >

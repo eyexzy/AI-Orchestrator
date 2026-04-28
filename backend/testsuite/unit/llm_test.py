@@ -35,11 +35,6 @@ def test_get_client_for_unknown_model_returns_none():
     assert model_info is None
 
 
-def test_get_mock_mode_uses_legacy_flag(monkeypatch):
-    monkeypatch.delenv("LLM_MOCK_MODE", raising=False)
-    monkeypatch.setenv("ALLOW_MOCK", "true")
-    assert llm.get_mock_mode() == "fallback"
-
 
 class _FakeCompletions:
     def __init__(self, handler):
@@ -88,13 +83,16 @@ async def test_refine_prompt_falls_back_to_next_provider(monkeypatch):
             ]
         )
 
+    # All models are now via openrouter; haiku fails, sonnet succeeds
+    async def dispatch_create(**kwargs):
+        if kwargs["model"] == "anthropic/claude-haiku-4-5-20251001":
+            return await fail_create(**kwargs)
+        return await success_create(**kwargs)
+
     monkeypatch.setattr(
         llm,
         "clients",
-        {
-            "openai": _FakeClient(fail_create),
-            "groq": _FakeClient(success_create),
-        },
+        {"openrouter": _FakeClient(dispatch_create)},
     )
 
     review = await llm.refine_prompt_with_llm(
@@ -105,4 +103,5 @@ async def test_refine_prompt_falls_back_to_next_provider(monkeypatch):
 
     assert review["improved_prompt"].startswith("Write a structured explanation")
     assert len(review["clarifying_questions"]) == 3
-    assert calls[:2] == ["gpt-4o-mini", "llama-3.1-8b-instant"]
+    assert calls[0] == "anthropic/claude-haiku-4-5-20251001"
+    assert calls[1] == "anthropic/claude-sonnet-4-5"

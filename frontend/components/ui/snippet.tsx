@@ -72,7 +72,7 @@ export function Snippet({
           iconOnly
           onClick={handleCopy}
           aria-label="Copy command"
-          className="shrink-0"
+          className="shrink-0 text-ds-text-tertiary hover:text-ds-text"
         >
           {copied ? <Check size={14} strokeWidth={2} /> : <Copy size={14} strokeWidth={2} />}
         </Button>

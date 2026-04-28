@@ -1,7 +1,8 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef, useMemo } from "react";
-import { Settings2 } from "lucide-react";
+import { useState, useEffect, useLayoutEffect, useCallback, useRef, useMemo, type ReactNode } from "react";
+import { AssignChatProjectModal } from "@/components/modals/AssignChatProjectModal";
+import { useProjectStore } from "@/lib/store/projectStore";
 import { useUserLevelStore } from "@/lib/store/userLevelStore";
 import { useModelsStore } from "@/lib/store/modelsStore";
 import { useChatStore } from "@/lib/store/chatStore";
@@ -52,18 +53,32 @@ function resolveSecondaryModel(
   return alternative?.value ?? primaryModel;
 }
 
-export function ChatLayout() {
+const CHAT_TOP_OVERLAY_FADE_HEIGHT = 20;
+const CHAT_TOP_OVERLAY_FALLBACK_HEIGHT = 74;
+const CHAT_INPUT_WIDTH_CLASS = "max-w-[46rem]";
+
+export function ChatLayout({ header }: { header?: ReactNode }) {
   const { t } = useTranslation();
   const level = useUserLevelStore((s) => s.level);
+  const attachFilesRef = useRef<((files: FileList) => void) | null>(null);
+  const userEmail = useUserLevelStore((s) => s.userEmail);
+  const projects = useProjectStore((s) => s.projects);
+  const activeChatId = useChatStore((s) => s.activeChatId);
+  const activeChat = useChatStore((s) => s.chats.find((c) => c.id === s.activeChatId));
+  const assignChatToProject = useChatStore((s) => s.assignChatToProject);
+  const [projectModalOpen, setProjectModalOpen] = useState(false);
   const trackAdvancedFeature = useUserLevelStore((s) => s.trackAdvancedFeature);
   const models = useModelsStore((s) => s.models);
   const messages = useChatStore((s) => s.messages);
   const isSending = useChatStore((s) => s.isSending);
   const messagesError = useChatStore((s) => s.messagesError);
+  const setComposerSendOpts = useChatStore((s) => s.setComposerSendOpts);
   const chatIsEmpty = messages.length === 0 && !isSending && !messagesError;
 
   const [inputWrapperHeight, setInputWrapperHeight] = useState(220);
   const roRef = useRef<ResizeObserver | null>(null);
+  const topOverlayRoRef = useRef<ResizeObserver | null>(null);
+  const [topOverlayOffset, setTopOverlayOffset] = useState(0);
   const inputWrapperRef = useCallback((node: HTMLDivElement | null) => {
     if (roRef.current) {
       roRef.current.disconnect();
@@ -75,6 +90,34 @@ export function ChatLayout() {
       });
       roRef.current.observe(node);
     }
+  }, []);
+  const topOverlayRef = useCallback((node: HTMLDivElement | null) => {
+    if (topOverlayRoRef.current) {
+      topOverlayRoRef.current.disconnect();
+      topOverlayRoRef.current = null;
+    }
+
+    if (!node) {
+      setTopOverlayOffset(0);
+      return;
+    }
+
+    const updateOffset = (height: number) => {
+      setTopOverlayOffset(Math.ceil(height) + CHAT_TOP_OVERLAY_FADE_HEIGHT);
+    };
+
+    updateOffset(node.getBoundingClientRect().height);
+    topOverlayRoRef.current = new ResizeObserver(([entry]) => {
+      updateOffset(entry.contentRect.height);
+    });
+    topOverlayRoRef.current.observe(node);
+  }, []);
+
+  // ChatLayout does NOT handle drop itself — ChatInputBox handles it directly.
+  // We only preventDefault on dragover so the browser doesn't open the file.
+
+  const handleManageProject = useCallback(() => {
+    setProjectModalOpen(true);
   }, []);
 
   const defaultModel = useMemo(() => {
@@ -88,11 +131,14 @@ export function ChatLayout() {
     [defaultModel, models],
   );
 
-  const [model, setModel] = useState(
-    defaultModel,
-  );
+  const storedGenerationPreferencesRef = useRef<GenerationPreferences>({});
+
+  // SSR-safe defaults — must match exactly between server and client initial
+  // render to avoid React hydration errors. useLayoutEffect below restores
+  // persisted values before the browser paints (no visible flash).
+  const [model, setModel] = useState(defaultModel);
   const [temperature, setTemperature] = useState(0.7);
-  const [maxTokens, setMaxTokens] = useState(1024);
+  const [maxTokens, setMaxTokens] = useState(2048);
   const [system, setSystem] = useState(() => getDefaultSystem());
   const [variables, setVariables] = useState<Record<string, string>>({});
   const [showTpl, setShowTpl] = useState(false);
@@ -106,92 +152,121 @@ export function ChatLayout() {
   const [mobileConfigOpen, setMobileConfigOpen] = useState(false);
   const [templatePrompt, setTemplatePrompt] = useState<string | null>(null);
   const [inputVariableNames, setInputVariableNames] = useState<string[]>([]);
-  const [storedGenerationPreferences, setStoredGenerationPreferences] =
-    useState<GenerationPreferences>({});
-  const [generationPreferencesHydrated, setGenerationPreferencesHydrated] =
-    useState(false);
-  const [generationPreferencesReadyToPersist, setGenerationPreferencesReadyToPersist] =
-    useState(false);
   const prevVarCountRef = useRef(0);
+  const prefsHydratedRef = useRef(false);
 
-  useEffect(() => {
-    const storedPreferences = readGenerationPreferences();
-    setStoredGenerationPreferences(storedPreferences);
+  // Restore persisted preferences before the browser paints. useLayoutEffect
+  // is client-only so server HTML and client initial tree both use the same
+  // SSR-safe defaults above — no hydration mismatch. The layout effect fires
+  // synchronously before paint so the user never sees the defaults.
+  useLayoutEffect(() => {
+    if (prefsHydratedRef.current) return;
+    prefsHydratedRef.current = true;
+    const storeEmail = useUserLevelStore.getState().userEmail;
+    const storedPreferences = readGenerationPreferences(storeEmail || userEmail);
+    storedGenerationPreferencesRef.current = storedPreferences;
+    if (storedPreferences.model !== undefined) setModel(storedPreferences.model);
+    if (storedPreferences.temperature !== undefined) setTemperature(storedPreferences.temperature);
+    if (storedPreferences.topP !== undefined) setTopP(storedPreferences.topP);
+    if (storedPreferences.maxTokens !== undefined) setMaxTokens(storedPreferences.maxTokens);
+    if (storedPreferences.system !== undefined) setSystem(storedPreferences.system);
+    if (storedPreferences.variables !== undefined) setVariables(storedPreferences.variables);
+    if (storedPreferences.compareEnabled !== undefined) setCompareEnabled(storedPreferences.compareEnabled);
+    if (storedPreferences.compareModelA !== undefined) setCompareModelA(storedPreferences.compareModelA);
+    if (storedPreferences.compareModelB !== undefined) setCompareModelB(storedPreferences.compareModelB);
+    if (storedPreferences.rawJsonEnabled !== undefined) setRawJsonEnabled(storedPreferences.rawJsonEnabled);
+    if (storedPreferences.selfConsistencyEnabled !== undefined) setSelfConsistencyEnabled(storedPreferences.selfConsistencyEnabled);
+    if (storedPreferences.fewShotExamples !== undefined) setFewShotExamples(storedPreferences.fewShotExamples);
+  }, [userEmail]);
 
-    if (storedPreferences.temperature !== undefined) {
-      setTemperature(storedPreferences.temperature);
-    }
-    if (storedPreferences.topP !== undefined) {
-      setTopP(storedPreferences.topP);
-    }
-    if (storedPreferences.maxTokens !== undefined) {
-      setMaxTokens(storedPreferences.maxTokens);
-    }
-    if (storedPreferences.system !== undefined) {
-      setSystem(storedPreferences.system);
-    }
-    if (storedPreferences.variables !== undefined) {
-      setVariables(storedPreferences.variables);
-    }
-    if (storedPreferences.compareEnabled !== undefined) {
-      setCompareEnabled(storedPreferences.compareEnabled);
-    }
-    if (storedPreferences.selfConsistencyEnabled !== undefined) {
-      setSelfConsistencyEnabled(storedPreferences.selfConsistencyEnabled);
-    }
-    if (storedPreferences.fewShotExamples !== undefined) {
-      setFewShotExamples(storedPreferences.fewShotExamples);
-    }
-
-    setGenerationPreferencesHydrated(true);
-  }, []);
-
-  // Sync model selection when models load from backend after hydration.
+  // Sync model selection when models load from backend — validate that the
+  // stored model is still available; fall back to defaultModel if not.
   const modelsInitialized = useRef(false);
   useEffect(() => {
-    if (
-      !generationPreferencesHydrated ||
-      modelsInitialized.current ||
-      models.length === 0
-    ) {
+    if (modelsInitialized.current || models.length === 0) {
       return;
     }
 
     modelsInitialized.current = true;
+    const storedPreferences = storedGenerationPreferencesRef.current;
 
     const preferredModel = resolvePreferredModel(
-      storedGenerationPreferences.model,
+      storedPreferences.model,
       models,
       defaultModel,
     );
-    const preferredCompareModel = resolveSecondaryModel(models, preferredModel);
+    const preferredCompareModelA = resolvePreferredModel(
+      storedPreferences.compareModelA ?? storedPreferences.model,
+      models,
+      preferredModel,
+    );
+    const preferredCompareModelB = resolvePreferredModel(
+      storedPreferences.compareModelB,
+      models,
+      resolveSecondaryModel(models, preferredCompareModelA),
+    );
 
     setModel(preferredModel);
-    setCompareModelA(preferredModel);
-    setCompareModelB(preferredCompareModel);
-    setGenerationPreferencesReadyToPersist(true);
-  }, [
-    defaultModel,
-    generationPreferencesHydrated,
-    models,
-    storedGenerationPreferences.model,
-  ]);
+    setCompareModelA(preferredCompareModelA);
+    setCompareModelB(
+      preferredCompareModelB === preferredCompareModelA
+        ? resolveSecondaryModel(models, preferredCompareModelA)
+        : preferredCompareModelB,
+    );
+  }, [defaultModel, models]);
 
+  // Persist preferences immediately whenever they change — no longer gated on
+  // models initialization so changes made before models load are never lost.
   useEffect(() => {
-    if (!generationPreferencesReadyToPersist) return;
+    const storedPreferences = storedGenerationPreferencesRef.current;
     // When level < 3, the level-gate effect clears L3 state in memory.
     // Preserve the stored L3 values so they survive a level demotion + refresh.
     const l3Fields = level === 3
-      ? { system, variables, compareEnabled, selfConsistencyEnabled, fewShotExamples }
+      ? {
+          system,
+          variables,
+          compareEnabled,
+          compareModelA,
+          compareModelB,
+          rawJsonEnabled,
+          selfConsistencyEnabled,
+          fewShotExamples,
+        }
       : {
-          system: storedGenerationPreferences.system,
-          variables: storedGenerationPreferences.variables,
-          compareEnabled: storedGenerationPreferences.compareEnabled,
-          selfConsistencyEnabled: storedGenerationPreferences.selfConsistencyEnabled,
-          fewShotExamples: storedGenerationPreferences.fewShotExamples,
+          system: storedPreferences.system,
+          variables: storedPreferences.variables,
+          compareEnabled: storedPreferences.compareEnabled,
+          compareModelA: storedPreferences.compareModelA,
+          compareModelB: storedPreferences.compareModelB,
+          rawJsonEnabled: storedPreferences.rawJsonEnabled,
+          selfConsistencyEnabled: storedPreferences.selfConsistencyEnabled,
+          fewShotExamples: storedPreferences.fewShotExamples,
         };
-    writeGenerationPreferences({ model, temperature, topP, maxTokens, ...l3Fields });
-  }, [generationPreferencesReadyToPersist, model, temperature, topP, maxTokens, level, system, variables, compareEnabled, selfConsistencyEnabled, fewShotExamples, storedGenerationPreferences]);
+    const nextPreferences: GenerationPreferences = {
+      model,
+      temperature,
+      topP,
+      maxTokens,
+      ...l3Fields,
+    };
+    writeGenerationPreferences(nextPreferences, userEmail);
+    storedGenerationPreferencesRef.current = nextPreferences;
+  }, [
+    model,
+    temperature,
+    topP,
+    maxTokens,
+    level,
+    system,
+    variables,
+    compareEnabled,
+    compareModelA,
+    compareModelB,
+    rawJsonEnabled,
+    selfConsistencyEnabled,
+    fewShotExamples,
+    userEmail,
+  ]);
 
   const handleInputVariableNamesChange = useCallback((names: string[]) => {
     setInputVariableNames((prev) => (sameNames(prev, names) ? prev : names));
@@ -364,73 +439,6 @@ export function ChatLayout() {
     variables,
   ]);
 
-  const statusBar = useMemo(() => {
-    if (level < 2) return undefined;
-
-    return (
-      <div className="flex h-5 items-center gap-2 px-1 font-mono text-xs text-ds-text-tertiary whitespace-nowrap overflow-hidden">
-        <button
-          type="button"
-          onClick={() => setMobileConfigOpen(true)}
-          className="flex items-center justify-center rounded-md p-1 text-ds-text-tertiary transition-colors hover:bg-gray-alpha-200 md:hidden"
-          aria-label="Open configuration"
-        >
-          <Settings2 size={14} strokeWidth={2} />
-        </button>
-        {isCompareMode ? (
-          <>
-            <span className="text-blue-700">{models.find((option) => option.value === compareModelA)?.label ?? compareModelA}</span>
-            <span className="opacity-40">vs</span>
-            <span className="text-green-700">{models.find((option) => option.value === compareModelB)?.label ?? compareModelB}</span>
-            <span className="rounded bg-blue-700/[0.15] px-1.5 text-[11px] leading-[20px] font-bold text-blue-700">Compare</span>
-          </>
-        ) : isSelfConsistency ? (
-          <>
-            <span>{models.find((option) => option.value === model)?.label ?? model}</span>
-            <span className="rounded bg-amber-700/[0.15] px-1.5 text-[11px] leading-[20px] font-bold text-amber-700">{t("config.check3x")}</span>
-          </>
-        ) : (
-          <span>{models.find((option) => option.value === model)?.label ?? model}</span>
-        )}
-        <span>&middot;</span>
-        <span>t={temperature.toFixed(2)}</span>
-        {level === 3 && (
-          <>
-            <span>&middot;</span>
-            <span>p={topP.toFixed(2)}</span>
-          </>
-        )}
-        <span>&middot;</span>
-        <span>{maxTokens} tok</span>
-        {level === 3 && Object.keys(variables).length > 0 && (
-          <>
-            <span>&middot;</span>
-            <span>{Object.keys(variables).length} vars</span>
-          </>
-        )}
-        {level === 3 && fewShotExamples.length > 0 && (
-          <>
-            <span>&middot;</span>
-            <span>{fewShotExamples.length} examples</span>
-          </>
-        )}
-      </div>
-    );
-  }, [
-    compareModelA,
-    compareModelB,
-    fewShotExamples.length,
-    isCompareMode,
-    isSelfConsistency,
-    level,
-    maxTokens,
-    model,
-    models,
-    t,
-    temperature,
-    topP,
-    variables,
-  ]);
 
   const chatEmptyHint = useMemo(() => (
     level === 1 ? "" :
@@ -456,43 +464,87 @@ export function ChatLayout() {
     <MainInput
       chatParams={chatParams}
       aiTutor={level <= 2}
+      enhanceOnly={level === 3}
       mono={mono}
       isEmpty={chatIsEmpty}
       placeholder={placeholder}
-      statusBar={statusBar}
+
       externalPrompt={templatePrompt}
       onExternalPromptConsumed={() => setTemplatePrompt(null)}
       onAppendToSystem={level === 3 ? handleAppendToSystem : undefined}
       onVariableNamesChange={level === 3 ? handleInputVariableNamesChange : undefined}
+      attachFilesRef={attachFilesRef}
+      inProject={Boolean(activeChat?.project_id)}
+      onManageProject={handleManageProject}
     />
   );
 
+  useEffect(() => {
+    setComposerSendOpts({
+      userEmail: userEmail ?? "anonymous",
+      model: chatParams.model,
+      temperature: chatParams.temperature,
+      max_tokens: chatParams.max_tokens,
+      top_p: chatParams.top_p,
+      system_message: chatParams.system_message,
+      compareModel: chatParams.compareModel,
+      modelLabel: chatParams.modelLabel,
+      compareModelLabel: chatParams.compareModelLabel,
+      selfConsistencyEnabled: chatParams.selfConsistencyEnabled,
+      projectId: activeChat?.project_id ?? null,
+      stream: true,
+      forceNewChat: false,
+    });
+
+    return () => {
+      setComposerSendOpts(null);
+    };
+  }, [chatParams, setComposerSendOpts, userEmail, activeChat?.project_id]);
+
   return (
-    <div className="flex h-full min-h-0 overflow-hidden" style={{ width: "100%" }}>
+    <div
+      className="flex h-full min-h-0 overflow-hidden"
+      style={{ width: "100%" }}
+    >
+      {/* Project assignment modal */}
+      <AssignChatProjectModal
+        open={projectModalOpen}
+        onOpenChange={setProjectModalOpen}
+        projects={projects}
+        currentProjectId={activeChat?.project_id ?? null}
+        chatTitle={activeChat?.title ?? ""}
+        onAssign={async (projectId) => {
+          if (activeChatId) await assignChatToProject(activeChatId, projectId);
+        }}
+      />
+
       <div className="chat-main" style={{ minWidth: 0, flex: "1 1 0" }}>
         {chatIsEmpty ? (
           <div className="flex h-full flex-col items-center justify-center px-6">
             <h1 className="-mt-12 mb-4 text-center text-3xl font-semibold leading-tight tracking-tight text-foreground md:text-4xl">
               {t("chat.greeting")}
             </h1>
-            <div className="w-full max-w-3xl">
+            <div className={`w-full ${CHAT_INPUT_WIDTH_CLASS}`}>
               {inputBlock}
             </div>
           </div>
         ) : (
           <div className="chat-body">
+            {header && (
+              <div ref={topOverlayRef} className="chat-top-overlay">
+                {header}
+              </div>
+            )}
             <MessageList
               showRaw={rawJsonEnabled}
               emptyHint={chatEmptyHint}
               floatingInputOffset={inputWrapperHeight}
+              topOverlayOffset={header ? topOverlayOffset || CHAT_TOP_OVERLAY_FALLBACK_HEIGHT : 0}
             />
             <div className="fade-out-gradient" />
             <div ref={inputWrapperRef} className="floating-input-wrapper">
-              <div className="mx-auto w-full max-w-3xl px-6">
+              <div className={`mx-auto w-full ${CHAT_INPUT_WIDTH_CLASS} px-6`}>
                 {inputBlock}
-                <p className="mt-1.5 text-center text-[11px] select-none text-[var(--ds-gray-600)]">
-                  {t("chat.enterHint")}
-                </p>
               </div>
             </div>
           </div>

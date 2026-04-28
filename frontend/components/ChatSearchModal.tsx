@@ -1,24 +1,65 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import { useSession } from "next-auth/react";
-import { Search, MessageSquare, Plus, Clock } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
+import { Search, Plus, Clock, Folder, MessageCircle } from "lucide-react";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { ErrorState } from "@/components/ui/error-state";
 import { Input } from "@/components/ui/input";
+import { Kbd } from "@/components/ui/kbd";
+import { ProjectIcon } from "@/components/projects/ProjectIcon";
 import { Separator } from "@/components/ui/separator";
-import { useChatStore, type ChatSession } from "@/lib/store/chatStore";
+import { Skeleton } from "@/components/ui/skeleton";
+import {
+  dedupeChatSessions,
+  useChatStore,
+  type ChatSession,
+} from "@/lib/store/chatStore";
+import { useProjectStore } from "@/lib/store/projectStore";
 import { SEARCH_DEBOUNCE_MS, REQUEST_TIMEOUT_MS } from "@/lib/config";
 import { useTranslation } from "@/lib/store/i18nStore";
 import { getErrorMessage, readResponseError } from "@/lib/request";
+import { cn } from "@/lib/utils";
+import { useUserLevelStore } from "@/lib/store/userLevelStore";
 
 interface SearchResult {
   chat_id: string;
   chat_title: string;
+  project_id: string | null;
+  project_name: string | null;
   message_id: number | null;
   message_content: string | null;
   role: string | null;
   updated_at: string;
+}
+
+function formatChatSearchLabel(chatTitle: string, projectName?: string | null) {
+  return projectName ? `${projectName} / ${chatTitle}` : chatTitle;
+}
+
+const searchActionButtonClass =
+  "group flex w-full items-center gap-2 rounded-lg border-none bg-transparent px-3 py-2.5 text-left text-[15px] font-medium text-ds-text transition-colors hover:bg-gray-alpha-200 cursor-pointer";
+
+const searchListButtonClass =
+  "group flex w-full items-center rounded-lg border-none bg-transparent px-3 py-2.5 text-left text-[15px] font-medium text-ds-text transition-colors hover:bg-gray-alpha-200 cursor-pointer";
+
+function SearchResultSkeleton({ count = 4 }: { count?: number }) {
+  return (
+    <div className="space-y-0.5">
+      {Array.from({ length: count }).map((_, i) => (
+        <div
+          key={i}
+          className="flex items-center justify-between gap-3 rounded-lg px-3 py-2.5"
+        >
+          <div className="min-w-0 flex flex-1 items-center gap-2">
+            <Skeleton width={18} height={18} className="rounded-md" />
+            <Skeleton height={16} width={`${46 + (i % 3) * 14}%`} />
+          </div>
+          <Skeleton height={12} width={72} />
+        </div>
+      ))}
+    </div>
+  );
 }
 
 export function ChatSearchModal({
@@ -29,11 +70,17 @@ export function ChatSearchModal({
   onOpenChange: (open: boolean) => void;
 }) {
   const { t } = useTranslation();
-  const { data: session } = useSession();
-  const userEmail = session?.user?.email ?? "anonymous";
+  const router = useRouter();
+  const level = useUserLevelStore((s) => s.level);
+  const userEmail = useUserLevelStore((s) => s.userEmail);
+  const canUseProjects = level >= 2;
   const inputRef = useRef<HTMLInputElement>(null);
 
   const chats: ChatSession[] = useChatStore((s) => s.chats);
+  const isLoadingChats = useChatStore((s) => s.isLoadingChats);
+  const projects = useProjectStore((s) => s.projects);
+  const isLoadingProjects = useProjectStore((s) => s.isLoadingProjects);
+  const loadProjects = useProjectStore((s) => s.loadProjects);
 
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<SearchResult[]>([]);
@@ -41,7 +88,23 @@ export function ChatSearchModal({
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [showAllRecent, setShowAllRecent] = useState(false);
   const [searchNonce, setSearchNonce] = useState(0);
+  const [resultsScrolled, setResultsScrolled] = useState(false);
+  const resultsScrollRef = useRef<HTMLDivElement>(null);
   const searchRequestIdRef = useRef(0);
+  const visibleChats = useMemo(() => dedupeChatSessions(chats), [chats]);
+  const projectsById = useMemo(
+    () => new Map(projects.map((project) => [project.id, project])),
+    [projects],
+  );
+
+  // Scroll detection for results area
+  useEffect(() => {
+    const el = resultsScrollRef.current;
+    if (!el) return;
+    const onScroll = () => setResultsScrolled(el.scrollTop > 4);
+    el.addEventListener("scroll", onScroll, { passive: true });
+    return () => el.removeEventListener("scroll", onScroll);
+  });
 
   // Focus input when opened
   useEffect(() => {
@@ -50,9 +113,16 @@ export function ChatSearchModal({
       setResults([]);
       setErrorMessage(null);
       setShowAllRecent(false);
+      setResultsScrolled(false);
+      if (userEmail !== "anonymous") {
+        void useChatStore.getState().loadChats(userEmail);
+        if (canUseProjects) {
+          void loadProjects();
+        }
+      }
       setTimeout(() => inputRef.current?.focus(), 50);
     }
-  }, [open]);
+  }, [canUseProjects, loadProjects, open, userEmail]);
 
   // Debounced search
   useEffect(() => {
@@ -116,23 +186,39 @@ export function ChatSearchModal({
   const close = () => onOpenChange(false);
 
   const handleSelect = (chatId: string, messageId?: number) => {
+    router.push("/chat");
     useChatStore.getState().selectChat(chatId, messageId);
     close();
   };
 
   const handleNewChat = async () => {
-    await useChatStore.getState().createNewChat(userEmail);
+    router.push("/chat");
+    useChatStore.getState().openDraftChat();
+    close();
+  };
+
+  const handleOpenProjects = (projectId?: string) => {
+    if (!canUseProjects) {
+      close();
+      return;
+    }
+    router.push(projectId ? `/projects/${projectId}` : "/projects");
     close();
   };
 
   const handleShowAllRecent = () => {
-    setShowAllRecent(true);
-    setQuery("");
-    setResults([]);
-    setErrorMessage(null);
+    router.push("/chats");
+    close();
   };
 
-  const visibleChats = showAllRecent ? chats : chats.slice(0, 5);
+  const recentChats = showAllRecent ? visibleChats : visibleChats.slice(0, 5);
+  const filteredProjects = canUseProjects
+    ? (query.trim()
+      ? projects.filter((project) =>
+        project.name.toLowerCase().includes(query.trim().toLowerCase()),
+      )
+      : projects)
+    : [];
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -150,84 +236,160 @@ export function ChatSearchModal({
             className="flex-1"
             inputClassName="text-lg"
           />
-          <kbd className="hidden sm:inline-flex h-6 items-center rounded-md border border-gray-alpha-300 bg-gray-alpha-100 px-1.5 text-[11px] font-mono text-ds-text-tertiary">
-            Esc
-          </kbd>
+          <Kbd className="hidden sm:inline-flex">Esc</Kbd>
         </div>
 
         {/* Divider */}
         <Separator />
 
-        {/* Results area */}
-        <div className="max-h-[60vh] overflow-y-auto p-2">
-          {!query.trim() ? (
-            /* Empty query: quick actions + recent chats */
-            <>
-              <div className="space-y-0.5">
-                <button
-                  type="button"
-                 
-                  onClick={handleNewChat}
-                  className="flex w-full items-center gap-3 rounded-lg px-4 py-2.5 text-sm text-ds-text transition-colors hover:bg-gray-alpha-200 hover:text-ds-text bg-transparent border-none cursor-pointer"
-                >
-                  <Plus size={16} strokeWidth={2} className="text-ds-text-secondary" />
-                  {t("search.newChat")}
-                </button>
-                <button
-                  type="button"
-                  onClick={handleShowAllRecent}
-                  className="flex w-full items-center gap-3 rounded-lg px-4 py-2.5 text-sm text-ds-text transition-colors hover:bg-gray-alpha-200 hover:text-ds-text bg-transparent border-none cursor-pointer"
-                >
-                  <Clock size={16} strokeWidth={2} className="text-ds-text-secondary" />
-                  {t("search.allRecent")}
-                </button>
-              </div>
+        {/* Quick actions — always visible */}
+        <div className="px-2 py-1.5 space-y-0.5">
+          <button
+            type="button"
+            onClick={handleNewChat}
+            className={searchActionButtonClass}
+          >
+            <Plus size={18} strokeWidth={2} className="shrink-0 text-ds-text" />
+            {t("search.newChat")}
+          </button>
+          <button
+            type="button"
+            onClick={handleShowAllRecent}
+            className={searchActionButtonClass}
+          >
+            <Clock size={18} strokeWidth={2} className="shrink-0 text-ds-text" />
+            {t("search.allRecent")}
+          </button>
+          {canUseProjects && (
+            <button
+              type="button"
+              onClick={() => handleOpenProjects()}
+              className={searchActionButtonClass}
+            >
+              <Folder size={18} strokeWidth={2} className="shrink-0 text-ds-text" />
+              {t("search.projects")}
+            </button>
+          )}
+        </div>
+        <Separator className={cn("transition-opacity duration-200", resultsScrolled ? "opacity-100" : "opacity-0")} />
 
-              {chats.length > 0 && (
+        {/* Results area — fixed height, never resizes */}
+        <div
+          ref={resultsScrollRef}
+          className="h-[50vh] overflow-y-auto p-2 flex flex-col"
+        >
+          {!query.trim() ? (
+            <>
+              {canUseProjects && (projects.length > 0 || (isLoadingProjects && projects.length === 0)) && (
                 <>
-                  <div className="px-4 py-2 mt-2 text-xs font-semibold uppercase tracking-wider text-ds-text-tertiary">
-                    {t("search.recentChats")}
+                  <div className="px-3 py-2 mt-2 font-mono text-xs font-semibold uppercase tracking-widest text-ds-text-tertiary">
+                    {t("search.projects")}
                   </div>
-                  <div className="space-y-0.5">
-                    {visibleChats.map((chat) => (
-                      <button
-                        key={chat.id}
-                        type="button"
-                        onClick={() => handleSelect(chat.id)}
-                        className="flex w-full items-center justify-between rounded-lg px-4 py-2.5 text-sm text-ds-text transition-colors hover:bg-gray-alpha-200 hover:text-ds-text bg-transparent border-none cursor-pointer text-left"
-                      >
-                        <div className="flex items-center gap-3 min-w-0">
-                          <MessageSquare size={16} strokeWidth={2} className="shrink-0 text-ds-text-secondary" />
-                          <span className="truncate max-w-[350px]">{chat.title}</span>
-                        </div>
-                        <span className="shrink-0 ml-3 text-ds-text-tertiary text-xs">
-                          {new Date(chat.updated_at).toLocaleDateString()}
-                        </span>
-                      </button>
-                    ))}
-                    {!showAllRecent && chats.length > 5 && (
-                      <button
-                        type="button"
-                        onClick={handleShowAllRecent}
-                        className="w-full text-left text-sm text-ds-text-secondary px-4 py-2 hover:text-ds-text bg-transparent border-none cursor-pointer"
-                      >
-                        {t("search.viewAll")}
-                      </button>
-                    )}
-                  </div>
+                  {isLoadingProjects && projects.length === 0 ? (
+                    <SearchResultSkeleton count={3} />
+                  ) : (
+                    <div className="space-y-0.5">
+                      {projects.slice(0, 5).map((project) => (
+                        <button
+                          key={project.id}
+                          type="button"
+                          onClick={() => handleOpenProjects(project.id)}
+                          className={searchListButtonClass}
+                        >
+                          <div className="flex min-w-0 items-center gap-2">
+                            <ProjectIcon
+                              iconName={project.icon_name}
+                              color={project.accent_color}
+                              size={18}
+                              strokeWidth={2}
+                            />
+                            <span className="block max-w-[350px] truncate">{project.name}</span>
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  )}
                 </>
               )}
 
-              {chats.length === 0 && (
-                <p className="px-4 py-6 text-center text-sm text-ds-text-tertiary">
-                  {t("search.noRecent")}
-                </p>
+              {(visibleChats.length > 0 || (isLoadingChats && visibleChats.length === 0)) && (
+                <>
+                  <div className="px-3 py-2 mt-2 font-mono text-xs font-semibold uppercase tracking-widest text-ds-text-tertiary">
+                    {t("search.recentChats")}
+                  </div>
+                  {isLoadingChats && visibleChats.length === 0 ? (
+                    <SearchResultSkeleton count={4} />
+                  ) : (
+                    <div className="space-y-0.5">
+                      {recentChats.map((chat) => (
+                        <button
+                          key={chat.id}
+                          type="button"
+                          onClick={() => handleSelect(chat.id)}
+                          className={cn(searchListButtonClass, "justify-between")}
+                        >
+                          <div className="min-w-0 flex flex-1 items-center gap-2">
+                            {chat.project_id && canUseProjects ? (
+                              <ProjectIcon
+                                iconName={projectsById.get(chat.project_id)?.icon_name}
+                                color={projectsById.get(chat.project_id)?.accent_color}
+                                size={18}
+                                strokeWidth={2}
+                              />
+                            ) : (
+                              <MessageCircle size={18} strokeWidth={2} className="shrink-0 text-ds-text" />
+                            )}
+                            <div className="min-w-0">
+                              <span className="block truncate max-w-[350px]">
+                                {formatChatSearchLabel(chat.title, canUseProjects ? chat.project_name : null)}
+                              </span>
+                            </div>
+                          </div>
+                          <span className="shrink-0 ml-3 text-ds-text-tertiary text-xs">
+                            {new Date(chat.updated_at).toLocaleDateString()}
+                          </span>
+                        </button>
+                      ))}
+                      {!showAllRecent && visibleChats.length > 5 && (
+                        <button
+                          type="button"
+                          onClick={handleShowAllRecent}
+                          className="w-full rounded-lg border-none bg-transparent px-3 py-2 text-left text-[15px] font-medium text-ds-text transition-colors hover:bg-gray-alpha-200 cursor-pointer"
+                        >
+                          {t("search.viewAll")}
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </>
+              )}
+
+              {visibleChats.length === 0 && !isLoadingChats && (
+              <button
+                type="button"
+                onClick={handleShowAllRecent}
+                className="w-full rounded-lg border-none bg-transparent px-3 py-2 text-left text-[15px] font-medium text-ds-text transition-colors hover:bg-gray-alpha-200 cursor-pointer"
+              >
+                {t("search.viewAll")}
+              </button>
               )}
             </>
           ) : loading ? (
-            /* Loading */
-            <div className="flex items-center justify-center py-6">
-              <div className="h-4 w-4 animate-spin rounded-full border-2 border-gray-alpha-200 border-t-gray-alpha-400" />
+            <div className="space-y-3">
+              {canUseProjects && (
+                <div>
+                  <div className="px-3 pb-1 font-mono text-xs font-semibold uppercase tracking-widest text-ds-text-tertiary">
+                    {t("search.projects")}
+                  </div>
+                  <SearchResultSkeleton count={2} />
+                </div>
+              )}
+              <div>
+                <div className="px-3 pb-1 font-mono text-xs font-semibold uppercase tracking-widest text-ds-text-tertiary">
+                  {t("search.recentChats")}
+                </div>
+                <SearchResultSkeleton count={4} />
+              </div>
             </div>
           ) : errorMessage ? (
             <div className="px-4 py-6">
@@ -239,41 +401,91 @@ export function ChatSearchModal({
                 onAction={() => setSearchNonce((value) => value + 1)}
               />
             </div>
-          ) : results.length > 0 ? (
-            /* Search results */
-            <div className="space-y-0.5">
-              {results.map((r, i) => (
-                <button
-                  key={`${r.chat_id}-${r.message_id ?? "title"}-${i}`}
-                  type="button"
-                  onClick={() => handleSelect(r.chat_id, r.message_id ?? undefined)}
-                  className="flex w-full items-center justify-between rounded-lg px-4 py-2.5 text-sm text-ds-text transition-colors hover:bg-gray-alpha-200 hover:text-ds-text bg-transparent border-none cursor-pointer text-left"
-                >
-                  <div className="flex items-center gap-3 min-w-0">
-                    <MessageSquare size={16} strokeWidth={2} className="shrink-0 text-ds-text-secondary" />
-                    <div className="min-w-0">
-                      <span className="block truncate max-w-full font-medium">{r.chat_title}</span>
-                      {r.message_content && (
-                        <span className="block truncate max-w-full text-xs text-ds-text-tertiary mt-0.5">
-                          <span className="font-medium text-ds-text-secondary">
-                            {r.role === "user" ? t("search.roleUser") : t("search.roleAssistant")}
-                          </span>
-                          {r.message_content}
-                        </span>
-                      )}
-                    </div>
+          ) : filteredProjects.length > 0 || results.length > 0 ? (
+            <div className="space-y-3">
+              {canUseProjects && filteredProjects.length > 0 && (
+                <div>
+                  <div className="px-3 pb-1 font-mono text-xs font-semibold uppercase tracking-widest text-ds-text-tertiary">
+                    {t("search.projects")}
                   </div>
-                  <span className="shrink-0 ml-3 text-ds-text-tertiary text-xs">
-                    {new Date(r.updated_at).toLocaleDateString()}
-                  </span>
-                </button>
-              ))}
+                  <div className="space-y-0.5">
+                    {filteredProjects.map((project) => (
+                      <button
+                        key={project.id}
+                        type="button"
+                        onClick={() => handleOpenProjects(project.id)}
+                        className={searchListButtonClass}
+                      >
+                        <div className="flex min-w-0 items-center gap-2">
+                          <ProjectIcon
+                            iconName={project.icon_name}
+                            color={project.accent_color}
+                            size={18}
+                            strokeWidth={2}
+                          />
+                          <span className="truncate">{project.name}</span>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {results.length > 0 && (
+                <div>
+                  <div className="px-3 pb-1 font-mono text-xs font-semibold uppercase tracking-widest text-ds-text-tertiary">
+                    {t("search.recentChats")}
+                  </div>
+                  <div className="space-y-0.5">
+                    {results.map((r, i) => (
+                      <button
+                        key={`${r.chat_id}-${r.message_id ?? "title"}-${i}`}
+                        type="button"
+                        onClick={() => handleSelect(r.chat_id, r.message_id ?? undefined)}
+                        className={cn(searchListButtonClass, "justify-between")}
+                      >
+                        <div className="min-w-0 flex flex-1 items-start gap-2">
+                          {r.project_id && canUseProjects ? (
+                            <ProjectIcon
+                              iconName={projectsById.get(r.project_id)?.icon_name}
+                              color={projectsById.get(r.project_id)?.accent_color}
+                              size={18}
+                              strokeWidth={2}
+                              className="mt-0.5"
+                            />
+                          ) : (
+                            <MessageCircle size={18} strokeWidth={2} className="mt-0.5 shrink-0 text-ds-text" />
+                          )}
+                          <div className="min-w-0">
+                            <span className="block truncate max-w-full font-medium">
+                              {formatChatSearchLabel(r.chat_title, canUseProjects ? r.project_name : null)}
+                            </span>
+                            {r.message_content && (
+                              <span className="block truncate max-w-full text-xs text-ds-text-tertiary mt-0.5">
+                                <span className="font-medium text-ds-text-secondary">
+                                  {r.role === "user" ? t("search.roleUser") : t("search.roleAssistant")}
+                                </span>
+                                {r.message_content}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                        <span className="shrink-0 ml-3 text-ds-text-tertiary text-xs">
+                          {new Date(r.updated_at).toLocaleDateString()}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           ) : (
             /* No results */
-            <p className="px-4 py-6 text-center text-sm text-ds-text-tertiary">
-              {t("search.noResults")}
-            </p>
+            <div className="flex flex-1 items-center justify-center">
+              <p className="text-center text-sm text-ds-text-tertiary">
+                {t("search.noResults")}
+              </p>
+            </div>
           )}
         </div>
       </DialogContent>

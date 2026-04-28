@@ -18,7 +18,7 @@ const Slider = React.forwardRef<
   >
     {/* Track: 8px height, 5px radius per exact Vercel specs */}
     <SliderPrimitive.Track className="relative h-[8px] w-full grow overflow-hidden rounded-[5px] bg-[var(--ds-gray-alpha-200)] transform-gpu">
-      <SliderPrimitive.Range className="absolute h-full bg-[var(--ds-blue-800)]" />
+      <SliderPrimitive.Range className="absolute h-full bg-[var(--ds-blue-700)]" />
     </SliderPrimitive.Track>
 
     {/* Outer Thumb: Acts as a strict 6x14 layout anchor for Radix UI positioning. Never scales. */}

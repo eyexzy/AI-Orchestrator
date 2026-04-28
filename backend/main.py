@@ -1,9 +1,10 @@
+import asyncio
 import inspect
 import json
 import logging
 import os
 import sys
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from time import perf_counter
 from uuid import uuid4
 
@@ -35,7 +36,7 @@ configure_logging()
 
 import ml_classifier
 from services.cache import cache
-from services.llm import clients, get_mock_mode
+from services.llm import clients
 
 logger = logging.getLogger("ai-orchestrator")
 
@@ -89,23 +90,13 @@ def _error_response(
 def _validate_env():
     is_production = is_production_env()
 
-    has_any_llm_key = any(
-        _get_non_empty_env(env_name)
-        for env_name in (
-            "OPENAI_API_KEY",
-            "GOOGLE_API_KEY",
-            "GROQ_API_KEY",
-            "OPENROUTER_API_KEY",
-        )
-    )
+    has_any_llm_key = bool(_get_non_empty_env("OPENROUTER_API_KEY"))
 
     warnings = []
     errors = []
 
     if not has_any_llm_key:
-        warnings.append(
-            f"No LLM API keys found - mock mode '{get_mock_mode()}' will control generation"
-        )
+        warnings.append("OPENROUTER_API_KEY is not set — LLM generation will fail at runtime")
 
     admin_api_key = _get_non_empty_env("ADMIN_API_KEY")
     auth_secret = _get_non_empty_env("AUTH_SECRET")
@@ -139,6 +130,13 @@ def _validate_env():
         sys.exit(1)
 
 
+def _should_warmup_semantic_model() -> bool:
+    configured = _get_non_empty_env("SEMANTIC_WARMUP_ON_STARTUP")
+    if configured is not None:
+        return configured.lower() in {"1", "true", "yes", "on"}
+    return is_production_env()
+
+
 _validate_env()
 
 
@@ -155,18 +153,26 @@ async def lifespan(app: FastAPI):
     )
 
     # Warm up semantic model at startup — not in the first user request path.
-    from time import perf_counter as _pc
-    from services.scoring import warmup_semantic_model
-    _t0 = _pc()
-    semantic_ok = warmup_semantic_model()
-    _t1 = _pc()
-    logger.info(
-        "[app] semantic_warmup",
-        extra={
-            "available": semantic_ok,
-            "duration_ms": int((_t1 - _t0) * 1000),
-        },
-    )
+    semantic_warmup_task = None
+
+    if _should_warmup_semantic_model():
+        from services.scoring import warmup_semantic_model
+
+        async def _semantic_warmup():
+            _t0 = perf_counter()
+            semantic_ok = await asyncio.to_thread(warmup_semantic_model)
+            _t1 = perf_counter()
+            logger.info(
+                "[app] semantic_warmup",
+                extra={
+                    "available": semantic_ok,
+                    "duration_ms": int((_t1 - _t0) * 1000),
+                },
+            )
+
+        semantic_warmup_task = asyncio.create_task(_semantic_warmup())
+    else:
+        logger.info("[app] semantic_warmup_skipped")
 
     logger.info("[app] startup")
 
@@ -219,6 +225,11 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
+        if semantic_warmup_task is not None and not semantic_warmup_task.done():
+            semantic_warmup_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await semantic_warmup_task
+
         await cache.close()
         for provider_name, client in clients.items():
             close_fn = getattr(client, "aclose", None) or getattr(client, "close", None)
@@ -362,10 +373,13 @@ from routers.profile import router as profile_router
 from routers.events import router as events_router
 from routers.adaptation_feedback import router as adaptation_feedback_router
 from routers.product_feedback import router as product_feedback_router
+from routers.projects import router as projects_router
+from routers.files import router as files_router
 
 app.include_router(analyze_router)
 app.include_router(generate_router)
 app.include_router(chats_router)
+app.include_router(projects_router)
 app.include_router(admin_router)
 app.include_router(feedback_router)
 app.include_router(templates_router)
@@ -373,3 +387,4 @@ app.include_router(profile_router)
 app.include_router(events_router)
 app.include_router(adaptation_feedback_router)
 app.include_router(product_feedback_router)
+app.include_router(files_router)

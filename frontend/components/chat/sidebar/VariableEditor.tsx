@@ -1,5 +1,6 @@
 "use client";
 import { useTranslation } from "@/lib/store/i18nStore";
+import { EmptyState } from "@/components/ui/empty-state";
 import { Input } from "@/components/ui/input";
 
 /* Variable Card */
@@ -49,14 +50,15 @@ export function VariableEditor({
   return (
     <div className="flex flex-col gap-2">
       {keys.length === 0 ? (
-        <div className="rounded-lg bg-gray-alpha-100 shadow-[0_0_0_1px_var(--ds-gray-alpha-200)] p-4 text-center flex flex-col gap-1">
-          <p className="text-[13px] font-semibold text-ds-text-secondary">
-            {t("config.variablesEmptyTitle")}
-          </p>
-          <p className="text-[11px] leading-relaxed text-ds-text-tertiary">
-            {t("config.variablesEmptyPrefix")} <code className="bg-gray-alpha-200 px-1 rounded">{"{{name}}"}</code> {t("config.variablesEmptySuffix")}
-          </p>
-        </div>
+        <EmptyState.Placeholder className="mx-0 w-full">
+          <>
+            {t("config.variablesEmptyPrefix")}{" "}
+            <code className="inline-block bg-transparent px-0 py-0 font-mono text-[10px] leading-none align-middle text-blue-900">
+              {"{{name}}"}
+            </code>{" "}
+            {t("config.variablesEmptySuffix")}
+          </>
+        </EmptyState.Placeholder>
       ) : (
         <div className="-mx-1 max-h-[320px] overflow-y-auto px-1 py-1">
           <div className="flex flex-col gap-3">
