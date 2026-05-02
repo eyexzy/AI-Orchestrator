@@ -65,15 +65,21 @@ export function ChatLayout({ header }: { header?: ReactNode }) {
   const projects = useProjectStore((s) => s.projects);
   const activeChatId = useChatStore((s) => s.activeChatId);
   const activeChat = useChatStore((s) => s.chats.find((c) => c.id === s.activeChatId));
+  const activeProjectMeta = useMemo(
+    () => projects.find((project) => project.id === activeChat?.project_id) ?? null,
+    [projects, activeChat?.project_id],
+  );
   const assignChatToProject = useChatStore((s) => s.assignChatToProject);
   const [projectModalOpen, setProjectModalOpen] = useState(false);
   const trackAdvancedFeature = useUserLevelStore((s) => s.trackAdvancedFeature);
   const models = useModelsStore((s) => s.models);
   const messages = useChatStore((s) => s.messages);
   const isSending = useChatStore((s) => s.isSending);
+  const isLoadingMessages = useChatStore((s) => s.isLoadingMessages);
   const messagesError = useChatStore((s) => s.messagesError);
   const setComposerSendOpts = useChatStore((s) => s.setComposerSendOpts);
-  const chatIsEmpty = messages.length === 0 && !isSending && !messagesError;
+  const chatIsFork = Boolean(activeChat?.parent_chat_id);
+  const chatIsEmpty = !chatIsFork && messages.length === 0 && !isSending && !isLoadingMessages && !messagesError;
 
   const [inputWrapperHeight, setInputWrapperHeight] = useState(220);
   const roRef = useRef<ResizeObserver | null>(null);
@@ -447,7 +453,7 @@ export function ChatLayout({ header }: { header?: ReactNode }) {
           ? t("chat.emptyCompare")
           : isSelfConsistency
             ? t("chat.emptyCheck3x")
-            : `${t("chat.emptyEngineer")}<br/><span style='opacity:.6'>${t("chat.supportsVars")}</span>`
+            : `${t("chat.emptyEngineer")}\n${t("chat.supportsVars")}`
   ), [isCompareMode, isSelfConsistency, level, t]);
 
   const placeholder = useMemo(() => (
@@ -475,7 +481,23 @@ export function ChatLayout({ header }: { header?: ReactNode }) {
       onVariableNamesChange={level === 3 ? handleInputVariableNamesChange : undefined}
       attachFilesRef={attachFilesRef}
       inProject={Boolean(activeChat?.project_id)}
-      onManageProject={handleManageProject}
+      onManageProject={activeChatId ? handleManageProject : undefined}
+      currentProject={
+        activeChat?.project_id
+          ? {
+              name: activeProjectMeta?.name ?? activeChat.project_name ?? "",
+              icon_name: activeProjectMeta?.icon_name ?? null,
+              accent_color: activeProjectMeta?.accent_color ?? null,
+            }
+          : null
+      }
+      onClearProject={
+        activeChatId && activeChat?.project_id
+          ? () => {
+              void assignChatToProject(activeChatId, null);
+            }
+          : undefined
+      }
     />
   );
 
@@ -537,7 +559,8 @@ export function ChatLayout({ header }: { header?: ReactNode }) {
             )}
             <MessageList
               showRaw={rawJsonEnabled}
-              emptyHint={chatEmptyHint}
+              loading={isLoadingMessages}
+              emptyHint={chatIsFork ? undefined : chatEmptyHint}
               floatingInputOffset={inputWrapperHeight}
               topOverlayOffset={header ? topOverlayOffset || CHAT_TOP_OVERLAY_FALLBACK_HEIGHT : 0}
             />
@@ -557,7 +580,7 @@ export function ChatLayout({ header }: { header?: ReactNode }) {
         <SheetContent side="right" className="w-[320px] p-0">
           <SheetHeader className="px-4 pb-2 pt-4">
             <SheetTitle className="text-[15px]">{t("config.mobileTitle")}</SheetTitle>
-            <SheetDescription className="text-xs">{t("config.mobileDescription")}</SheetDescription>
+            <SheetDescription className="text-[14px]">{t("config.mobileDescription")}</SheetDescription>
           </SheetHeader>
           <ConfigSidebar config={sidebarConfig} forceVisible />
         </SheetContent>

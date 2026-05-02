@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Search, Plus, Clock, Folder, MessageCircle } from "lucide-react";
+import { Search, Plus, Clock, Folder, MessageCircle, GitFork } from "lucide-react";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { ErrorState } from "@/components/ui/error-state";
 import { Input } from "@/components/ui/input";
@@ -21,12 +21,15 @@ import { useTranslation } from "@/lib/store/i18nStore";
 import { getErrorMessage, readResponseError } from "@/lib/request";
 import { cn } from "@/lib/utils";
 import { useUserLevelStore } from "@/lib/store/userLevelStore";
+import { PROJECT_COLOR_ICON_CLASSES } from "@/components/projects/projectTheme";
 
 interface SearchResult {
   chat_id: string;
   chat_title: string;
   project_id: string | null;
   project_name: string | null;
+  parent_chat_id: string | null;
+  forked_from_message_id: number | null;
   message_id: number | null;
   message_content: string | null;
   role: string | null;
@@ -273,16 +276,16 @@ export function ChatSearchModal({
         </div>
         <Separator className={cn("transition-opacity duration-200", resultsScrolled ? "opacity-100" : "opacity-0")} />
 
-        {/* Results area — fixed height, never resizes */}
+        {/* Results area — grows with content up to the existing max height */}
         <div
           ref={resultsScrollRef}
-          className="h-[50vh] overflow-y-auto p-2 flex flex-col"
+          className="max-h-[50vh] overflow-y-auto p-2 flex flex-col"
         >
           {!query.trim() ? (
             <>
               {canUseProjects && (projects.length > 0 || (isLoadingProjects && projects.length === 0)) && (
                 <>
-                  <div className="px-3 py-2 mt-2 font-mono text-xs font-semibold uppercase tracking-widest text-ds-text-tertiary">
+                  <div className="mt-2 px-3 py-2 text-[15px] font-semibold text-ds-text-secondary">
                     {t("search.projects")}
                   </div>
                   {isLoadingProjects && projects.length === 0 ? (
@@ -293,6 +296,8 @@ export function ChatSearchModal({
                         <button
                           key={project.id}
                           type="button"
+                          onMouseEnter={() => router.prefetch(`/projects/${project.id}`)}
+                          onFocus={() => router.prefetch(`/projects/${project.id}`)}
                           onClick={() => handleOpenProjects(project.id)}
                           className={searchListButtonClass}
                         >
@@ -314,7 +319,7 @@ export function ChatSearchModal({
 
               {(visibleChats.length > 0 || (isLoadingChats && visibleChats.length === 0)) && (
                 <>
-                  <div className="px-3 py-2 mt-2 font-mono text-xs font-semibold uppercase tracking-widest text-ds-text-tertiary">
+                  <div className="mt-2 px-3 py-2 text-[15px] font-semibold text-ds-text-secondary">
                     {t("search.recentChats")}
                   </div>
                   {isLoadingChats && visibleChats.length === 0 ? (
@@ -329,7 +334,14 @@ export function ChatSearchModal({
                           className={cn(searchListButtonClass, "justify-between")}
                         >
                           <div className="min-w-0 flex flex-1 items-center gap-2">
-                            {chat.project_id && canUseProjects ? (
+                            {chat.parent_chat_id ? (
+                              <GitFork
+                                size={18}
+                                strokeWidth={2}
+                                className={`shrink-0 ${PROJECT_COLOR_ICON_CLASSES.green}`}
+                                aria-label={t("projects.forkedChat")}
+                              />
+                            ) : chat.project_id && canUseProjects ? (
                               <ProjectIcon
                                 iconName={projectsById.get(chat.project_id)?.icon_name}
                                 color={projectsById.get(chat.project_id)?.accent_color}
@@ -343,9 +355,14 @@ export function ChatSearchModal({
                               <span className="block truncate max-w-[350px]">
                                 {formatChatSearchLabel(chat.title, canUseProjects ? chat.project_name : null)}
                               </span>
+                              {chat.parent_chat_id && (
+                                <span className="block truncate text-[13px] text-ds-text-tertiary">
+                                  {t("projects.forkedChat")}
+                                </span>
+                              )}
                             </div>
                           </div>
-                          <span className="shrink-0 ml-3 text-ds-text-tertiary text-xs">
+                          <span className="ml-3 shrink-0 text-[13px] text-ds-text-tertiary">
                             {new Date(chat.updated_at).toLocaleDateString()}
                           </span>
                         </button>
@@ -378,14 +395,14 @@ export function ChatSearchModal({
             <div className="space-y-3">
               {canUseProjects && (
                 <div>
-                  <div className="px-3 pb-1 font-mono text-xs font-semibold uppercase tracking-widest text-ds-text-tertiary">
+                  <div className="px-3 pb-1 text-[15px] font-semibold text-ds-text-secondary">
                     {t("search.projects")}
                   </div>
                   <SearchResultSkeleton count={2} />
                 </div>
               )}
               <div>
-                <div className="px-3 pb-1 font-mono text-xs font-semibold uppercase tracking-widest text-ds-text-tertiary">
+                <div className="px-3 pb-1 text-[15px] font-semibold text-ds-text-secondary">
                   {t("search.recentChats")}
                 </div>
                 <SearchResultSkeleton count={4} />
@@ -405,7 +422,7 @@ export function ChatSearchModal({
             <div className="space-y-3">
               {canUseProjects && filteredProjects.length > 0 && (
                 <div>
-                  <div className="px-3 pb-1 font-mono text-xs font-semibold uppercase tracking-widest text-ds-text-tertiary">
+                  <div className="px-3 pb-1 text-[15px] font-semibold text-ds-text-secondary">
                     {t("search.projects")}
                   </div>
                   <div className="space-y-0.5">
@@ -413,6 +430,8 @@ export function ChatSearchModal({
                       <button
                         key={project.id}
                         type="button"
+                        onMouseEnter={() => router.prefetch(`/projects/${project.id}`)}
+                        onFocus={() => router.prefetch(`/projects/${project.id}`)}
                         onClick={() => handleOpenProjects(project.id)}
                         className={searchListButtonClass}
                       >
@@ -433,7 +452,7 @@ export function ChatSearchModal({
 
               {results.length > 0 && (
                 <div>
-                  <div className="px-3 pb-1 font-mono text-xs font-semibold uppercase tracking-widest text-ds-text-tertiary">
+                  <div className="px-3 pb-1 text-[15px] font-semibold text-ds-text-secondary">
                     {t("search.recentChats")}
                   </div>
                   <div className="space-y-0.5">
@@ -445,7 +464,14 @@ export function ChatSearchModal({
                         className={cn(searchListButtonClass, "justify-between")}
                       >
                         <div className="min-w-0 flex flex-1 items-start gap-2">
-                          {r.project_id && canUseProjects ? (
+                          {r.parent_chat_id ? (
+                            <GitFork
+                              size={18}
+                              strokeWidth={2}
+                              className={`mt-0.5 shrink-0 ${PROJECT_COLOR_ICON_CLASSES.green}`}
+                              aria-label={t("projects.forkedChat")}
+                            />
+                          ) : r.project_id && canUseProjects ? (
                             <ProjectIcon
                               iconName={projectsById.get(r.project_id)?.icon_name}
                               color={projectsById.get(r.project_id)?.accent_color}
@@ -460,8 +486,13 @@ export function ChatSearchModal({
                             <span className="block truncate max-w-full font-medium">
                               {formatChatSearchLabel(r.chat_title, canUseProjects ? r.project_name : null)}
                             </span>
+                            {r.parent_chat_id && !r.message_content && (
+                              <span className="mt-0.5 block max-w-full truncate text-[13px] text-ds-text-tertiary">
+                                {t("projects.forkedChat")}
+                              </span>
+                            )}
                             {r.message_content && (
-                              <span className="block truncate max-w-full text-xs text-ds-text-tertiary mt-0.5">
+                              <span className="mt-0.5 block max-w-full truncate text-[14px] text-ds-text-tertiary">
                                 <span className="font-medium text-ds-text-secondary">
                                   {r.role === "user" ? t("search.roleUser") : t("search.roleAssistant")}
                                 </span>
@@ -470,7 +501,7 @@ export function ChatSearchModal({
                             )}
                           </div>
                         </div>
-                        <span className="shrink-0 ml-3 text-ds-text-tertiary text-xs">
+                        <span className="ml-3 shrink-0 text-[13px] text-ds-text-tertiary">
                           {new Date(r.updated_at).toLocaleDateString()}
                         </span>
                       </button>

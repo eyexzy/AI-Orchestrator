@@ -56,9 +56,9 @@ const inputFieldVariants = cva(
         chat: "",
       },
       size: {
-        sm: "text-[13px]",
-        md: "text-[14px]",
-        lg: "text-[15px]",
+        sm: "text-[14px]",
+        md: "text-[15px]",
+        lg: "text-[16px]",
       },
       hasLeftIcon: { true: "pl-2", false: "pl-3" },
       hasRightIcon: { true: "pr-2", false: "pr-3" },

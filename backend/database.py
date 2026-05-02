@@ -20,6 +20,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    UniqueConstraint,
 )
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase, relationship
@@ -287,6 +288,34 @@ class ChatMessage(Base):
     metadata_json = Column(Text, default="{}")
 
     session = relationship("ChatSession", back_populates="messages")
+    feedback_entries = relationship(
+        "ChatMessageFeedback",
+        back_populates="message",
+        cascade="all, delete-orphan",
+    )
+
+
+class ChatMessageFeedback(Base):
+    __tablename__ = "chat_message_feedback"
+    __table_args__ = (
+        UniqueConstraint("message_id", "user_email", name="uq_chat_message_feedback_message_user"),
+        Index("ix_chat_message_feedback_user_email_created_at", "user_email", "created_at"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    message_id = Column(Integer, ForeignKey("chat_messages.id", ondelete="CASCADE"), index=True, nullable=False)
+    session_id = Column(String(36), index=True, nullable=False)
+    user_email = Column(String(255), index=True, nullable=False, default="anonymous")
+    vote = Column(String(16), nullable=False)
+    provider = Column(String(64), nullable=True)
+    model_id = Column(String(128), nullable=True)
+    provider_generation_id = Column(String(128), nullable=True)
+    message_content = Column(Text, default="")
+    provider_forwarded = Column(Boolean, default=False, nullable=False)
+    created_at = Column(DateTime(timezone=True), default=_now, index=True)
+    updated_at = Column(DateTime(timezone=True), default=_now, onupdate=_now, index=True)
+
+    message = relationship("ChatMessage", back_populates="feedback_entries")
 
 
 # Uploaded files for attachment context injection
@@ -429,6 +458,26 @@ class SessionMetrics(Base):
     structured_prompt_ratio = Column(Float, default=0.0)
     help_open_count = Column(Integer, default=0)
     tooltip_open_count = Column(Integer, default=0)
+    tutor_open_count = Column(Integer, default=0)
+    tutor_guided_started_count = Column(Integer, default=0)
+    tutor_guided_completed_count = Column(Integer, default=0)
+    tutor_guided_abandoned_count = Column(Integer, default=0)
+    tutor_helpfulness_rated_count = Column(Integer, default=0)
+    tutor_questions_skipped_count = Column(Integer, default=0)
+    template_inserted_count = Column(Integer, default=0)
+    suggestion_clicked_count = Column(Integer, default=0)
+    compare_enabled_count = Column(Integer, default=0)
+    self_consistency_enabled_count = Column(Integer, default=0)
+    few_shot_added_count = Column(Integer, default=0)
+    system_prompt_edited_count = Column(Integer, default=0)
+    variable_added_count = Column(Integer, default=0)
+    regeneration_count = Column(Integer, default=0)
+    continue_generation_count = Column(Integer, default=0)
+    message_feedback_positive_count = Column(Integer, default=0)
+    message_feedback_negative_count = Column(Integer, default=0)
+    project_context_usage_count = Column(Integer, default=0)
+    attachment_usage_count = Column(Integer, default=0)
+    advanced_mode_diversity = Column(Integer, default=0)
     refine_accept_count = Column(Integer, default=0)
     refine_reject_count = Column(Integer, default=0)
     advanced_actions_count = Column(Integer, default=0)

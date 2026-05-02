@@ -56,7 +56,7 @@ export function TemplateCardContent({ tpl }: { tpl: PromptTemplate }) {
           {tpl.variables.map((v: string) => (
             <span
               key={v}
-              className="font-mono text-[10px] leading-none text-blue-900"
+              className="text-[13px] font-medium leading-none text-blue-900"
             >
               {`{{${v}}}`}
             </span>

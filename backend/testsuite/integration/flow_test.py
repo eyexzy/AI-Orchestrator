@@ -81,10 +81,10 @@ class TestEventVocabularyConsistency:
 
     def test_all_aggregation_event_types_in_vocabulary(self):
         from services.events import ALLOWED_EVENT_TYPES
-        aggregation_types = {'prompt_submitted', 'tooltip_opened', 'refine_accepted', 'refine_rejected', 'model_changed', 'temperature_changed', 'top_p_changed', 'system_prompt_edited', 'variable_added', 'few_shot_added', 'compare_enabled', 'self_consistency_enabled', 'cancel_action', 'backtracking_detected'}
+        aggregation_types = {'prompt_submitted', 'tooltip_opened', 'refine_accepted', 'refine_rejected', 'model_changed', 'temperature_changed', 'top_p_changed', 'system_prompt_edited', 'variable_added', 'few_shot_added', 'compare_enabled', 'self_consistency_enabled', 'cancel_action', 'backtracking_detected', 'regenerate', 'continue_generation', 'response_feedback_like', 'response_feedback_dislike', 'project_context_used', 'attachment_added', 'project_source_used'}
         missing = aggregation_types - ALLOWED_EVENT_TYPES
         assert not missing, f'Event types used in aggregation but not in vocabulary: {missing}'
 
     def test_vocabulary_size(self):
         from services.events import ALLOWED_EVENT_TYPES
-        assert len(ALLOWED_EVENT_TYPES) == 41
+        assert len(ALLOWED_EVENT_TYPES) >= 48

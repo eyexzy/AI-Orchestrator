@@ -1,16 +1,17 @@
 "use client";
 
-import { useRef, useEffect, useCallback, useState } from "react";
+import { useRef, useEffect, useCallback, useMemo, useState } from "react";
 import { Wand2 } from "lucide-react";
 import { useUserLevelStore } from "@/lib/store/userLevelStore";
 import { useChatStore } from "@/lib/store/chatStore";
+import type { ChatMessage } from "@/lib/store/chatStore";
 import { useDraftStore, getDraftEntry } from "@/lib/store/draftStore";
 import { ChatInputBox } from "@/components/chat/ChatInputBox";
+import type { InputNotice } from "@/components/chat/InputNoticeBar";
 import type { AttachmentChipData } from "@/components/ui/attachment-chip";
 import { FilePreviewModal } from "@/components/ui/file-preview-modal";
 import { actionToast } from "@/components/ui/action-toast";
 import { extractVarNames } from "@/components/chat/extractVarNames";
-import { REQUEST_TIMEOUT_MS } from "@/lib/config";
 import { resolveVariables } from "@/lib/api";
 import { readResponseError } from "@/lib/request";
 import { TutorModal, TutorReview, TutorMode } from "./input/TutorModal";
@@ -18,14 +19,18 @@ import { L1Chips } from "./input/L1Chips";
 import { L3StrategyChips } from "./input/L3StrategyChips";
 import { useTranslation } from "@/lib/store/i18nStore";
 import { Tooltip } from "@/components/ui/tooltip";
+import { Button } from "@/components/ui/button";
 import { flushEvents, trackEvent } from "@/lib/eventTracker";
 import { useMicroFeedbackStore } from "@/lib/store/microFeedbackStore";
+import { usePromptSuggestionsStore } from "@/lib/store/promptSuggestionsStore";
 
 const ENHANCE_MIN_CHARS = 9;
+const TUTOR_HISTORY_MESSAGE_LIMIT = 30;
+const TUTOR_SESSION_CACHE_TTL_MS = 10 * 60 * 1000;
 
 /* ─── Limits ─────────────────────────────────────────────────────────────── */
 const MAX_FILES = 10;
-const MAX_FILE_SIZE_MB = 20;
+const MAX_FILE_SIZE_MB = 25;
 const MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024;
 
 const MIN_WORDS = 5;
@@ -33,7 +38,7 @@ const VARIABLE_SYNC_DEBOUNCE_MS = 120;
 const GENERIC_TUTOR_ERRORS = new Set([
   "Backend unreachable", "Request failed", "Invalid JSON",
   "Failed to refine prompt", "invalid_request_json",
-  "tutor_review_unavailable", "tutor_review_timeout", "invalid_tutor_review",
+  "tutor_review_unavailable", "invalid_tutor_review",
 ]);
 
 function normalizeTutorErrorMessage(message: string | undefined, fallback: string): string {
@@ -41,6 +46,127 @@ function normalizeTutorErrorMessage(message: string | undefined, fallback: strin
   if (!trimmed) return fallback;
   if (GENERIC_TUTOR_ERRORS.has(trimmed) || /^HTTP \d{3}$/.test(trimmed)) return fallback;
   return trimmed;
+}
+
+function detectPromptLanguage(text: string): "en" | "uk" {
+  const chars = Array.from(text);
+  const cyrillicCount = chars.filter((char) => /[\u0400-\u04FF]/.test(char)).length;
+  const latinCount = chars.filter((char) => /[a-z]/i.test(char)).length;
+  if (cyrillicCount > 0 && cyrillicCount >= latinCount * 0.25) return "uk";
+  return "en";
+}
+
+function isUkrainianText(text: string): boolean {
+  const trimmed = text.trim();
+  if (!trimmed) return true;
+  if (/[іїєґІЇЄҐ]/.test(trimmed)) return true;
+  const chars = Array.from(trimmed);
+  const cyrillicCount = chars.filter((char) => /[\u0400-\u04FF]/.test(char)).length;
+  const latinCount = chars.filter((char) => /[a-z]/i.test(char)).length;
+  if (cyrillicCount === 0 && latinCount === 0) return true;
+  return cyrillicCount > 0 && cyrillicCount >= latinCount * 0.15;
+}
+
+function tutorReviewMatchesPromptLanguage(review: TutorReview | null, prompt: string): boolean {
+  if (!review || detectPromptLanguage(prompt) !== "uk") return true;
+  const fields = [
+    review.opening_message,
+    review.improved_prompt,
+    ...review.strengths,
+    ...review.gaps,
+    ...review.why_this_is_better,
+    ...review.clarifying_questions.map((question) => question.question),
+  ];
+  return fields.every(isUkrainianText);
+}
+
+function PromptSuggestionChips({
+  suggestions,
+  onSendSuggestion,
+  showL1Tooltips = false,
+}: {
+  suggestions: string[];
+  onSendSuggestion: (text: string) => void;
+  showL1Tooltips?: boolean;
+}) {
+  const { t } = useTranslation();
+  if (suggestions.length === 0) return null;
+
+  return (
+    <>
+      {suggestions.slice(0, 4).map((suggestion) => {
+        const chip = (
+          <Button
+            key={suggestion}
+            type="button"
+            variant="chip"
+            shape="rounded"
+            size="sm"
+            onClick={() => onSendSuggestion(suggestion)}
+          >
+            {suggestion}
+          </Button>
+        );
+
+        return showL1Tooltips ? (
+          <Tooltip key={suggestion} content={t("tooltip.l1Suggestion")} trackingId="prompt_suggestion_chip">
+            {chip}
+          </Tooltip>
+        ) : chip;
+      })}
+    </>
+  );
+}
+
+function PromptChipStrip({
+  children,
+  layout,
+}: {
+  children: React.ReactNode;
+  layout: "wrap" | "scroll";
+}) {
+  const viewportRef = useRef<HTMLDivElement>(null);
+
+  const handleWheel = useCallback((event: React.WheelEvent<HTMLDivElement>) => {
+    if (layout !== "scroll" || !viewportRef.current) return;
+    const dominantDelta = Math.abs(event.deltaX) > Math.abs(event.deltaY) ? event.deltaX : event.deltaY;
+    if (dominantDelta === 0) return;
+    viewportRef.current.scrollLeft += dominantDelta;
+    event.preventDefault();
+  }, [layout]);
+
+  if (layout === "wrap") {
+    return (
+      <div className="prompt-chip-wrap">
+        {children}
+      </div>
+    );
+  }
+
+  return (
+    <div className="prompt-chip-strip">
+      <div
+        ref={viewportRef}
+        className="prompt-chip-strip-viewport"
+        onWheel={handleWheel}
+      >
+        <div className="prompt-chip-strip-track">
+          {children}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function isTutorSessionFresh(session: CachedTutorSession): boolean {
+  return Date.now() - session.createdAt <= TUTOR_SESSION_CACHE_TTL_MS;
+}
+
+function buildTutorHistory(messages: ChatMessage[]): Array<{ role: "user" | "assistant"; content: string }> {
+  return messages
+    .filter((message) => !message.isOptimistic && !message.isError && message.content.trim())
+    .slice(-TUTOR_HISTORY_MESSAGE_LIMIT)
+    .map((message) => ({ role: message.role, content: message.content }));
 }
 
 /* ─── Inline attachment (client-side base64) ─────────────────────────────── */
@@ -84,6 +210,46 @@ function resolveFilename(file: File): string {
   return file.name;
 }
 
+function formatFileSize(bytes: number): string {
+  const mb = bytes / (1024 * 1024);
+  if (mb >= 10) return `${Math.round(mb)}MB`;
+  if (mb >= 1) return `${mb.toFixed(1)}MB`;
+  const kb = bytes / 1024;
+  return `${Math.max(1, Math.round(kb))}KB`;
+}
+
+function buildAttachmentLimitErrorMessage(
+  template: string,
+  maxFileSizeMb: number,
+): string {
+  return template.replace("{size}", String(maxFileSizeMb));
+}
+
+function buildUsagePercentMessage(
+  template: string,
+  percent: number,
+): string {
+  return template.replace("{percent}", String(percent));
+}
+
+function buildUsageResetMessage(
+  template: string,
+  time: string,
+): string {
+  return template.replace("{time}", time);
+}
+
+function formatUsageResetAt(iso: string, language: "en" | "uk"): string {
+  return new Intl.DateTimeFormat(language === "uk" ? "uk-UA" : "en-US", {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+    timeZone: "UTC",
+  }).format(new Date(iso));
+}
+
 /* ─── ChatParams ─────────────────────────────────────────────────────────── */
 interface ChatParams {
   model: string;
@@ -97,6 +263,28 @@ interface ChatParams {
   compareModelLabel?: string;
   selfConsistencyEnabled?: boolean;
 }
+
+interface CachedTutorSession {
+  prompt: string;
+  review: TutorReview | null;
+  errorMessage: string | null;
+  improvedPromptDraft: string;
+  clarificationAnswers: Record<string, string>;
+  createdAt: number;
+}
+
+type UsagePeriod = {
+  used: number;
+  limit: number;
+  remaining: number;
+  reset_at: string;
+};
+
+type UsageData = {
+  daily: UsagePeriod;
+  weekly: UsagePeriod;
+  date: string;
+};
 
 export interface MainInputProps {
   chatParams: ChatParams;
@@ -118,6 +306,14 @@ export interface MainInputProps {
   attachFilesRef?: React.MutableRefObject<((files: FileList) => void) | null>;
   inProject?: boolean;
   onManageProject?: () => void;
+  currentProject?: {
+    name: string;
+    icon_name?: string | null;
+    accent_color?: string | null;
+  } | null;
+  onClearProject?: () => void;
+  bottomChipsFloating?: boolean;
+  bottomChipsLayout?: "wrap" | "scroll";
 }
 
 /* ─────────────────────────────────────────────────────────────────────────── */
@@ -133,11 +329,19 @@ export function MainInput({
   isEmpty = false,
   attachFilesRef,
   inProject, onManageProject,
+  currentProject,
+  onClearProject,
+  bottomChipsFloating = true,
+  bottomChipsLayout = "wrap",
 }: MainInputProps) {
   const isMountedRef = useRef(true);
   const { t, language } = useTranslation();
   const level = useUserLevelStore((s) => s.level);
   const userEmail = useUserLevelStore((s) => s.userEmail);
+  const notifyMicroFeedback = useUserLevelStore((s) => s.notifyMicroFeedback);
+  const activeMicroPrompt = useMicroFeedbackStore((s) => s.activePrompt);
+  const answerMicroPrompt = useMicroFeedbackStore((s) => s.answer);
+  const dismissMicroPrompt = useMicroFeedbackStore((s) => s.dismiss);
   const activeChatId = useChatStore((s) => s.activeChatId);
 
   /* Draft store — select the whole entry by key to keep stable references */
@@ -154,6 +358,9 @@ export function MainInput({
   const [tutorMode, setTutorMode] = useState<TutorMode>("quick");
   const [originalPrompt, setOriginalPrompt] = useState("");
   const [tutorReview, setTutorReview] = useState<TutorReview | null>(null);
+  const [hasAttachmentLimitError, setHasAttachmentLimitError] = useState(false);
+  const [usage, setUsage] = useState<UsageData | null>(null);
+  const [dismissedNoticeKey, setDismissedNoticeKey] = useState<string | null>(null);
   const [refineError, setRefineError] = useState<string | null>(null);
   const [improvedPromptDraft, setImprovedPromptDraft] = useState("");
   const [clarificationAnswers, setClarificationAnswers] = useState<Record<string, string>>({});
@@ -166,6 +373,7 @@ export function MainInput({
   }, [setDraftText]);
   const refineAbortRef = useRef<AbortController | null>(null);
   const refineRequestIdRef = useRef(0);
+  const cachedTutorSessionRef = useRef<CachedTutorSession | null>(null);
 
   /* Attachments */
   const [attachmentChips, setAttachmentChipsState] = useState<AttachmentChipData[]>(draftChips);
@@ -212,10 +420,19 @@ export function MainInput({
     return () => window.clearTimeout(tid);
   }, [draft, onVariableNamesChange]);
 
+  useEffect(() => {
+    if (!notifyMicroFeedback && activeMicroPrompt) {
+      dismissMicroPrompt();
+    }
+  }, [activeMicroPrompt, dismissMicroPrompt, notifyMicroFeedback]);
+
   const { analyzePrompt, trackSuggestionClick, trackCancelAction } = useUserLevelStore();
   const isSending = useChatStore((s) => s.isSending);
   const sendMessage = useChatStore((s) => s.sendMessage);
   const stopGeneration = useChatStore((s) => s.stopGeneration);
+  const chatMessages = useChatStore((s) => s.messages);
+  const promptSuggestions = usePromptSuggestionsStore((s) => s.suggestions);
+  const prefetchPromptSuggestions = usePromptSuggestionsStore((s) => s.prefetch);
 
   const lastKeystrokeTimeRef = useRef<number | null>(null);
   const activeTypingDurationMsRef = useRef<number>(0);
@@ -228,6 +445,40 @@ export function MainInput({
     setDraftAttachments(useChatStore.getState().activeChatId, [], []);
   }, [setAttachmentChips, setDraftAttachments]);
 
+  const clearTutorSession = useCallback(() => {
+    cachedTutorSessionRef.current = null;
+    setOriginalPrompt("");
+    setTutorReview(null);
+    setRefineError(null);
+    setImprovedPromptDraft("");
+    setClarificationAnswers({});
+  }, []);
+
+  const persistTutorSession = useCallback((next: CachedTutorSession | null) => {
+    cachedTutorSessionRef.current = next;
+  }, []);
+
+  const loadUsage = useCallback(async () => {
+    try {
+      const res = await fetch("/api/usage", { cache: "no-store" });
+      if (!res.ok) return;
+      const data = await res.json() as UsageData;
+      if (!isMountedRef.current) return;
+      setUsage(data);
+    } catch {
+      // Usage warnings are non-blocking.
+    }
+  }, []);
+
+  const restoreTutorSession = useCallback((session: CachedTutorSession) => {
+    setOriginalPrompt(session.prompt);
+    setTutorReview(session.review);
+    setRefineError(session.errorMessage);
+    setImprovedPromptDraft(session.improvedPromptDraft);
+    setClarificationAnswers(session.clarificationAnswers);
+    setModalOpen(true);
+  }, []);
+
   /* ── Send ───────────────────────────────────────────────────────────────── */
   const isDispatchingRef = useRef(false);
 
@@ -236,11 +487,14 @@ export function MainInput({
     isDispatchingRef.current = true;
 
     trackEvent("prompt_submitted", { length: text.length });
+    if (inProject && currentProject?.name) {
+      trackEvent("project_context_used", { project_name: currentProject.name });
+    }
     await flushEvents();
     clearDraft(useChatStore.getState().activeChatId);
     setDraft("");
     onVariableNamesChange?.([]);
-    setRefineError(null);
+    clearTutorSession();
     setModalOpen(false);
 
     const finalPrompt = chatParams.variables
@@ -256,7 +510,9 @@ export function MainInput({
     try {
       if (sendOverride) {
         await sendOverride(finalPrompt);
-        analyzePrompt(finalPrompt, cps);
+        await analyzePrompt(finalPrompt, cps);
+        void loadUsage();
+        void prefetchPromptSuggestions({ force: true });
         return;
       }
 
@@ -274,8 +530,10 @@ export function MainInput({
         inlineAttachments: inlineAttachments.length > 0 ? inlineAttachments : undefined,
       });
       if (result) {
-        analyzePrompt(finalPrompt, cps);
+        await analyzePrompt(finalPrompt, cps);
         if (onRawResponse && result.metadata) onRawResponse(result.metadata as Record<string, unknown>);
+        void loadUsage();
+        void prefetchPromptSuggestions({ force: true });
       }
     } catch (err) {
       console.error(err);
@@ -286,32 +544,59 @@ export function MainInput({
       typingCharsRef.current = 0;
       prevDraftLenRef.current = 0;
     }
-  }, [sendOverride, sendMessage, analyzePrompt, userEmail, chatParams, onRawResponse, onVariableNamesChange, clearAttachments]);
+  }, [sendOverride, sendMessage, analyzePrompt, userEmail, chatParams, onRawResponse, onVariableNamesChange, clearAttachments, clearTutorSession, loadUsage, prefetchPromptSuggestions, inProject, currentProject?.name]);
 
   /* ── Tutor ──────────────────────────────────────────────────────────────── */
-  const _callRefine = useCallback(async (text: string, answers?: Record<string, string>): Promise<boolean> => {
+  const _callRefine = useCallback(async (
+    text: string,
+    answers?: Record<string, string>,
+    options?: { force?: boolean },
+  ): Promise<boolean> => {
+    const trimmedPrompt = text.trim();
+    const normalizedAnswers = answers && Object.values(answers).some((v) => v.trim()) ? answers : undefined;
+    const cachedSession = cachedTutorSessionRef.current;
+    if (
+      !options?.force &&
+      !normalizedAnswers &&
+      cachedSession &&
+      isTutorSessionFresh(cachedSession) &&
+      cachedSession.prompt === trimmedPrompt &&
+      (cachedSession.review || cachedSession.errorMessage) &&
+      tutorReviewMatchesPromptLanguage(cachedSession.review, trimmedPrompt)
+    ) {
+      restoreTutorSession(cachedSession);
+      return true;
+    }
+
     refineAbortRef.current?.abort();
     const requestId = refineRequestIdRef.current + 1;
     refineRequestIdRef.current = requestId;
     const controller = new AbortController();
     refineAbortRef.current = controller;
-    let timedOut = false;
-    const timeoutId = window.setTimeout(() => { timedOut = true; controller.abort(); }, 60_000);
 
-    const isSecondPass = !!answers;
+    const isSecondPass = !!normalizedAnswers;
     trackEvent(isSecondPass ? "refine_second_pass_requested" : "tutor_opened", {
       prompt_length: text.length,
       mode: tutorMode,
     });
-    setOriginalPrompt(text);
+    setOriginalPrompt(trimmedPrompt);
     setIsRefining(true);
     setRefineError(null);
     if (!isSecondPass) { setTutorReview(null); setImprovedPromptDraft(""); setClarificationAnswers({}); }
     setModalOpen(true);
 
     try {
-      const payload: Record<string, unknown> = { prompt: text, language, level };
-      if (answers && Object.values(answers).some((v) => v.trim())) payload.clarification_answers = answers;
+      const payload: Record<string, unknown> = {
+        prompt: trimmedPrompt,
+        language: detectPromptLanguage(trimmedPrompt),
+        level,
+      };
+      if (normalizedAnswers) payload.clarification_answers = normalizedAnswers;
+      const tutorHistory = buildTutorHistory(chatMessages);
+      if (tutorHistory.length > 0) {
+        payload.history = tutorHistory;
+        payload.history_limit = tutorHistory.length;
+      }
 
       const res = await fetch("/api/refine", {
         method: "POST", headers: { "Content-Type": "application/json" },
@@ -337,26 +622,42 @@ export function MainInput({
       setTutorReview(review);
       setImprovedPromptDraft(review.improved_prompt ?? "");
       setRefineError(null);
+      persistTutorSession({
+        prompt: trimmedPrompt,
+        review,
+        errorMessage: null,
+        improvedPromptDraft: review.improved_prompt ?? "",
+        clarificationAnswers: normalizedAnswers ?? {},
+        createdAt: Date.now(),
+      });
       return true;
     } catch (error) {
       const isAbort = error instanceof DOMException && error.name === "AbortError";
       const isStale = requestId !== refineRequestIdRef.current;
-      if (isAbort && (isStale || !timedOut)) return false;
+      if (isAbort || isStale) return false;
       if (isMountedRef.current) {
-        setRefineError(timedOut ? t("tutor.errorDescription") : normalizeTutorErrorMessage(error instanceof Error ? error.message : undefined, t("tutor.errorDescription")));
+        const nextError = normalizeTutorErrorMessage(error instanceof Error ? error.message : undefined, t("tutor.errorDescription"));
+        setRefineError(nextError);
         setModalOpen(true);
+        persistTutorSession({
+          prompt: trimmedPrompt,
+          review: null,
+          errorMessage: nextError,
+          improvedPromptDraft: "",
+          clarificationAnswers: normalizedAnswers ?? {},
+          createdAt: Date.now(),
+        });
       }
       return true;
     } finally {
-      window.clearTimeout(timeoutId);
       if (refineAbortRef.current === controller) refineAbortRef.current = null;
       if (isMountedRef.current && requestId === refineRequestIdRef.current) setIsRefining(false);
     }
-  }, [t, language, level]);
+  }, [t, language, level, chatMessages, tutorMode, persistTutorSession, restoreTutorSession]);
 
   const handleSend = useCallback(async (text?: string) => {
     const trimmed = (text ?? draft).trim();
-    if (!trimmed || isSending || isRefining || externalDisabled) return;
+    if (!trimmed || isSending || isRefining || externalDisabled || isLimitExhausted) return;
 
     // Explicit suggestion clicks — always dispatch directly
     if (text) { await _dispatch(trimmed); return; }
@@ -377,6 +678,31 @@ export function MainInput({
     if (!trimmed || isSending || isRefining || externalDisabled) return;
     await _callRefine(trimmed);
   }, [draft, isSending, isRefining, externalDisabled, _callRefine]);
+
+  useEffect(() => {
+    const cached = cachedTutorSessionRef.current;
+    if (!cached) return;
+    if (!isTutorSessionFresh(cached)) {
+      cachedTutorSessionRef.current = null;
+      return;
+    }
+    const currentDraft = draft.trim();
+    if (!modalOpen && currentDraft && currentDraft !== cached.prompt) {
+      cachedTutorSessionRef.current = null;
+    }
+  }, [draft, modalOpen]);
+
+  useEffect(() => {
+    const cached = cachedTutorSessionRef.current;
+    if (!cached || !originalPrompt || cached.prompt !== originalPrompt) return;
+    cachedTutorSessionRef.current = {
+      ...cached,
+      review: tutorReview,
+      errorMessage: refineError,
+      improvedPromptDraft,
+      clarificationAnswers,
+    };
+  }, [originalPrompt, tutorReview, refineError, improvedPromptDraft, clarificationAnswers]);
 
   const handleCoT = useCallback(() => {
     trackEvent("system_prompt_edited", { strategy: "cot" });
@@ -425,10 +751,11 @@ export function MainInput({
     // Size check
     const oversized = allowed.filter((f) => f.size > MAX_FILE_SIZE_BYTES);
     const valid = allowed.filter((f) => f.size <= MAX_FILE_SIZE_BYTES);
-    for (const f of oversized) {
-      actionToast.error(`"${f.name}" exceeds the ${MAX_FILE_SIZE_MB} MB limit`);
+    if (oversized.length > 0) {
+      setHasAttachmentLimitError(true);
     }
     if (valid.length === 0) return;
+    setHasAttachmentLimitError(false);
 
     // suppress unused variable warning
     void existingKeys;
@@ -454,6 +781,7 @@ export function MainInput({
 
           const attachment: InlineAttachment = { id: tempId, filename, mimeType, data };
           inlineAttachmentsRef.current = [...inlineAttachmentsRef.current, attachment];
+          trackEvent("attachment_added", { filename, mime_type: mimeType });
 
           setAttachmentChips((prev) =>
             prev.map((c) =>
@@ -482,6 +810,30 @@ export function MainInput({
     if (attachFilesRef) attachFilesRef.current = handleAttach;
     return () => { if (attachFilesRef) attachFilesRef.current = null; };
   }, [attachFilesRef, handleAttach]);
+
+  useEffect(() => {
+    setHasAttachmentLimitError(false);
+  }, [activeChatId]);
+
+  useEffect(() => {
+    void loadUsage();
+  }, [loadUsage, userEmail]);
+
+  useEffect(() => {
+    void prefetchPromptSuggestions();
+  }, [activeChatId, language, prefetchPromptSuggestions]);
+
+  useEffect(() => {
+    if (!userEmail) return;
+    const intervalId = window.setInterval(() => {
+      void loadUsage();
+    }, 60000);
+    return () => window.clearInterval(intervalId);
+  }, [loadUsage, userEmail]);
+
+  useEffect(() => {
+    setDismissedNoticeKey(null);
+  }, [userEmail]);
 
   // Paste images from clipboard
   useEffect(() => {
@@ -559,6 +911,7 @@ export function MainInput({
   // Only block input when actively refining or externally disabled.
   // isSending does NOT disable the input — user can type next message while
   // the assistant is streaming; the send button switches to Stop automatically.
+  const isLimitExhausted = !!usage && (usage.daily.remaining <= 0 || usage.weekly.remaining <= 0);
   const isDisabled = isRefining || externalDisabled;
 
   // enhance shows for aiTutor users (L1/L2) and enhanceOnly users (L3)
@@ -567,10 +920,109 @@ export function MainInput({
 
   const showStatusBar = !!statusBar;
   const resolvedPlaceholder = placeholder ?? (mono ? t("placeholder.mono") : t("placeholder.default"));
+  const inputNotice = useMemo<InputNotice | null>(() => {
+    const dismissLabel = t("input.dismiss");
+
+    if (hasAttachmentLimitError) {
+      return {
+        key: `file-limit-${MAX_FILE_SIZE_MB}`,
+        tone: "danger",
+        message: buildAttachmentLimitErrorMessage(t("input.fileTooLarge"), MAX_FILE_SIZE_MB),
+        dismissLabel,
+        onDismiss: () => setHasAttachmentLimitError(false),
+      };
+    }
+
+    const microPrompt = activeMicroPrompt;
+
+    if (microPrompt && notifyMicroFeedback) {
+      return {
+        key: `micro-feedback-${microPrompt.id}`,
+        tone: "feedback",
+        message: t(microPrompt.textKey),
+        hideIcon: true,
+        dismissLabel,
+        onDismiss: dismissMicroPrompt,
+        actions: microPrompt.options.map((option) => ({
+          label: t(option.labelKey),
+          onClick: () => {
+            void answerMicroPrompt(option.value).then(() => {
+              actionToast.saved(t("microFeedback.saved"));
+            });
+          },
+        })),
+      };
+    }
+
+    if (!usage) return null;
+
+    const dailyPct = usage.daily.limit > 0 ? usage.daily.used / usage.daily.limit : 0;
+    const weeklyPct = usage.weekly.limit > 0 ? usage.weekly.used / usage.weekly.limit : 0;
+    const dailyReset = formatUsageResetAt(usage.daily.reset_at, language);
+    const weeklyReset = formatUsageResetAt(usage.weekly.reset_at, language);
+
+    let nextNotice: Omit<InputNotice, "dismissLabel" | "onDismiss"> | null = null;
+
+    if (usage.daily.remaining <= 0) {
+      nextNotice = {
+        key: `usage-daily-exhausted-${usage.daily.reset_at}`,
+        tone: "neutral",
+        message: buildUsageResetMessage(t("input.usageDailyReset"), dailyReset),
+      };
+    } else if (usage.weekly.remaining <= 0) {
+      nextNotice = {
+        key: `usage-weekly-exhausted-${usage.weekly.reset_at}`,
+        tone: "neutral",
+        message: buildUsageResetMessage(t("input.usageWeeklyReset"), weeklyReset),
+      };
+    } else {
+      const thresholds = [90, 70, 50] as const;
+      const pickThreshold = (pct: number) => thresholds.find((value) => pct >= value / 100) ?? null;
+      const dailyThreshold = pickThreshold(dailyPct);
+      const weeklyThreshold = pickThreshold(weeklyPct);
+
+      if (dailyThreshold !== null || weeklyThreshold !== null) {
+        const useDaily = dailyThreshold !== null && (weeklyThreshold === null || dailyThreshold >= weeklyThreshold);
+        const threshold = useDaily ? dailyThreshold! : weeklyThreshold!;
+        const currentPercent = Math.min(
+          100,
+          Math.round((useDaily ? dailyPct : weeklyPct) * 100),
+        );
+        nextNotice = {
+          key: `usage-${useDaily ? "daily" : "weekly"}-${threshold}`,
+          tone: "warning",
+          message: buildUsagePercentMessage(
+            t(useDaily ? "input.usageDailyThreshold" : "input.usageWeeklyThreshold"),
+            currentPercent,
+          ),
+        };
+      }
+    }
+
+    if (!nextNotice || nextNotice.key === dismissedNoticeKey) return null;
+
+    const isExhausted = nextNotice.key.startsWith("usage-daily-exhausted") || nextNotice.key.startsWith("usage-weekly-exhausted");
+
+    return {
+      ...nextNotice,
+      dismissLabel: isExhausted ? undefined : dismissLabel,
+      onDismiss: isExhausted ? undefined : () => setDismissedNoticeKey(nextNotice.key),
+    };
+  }, [
+    activeMicroPrompt,
+    answerMicroPrompt,
+    dismissMicroPrompt,
+    dismissedNoticeKey,
+    hasAttachmentLimitError,
+    language,
+    notifyMicroFeedback,
+    t,
+    usage,
+  ]);
 
   // Enhance button for action bar — icon-only, animate in/out
   const enhanceSlot = showEnhance ? (
-    <Tooltip content={t("input.enhance")}>
+    <Tooltip content={t("input.enhance")} trackingId="prompt_coach_enhance">
       <button
         type="button"
         disabled={isDisabled}
@@ -592,6 +1044,12 @@ export function MainInput({
     </Tooltip>
   ) : null;
 
+  const handleSuggestionClick = useCallback((text: string) => {
+    trackEvent("suggestion_clicked", { text_length: text.length });
+    trackSuggestionClick();
+    handleSend(text);
+  }, [handleSend, trackSuggestionClick]);
+
   return (
     <>
       {/* File preview modal */}
@@ -611,9 +1069,13 @@ export function MainInput({
           onRefineAgain={() => {
             const answeredCount = Object.values(clarificationAnswers).filter((v) => v.trim()).length;
             if (answeredCount > 0) trackEvent("refine_questions_answered", { answered_count: answeredCount });
-            _callRefine(originalPrompt, clarificationAnswers);
+            _callRefine(originalPrompt, clarificationAnswers, { force: true });
           }}
-          onRetry={() => _callRefine(originalPrompt, Object.values(clarificationAnswers).some((v) => v.trim()) ? clarificationAnswers : undefined)}
+          onRetry={() => _callRefine(
+            originalPrompt,
+            Object.values(clarificationAnswers).some((v) => v.trim()) ? clarificationAnswers : undefined,
+            { force: true },
+          )}
           onSendOriginal={() => {
             trackEvent("tutor_quick_rejected", { mode: tutorMode });
             _dispatch(originalPrompt);
@@ -622,7 +1084,9 @@ export function MainInput({
             const improved = value.trim() || tutorReview?.improved_prompt || originalPrompt;
             trackEvent("tutor_quick_accepted", { mode: tutorMode });
             _dispatch(improved);
-            useMicroFeedbackStore.getState().tryTrigger("scenario_complete");
+            if (notifyMicroFeedback) {
+              useMicroFeedbackStore.getState().tryTrigger("scenario_complete");
+            }
           }}
           onCancel={() => {
             if (isRefining) return;
@@ -635,7 +1099,6 @@ export function MainInput({
             setTutorMode(m);
             trackEvent(m === "guided" ? "tutor_guided_started" : "tutor_opened", { mode: m });
           }}
-          onWeaknessViewed={(gap) => trackEvent("tutor_weakness_viewed", { gap_preview: gap.slice(0, 60) })}
           onWhyBetterViewed={() => trackEvent("tutor_why_better_viewed")}
           onNextStepClicked={() => trackEvent("tutor_next_step_clicked")}
           onHelpfulnessRated={(rating) => trackEvent("tutor_helpfulness_rated", { rating })}
@@ -662,35 +1125,49 @@ export function MainInput({
         onStop={stopGeneration}
         placeholder={resolvedPlaceholder}
         disabled={isDisabled}
+        sendDisabled={isLimitExhausted}
         isSending={isSending}
         mono={mono}
         topSlot={topSlot}
         attachments={attachmentChips}
+        notice={inputNotice}
         onAttach={handleAttach}
         onRemoveAttachment={handleRemoveAttachment}
         onChipClick={setPreviewChip}
         inProject={inProject}
         onManageProject={onManageProject}
+        currentProject={currentProject}
+        onClearProject={onClearProject}
         externalDragging={globalDragging}
         enhanceSlot={enhanceSlot}
+        showL1Tooltips={level === 1}
         bottomSlot={
           isEmpty ? (
-            <div className="min-h-[36px] flex flex-wrap items-center justify-center gap-2 mt-1">
-              {level === 1 && (
+            <PromptChipStrip layout={bottomChipsLayout}>
+              {level === 1 ? (
                 <L1Chips
                   input={draft}
                   setInput={setDraft}
-                  onSendSuggestion={(text) => { trackEvent("suggestion_clicked", { text_length: text.length }); trackSuggestionClick(); handleSend(text); }}
+                  suggestions={promptSuggestions}
+                  onSendSuggestion={handleSuggestionClick}
                 />
+              ) : (
+                <>
+                  {level === 3 && onAppendToSystem && (
+                    <L3StrategyChips onInjectCoT={handleCoT} onInjectStepBack={handleStepBack} />
+                  )}
+                  <PromptSuggestionChips
+                    suggestions={promptSuggestions}
+                    onSendSuggestion={handleSuggestionClick}
+                  />
+                </>
               )}
-              {level === 3 && onAppendToSystem && (
-                <L3StrategyChips onInjectCoT={handleCoT} onInjectStepBack={handleStepBack} />
-              )}
-            </div>
+            </PromptChipStrip>
           ) : showStatusBar ? (
             <div className="mt-1">{statusBar}</div>
           ) : null
         }
+        bottomSlotFloating={isEmpty && bottomChipsFloating}
       />
     </>
   );

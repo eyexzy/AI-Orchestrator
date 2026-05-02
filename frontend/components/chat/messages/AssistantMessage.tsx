@@ -13,6 +13,7 @@ import {
   AssistantGenerationBottom,
   AssistantGenerationTop,
 } from "./GenerationTrace";
+import type { MessageFeedbackVote } from "@/lib/store/chatStore";
 
 export function AssistantMessage({
   messageId,
@@ -31,8 +32,10 @@ export function AssistantMessage({
   isStreaming?: boolean;
   canContinue?: boolean;
 }) {
-  const { regenerateLastResponse: regenerate } = useChatStore();
+  const regenerateMessage = useChatStore((s) => s.regenerateMessage);
   const continueAssistantMessage = useChatStore((s) => s.continueAssistantMessage);
+  const forkChatFromMessage = useChatStore((s) => s.forkChatFromMessage);
+  const rateAssistantMessage = useChatStore((s) => s.rateAssistantMessage);
   const { t } = useTranslation();
   const [displayedContent, setDisplayedContent] = useState(content);
   const targetContentRef = useRef(content);
@@ -40,13 +43,42 @@ export function AssistantMessage({
   const streamFrameRef = useRef<number | null>(null);
 
   const regenerateLastResponse = () => {
+    trackEvent("regenerate", { message_id: messageId });
     trackEvent("backtracking_detected", { trigger: "regenerate" });
-    regenerate();
+    void regenerateMessage(messageId);
   };
 
   const continueGeneration = () => {
+    trackEvent("continue_generation", { message_id: messageId });
     trackEvent("backtracking_detected", { trigger: "continue_generation" });
     void continueAssistantMessage(messageId);
+  };
+
+  const forkFromHere = () => {
+    void forkChatFromMessage(messageId);
+  };
+
+  const feedbackVote =
+    metadata &&
+    typeof metadata === "object" &&
+    metadata !== null &&
+    typeof (metadata as Record<string, unknown>).user_feedback === "object" &&
+    (metadata as Record<string, unknown>).user_feedback !== null
+      ? (() => {
+          const vote = ((metadata as Record<string, unknown>).user_feedback as Record<string, unknown>).vote;
+          return vote === "like" || vote === "dislike"
+            ? (vote as MessageFeedbackVote)
+            : null;
+        })()
+      : null;
+
+  const canRate = typeof messageId === "number" && !isStreaming && !isError;
+
+  const handleRate = (vote: MessageFeedbackVote) => {
+    trackEvent(vote === "like" ? "response_feedback_like" : "response_feedback_dislike", {
+      message_id: messageId,
+    });
+    void rateAssistantMessage(messageId, vote);
   };
 
   useEffect(() => {
@@ -143,8 +175,8 @@ export function AssistantMessage({
 
       {showRaw && metadata && (
         <details className="mt-2.5">
-          <summary className="cursor-pointer select-none rounded-md pb-1.5 font-mono text-[13px] text-ds-text-tertiary transition-opacity hover:opacity-80 focus:outline-none focus-visible:ring-2 focus-visible:ring-gray-alpha-400">
-            json
+          <summary className="cursor-pointer select-none rounded-md pb-1.5 text-[14px] text-ds-text-tertiary transition-opacity hover:opacity-80 focus:outline-none focus-visible:ring-2 focus-visible:ring-gray-alpha-400">
+            {t("markdown.rawMetadata")}
           </summary>
           <div className="overflow-hidden rounded-md border border-gray-alpha-400 bg-background-100">
             <CodeSurface
@@ -161,6 +193,10 @@ export function AssistantMessage({
       <AssistantActionBar
         content={content}
         onRegenerate={regenerateLastResponse}
+        onFork={forkFromHere}
+        onRate={handleRate}
+        feedbackVote={feedbackVote}
+        canRate={canRate}
         onContinue={continueGeneration}
         canContinue={canContinue && !isStreaming && !isError}
       />

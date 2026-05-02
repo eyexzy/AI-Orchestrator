@@ -1,6 +1,7 @@
 "use client";
 
-import { useRef, useEffect } from "react";
+import { useRef, useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { Button } from "@/components/ui/button";
 
 interface DropdownMenuProps {
@@ -13,6 +14,12 @@ interface DropdownMenuProps {
 
 export function DropdownMenu({ anchorEl, onClose, children, minWidth = 220, placement = "top" }: DropdownMenuProps) {
   const menuRef = useRef<HTMLDivElement>(null);
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
   useEffect(() => {
     if (!anchorEl) return;
     const handler = (e: MouseEvent) => {
@@ -22,21 +29,22 @@ export function DropdownMenu({ anchorEl, onClose, children, minWidth = 220, plac
     return () => { clearTimeout(tid); document.removeEventListener("mousedown", handler); };
   }, [anchorEl, onClose]);
 
-  if (!anchorEl) return null;
+  if (!anchorEl || !mounted) return null;
   const rect = anchorEl.getBoundingClientRect();
 
   const posStyle: React.CSSProperties = placement === "bottom"
     ? { top: rect.bottom + 4, left: Math.min(rect.left, window.innerWidth - minWidth - 8) }
     : { bottom: window.innerHeight - rect.top + 8, left: Math.min(rect.left, window.innerWidth - minWidth - 8) };
 
-  return (
+  return createPortal(
     <div
       ref={menuRef}
       className="fixed z-[9999] rounded-xl p-1.5 shadow-geist-lg bg-background border border-gray-alpha-200"
       style={{ ...posStyle, minWidth }}
     >
       {children}
-    </div>
+    </div>,
+    document.body,
   );
 }
 

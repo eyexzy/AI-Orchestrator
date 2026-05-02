@@ -20,7 +20,7 @@ const TAB_DEFINITIONS: Array<{
 
 function SectionLabel({ children }: { children: ReactNode }) {
   return (
-    <p className="mb-2.5 px-1 text-[12.5px] font-medium text-ds-text-tertiary">
+    <p className="mb-3 px-1 text-[15px] font-semibold leading-5 text-ds-text-secondary">
       {children}
     </p>
   );
@@ -49,9 +49,9 @@ function Row({
     <div className="px-5 py-4">
       <div className="flex items-start justify-between gap-6">
         <div className="min-w-0 flex-1">
-          <p className="text-[14px] font-medium text-ds-text">{title}</p>
+          <p className="text-[15px] font-medium leading-5 text-ds-text">{title}</p>
           {description && (
-            <p className="mt-1 text-[13px] leading-relaxed text-ds-text-tertiary">
+            <p className="mt-1 text-[14px] leading-6 text-ds-text-tertiary">
               {description}
             </p>
           )}
@@ -98,16 +98,16 @@ export default function SettingsLoading() {
                       <div
                         key={key}
                         className={cn(
-                          "group flex shrink-0 items-center gap-2.5 rounded-lg px-3 py-2 text-left text-[13.5px] font-medium",
+                          "group flex h-10 shrink-0 items-center gap-2 rounded-lg px-3 text-left text-[15px] font-medium overflow-hidden",
                           isActive
                             ? "bg-gray-alpha-200 text-ds-text"
-                            : "text-ds-text-secondary",
+                            : "text-ds-text",
                         )}
                       >
                         <Icon
                           size={15}
                           strokeWidth={2}
-                          className={isActive ? "text-ds-text" : "text-ds-text-tertiary"}
+                          className={isActive ? "text-ds-text" : "text-ds-text"}
                         />
                         <span className="flex-1 whitespace-nowrap">{t(labelKey)}</span>
                       </div>

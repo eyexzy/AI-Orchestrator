@@ -30,8 +30,9 @@ export const MICRO_PROMPTS: Record<MicroPromptId, MicroPrompt> = {
     questionType: "level_change_agreement",
     textKey: "microFeedback.levelChange",
     options: [
-      { value: "agree", labelKey: "microFeedback.yes" },
-      { value: "disagree", labelKey: "microFeedback.no" },
+      { value: "simpler_layout", labelKey: "microFeedback.simplerLayout" },
+      { value: "current_layout_fits", labelKey: "microFeedback.currentFits" },
+      { value: "more_control_needed", labelKey: "microFeedback.moreControl" },
     ],
   },
   low_confidence_self_assess: {
@@ -39,9 +40,9 @@ export const MICRO_PROMPTS: Record<MicroPromptId, MicroPrompt> = {
     questionType: "self_assess_level",
     textKey: "microFeedback.selfAssess",
     options: [
-      { value: "1", labelKey: "microFeedback.level1" },
-      { value: "2", labelKey: "microFeedback.level2" },
-      { value: "3", labelKey: "microFeedback.level3" },
+      { value: "more_guidance", labelKey: "microFeedback.moreGuidance" },
+      { value: "current_guidance_fits", labelKey: "microFeedback.currentGuidance" },
+      { value: "less_guidance", labelKey: "microFeedback.lessGuidance" },
     ],
   },
   help_series_check: {
@@ -49,9 +50,9 @@ export const MICRO_PROMPTS: Record<MicroPromptId, MicroPrompt> = {
     questionType: "help_series_check",
     textKey: "microFeedback.helpSeries",
     options: [
-      { value: "too_complex", labelKey: "microFeedback.tooComplex" },
-      { value: "just_exploring", labelKey: "microFeedback.justExploring" },
-      { value: "fine", labelKey: "microFeedback.fine" },
+      { value: "interface_unclear", labelKey: "microFeedback.interfaceUnclear" },
+      { value: "learning_feature", labelKey: "microFeedback.learningFeature" },
+      { value: "looking_for_shortcut", labelKey: "microFeedback.lookingForShortcut" },
     ],
   },
   scenario_complete: {
@@ -59,9 +60,9 @@ export const MICRO_PROMPTS: Record<MicroPromptId, MicroPrompt> = {
     questionType: "scenario_satisfaction",
     textKey: "microFeedback.scenarioComplete",
     options: [
-      { value: "too_easy", labelKey: "microFeedback.tooEasy" },
-      { value: "just_right", labelKey: "microFeedback.justRight" },
-      { value: "too_hard", labelKey: "microFeedback.tooHard" },
+      { value: "improved", labelKey: "microFeedback.improved" },
+      { value: "no_change", labelKey: "microFeedback.noChange" },
+      { value: "less_clear", labelKey: "microFeedback.lessClear" },
     ],
   },
   periodic_check: {
@@ -69,8 +70,9 @@ export const MICRO_PROMPTS: Record<MicroPromptId, MicroPrompt> = {
     questionType: "periodic_level_check",
     textKey: "microFeedback.periodicCheck",
     options: [
-      { value: "agree", labelKey: "microFeedback.yes" },
-      { value: "disagree", labelKey: "microFeedback.no" },
+      { value: "simpler_layout", labelKey: "microFeedback.simplerLayout" },
+      { value: "current_layout_fits", labelKey: "microFeedback.currentFits" },
+      { value: "more_control_needed", labelKey: "microFeedback.moreControl" },
     ],
   },
   response_clarity: {
@@ -78,8 +80,8 @@ export const MICRO_PROMPTS: Record<MicroPromptId, MicroPrompt> = {
     questionType: "response_clarity",
     textKey: "microFeedback.responseClarity",
     options: [
-      { value: "very_clear", labelKey: "microFeedback.veryclear" },
-      { value: "ok", labelKey: "microFeedback.ok" },
+      { value: "clear", labelKey: "microFeedback.clear" },
+      { value: "partly_clear", labelKey: "microFeedback.partly" },
       { value: "confusing", labelKey: "microFeedback.confusing" },
     ],
   },
@@ -88,8 +90,8 @@ export const MICRO_PROMPTS: Record<MicroPromptId, MicroPrompt> = {
     questionType: "response_fit",
     textKey: "microFeedback.responseFit",
     options: [
-      { value: "spot_on", labelKey: "microFeedback.spotOn" },
-      { value: "close", labelKey: "microFeedback.close" },
+      { value: "matched", labelKey: "microFeedback.matched" },
+      { value: "partly_matched", labelKey: "microFeedback.partly" },
       { value: "missed", labelKey: "microFeedback.missed" },
     ],
   },
@@ -98,9 +100,9 @@ export const MICRO_PROMPTS: Record<MicroPromptId, MicroPrompt> = {
     questionType: "tutor_helpfulness",
     textKey: "microFeedback.tutorHelpfulness",
     options: [
-      { value: "very_helpful", labelKey: "microFeedback.veryHelpful" },
-      { value: "somewhat", labelKey: "microFeedback.somewhat" },
-      { value: "not_helpful", labelKey: "microFeedback.notHelpful" },
+      { value: "useful", labelKey: "microFeedback.useful" },
+      { value: "somewhat_useful", labelKey: "microFeedback.somewhatUseful" },
+      { value: "not_useful", labelKey: "microFeedback.notUseful" },
     ],
   },
   prompt_difficulty: {
@@ -108,9 +110,9 @@ export const MICRO_PROMPTS: Record<MicroPromptId, MicroPrompt> = {
     questionType: "prompt_difficulty",
     textKey: "microFeedback.promptDifficulty",
     options: [
-      { value: "easy", labelKey: "microFeedback.easy" },
-      { value: "normal", labelKey: "microFeedback.normal" },
-      { value: "hard", labelKey: "microFeedback.hard" },
+      { value: "low_effort", labelKey: "microFeedback.lowEffort" },
+      { value: "manageable_effort", labelKey: "microFeedback.manageableEffort" },
+      { value: "high_effort", labelKey: "microFeedback.highEffort" },
     ],
   },
 };
@@ -196,11 +198,26 @@ export const useMicroFeedbackStore = create<MicroFeedbackState>((set, get) => ({
     // Dynamic import to avoid circular deps
     const { useUserLevelStore } = await import("./userLevelStore");
     const {
-      level, sessionId, chatId, metrics, confidence, normalizedScore, hasAnalyzed,
+      level,
+      autoLevel,
+      suggestedLevel,
+      manualOverride,
+      sessionId,
+      chatId,
+      metrics,
+      confidence,
+      normalizedScore,
+      hasAnalyzed,
     } = useUserLevelStore.getState();
+    const manualOverrideActive = manualOverride !== null;
 
     const featureSnapshot = {
       ui_level: level,
+      auto_level_at_time: autoLevel,
+      effective_ui_level_at_time: level,
+      suggested_level_at_time: suggestedLevel,
+      manual_override_active: manualOverrideActive,
+      manual_level_override: manualOverride,
       normalized_score: normalizedScore,
       confidence,
       has_analyzed: hasAnalyzed,
@@ -228,6 +245,7 @@ export const useMicroFeedbackStore = create<MicroFeedbackState>((set, get) => ({
           session_id: sessionId,
           chat_id: chatId,
           ui_level_at_time: level,
+          suggested_level_at_time: suggestedLevel,
           question_type: questionType,
           answer_value: value,
           feature_snapshot: featureSnapshot,

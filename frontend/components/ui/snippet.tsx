@@ -5,6 +5,7 @@ import { useTheme } from "next-themes";
 import { Copy, Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tooltip } from "@/components/ui/tooltip";
+import { useTranslation } from "@/lib/store/i18nStore";
 import {
   SyntaxHighlighter,
   createCodeTheme,
@@ -18,6 +19,7 @@ export function Snippet({
   children: string;
   language?: string;
 }) {
+  const { t } = useTranslation();
   const { resolvedTheme } = useTheme();
   const [copied, setCopied] = useState(false);
   const isDark = resolvedTheme === "dark";
@@ -65,13 +67,13 @@ export function Snippet({
           {children}
         </SyntaxHighlighter>
       </div>
-      <Tooltip content={copied ? "Copied!" : "Copy command"}>
+      <Tooltip content={copied ? t("markdown.copied") : t("markdown.copyCommand")}>
         <Button
           variant="tertiary"
           size="sm"
           iconOnly
           onClick={handleCopy}
-          aria-label="Copy command"
+          aria-label={t("markdown.copyCommand")}
           className="shrink-0 text-ds-text-tertiary hover:text-ds-text"
         >
           {copied ? <Check size={14} strokeWidth={2} /> : <Copy size={14} strokeWidth={2} />}

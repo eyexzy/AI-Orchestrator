@@ -243,6 +243,29 @@ def upgrade() -> None:
     op.create_index(op.f('ix_chat_messages_created_at'), 'chat_messages', ['created_at'], unique=False)
     op.create_index(op.f('ix_chat_messages_session_id'), 'chat_messages', ['session_id'], unique=False)
     op.create_index('ix_chat_messages_session_id_created_at', 'chat_messages', ['session_id', 'created_at'], unique=False)
+    op.create_table('chat_message_feedback',
+    sa.Column('id', sa.Integer(), autoincrement=True, nullable=False),
+    sa.Column('message_id', sa.Integer(), nullable=False),
+    sa.Column('session_id', sa.String(length=36), nullable=False),
+    sa.Column('user_email', sa.String(length=255), nullable=False),
+    sa.Column('vote', sa.String(length=16), nullable=False),
+    sa.Column('provider', sa.String(length=64), nullable=True),
+    sa.Column('model_id', sa.String(length=128), nullable=True),
+    sa.Column('provider_generation_id', sa.String(length=128), nullable=True),
+    sa.Column('message_content', sa.Text(), nullable=True),
+    sa.Column('provider_forwarded', sa.Boolean(), nullable=False),
+    sa.Column('created_at', sa.DateTime(timezone=True), nullable=True),
+    sa.Column('updated_at', sa.DateTime(timezone=True), nullable=True),
+    sa.ForeignKeyConstraint(['message_id'], ['chat_messages.id'], ondelete='CASCADE'),
+    sa.PrimaryKeyConstraint('id'),
+    sa.UniqueConstraint('message_id', 'user_email', name='uq_chat_message_feedback_message_user')
+    )
+    op.create_index(op.f('ix_chat_message_feedback_created_at'), 'chat_message_feedback', ['created_at'], unique=False)
+    op.create_index(op.f('ix_chat_message_feedback_message_id'), 'chat_message_feedback', ['message_id'], unique=False)
+    op.create_index(op.f('ix_chat_message_feedback_session_id'), 'chat_message_feedback', ['session_id'], unique=False)
+    op.create_index(op.f('ix_chat_message_feedback_updated_at'), 'chat_message_feedback', ['updated_at'], unique=False)
+    op.create_index(op.f('ix_chat_message_feedback_user_email'), 'chat_message_feedback', ['user_email'], unique=False)
+    op.create_index('ix_chat_message_feedback_user_email_created_at', 'chat_message_feedback', ['user_email', 'created_at'], unique=False)
     op.create_table('interaction_logs',
     sa.Column('id', sa.Integer(), autoincrement=True, nullable=False),
     sa.Column('session_id', sa.String(length=64), nullable=True),
@@ -275,6 +298,26 @@ def upgrade() -> None:
     sa.Column('structured_prompt_ratio', sa.Float(), nullable=True),
     sa.Column('help_open_count', sa.Integer(), nullable=True),
     sa.Column('tooltip_open_count', sa.Integer(), nullable=True),
+    sa.Column('tutor_open_count', sa.Integer(), nullable=True),
+    sa.Column('tutor_guided_started_count', sa.Integer(), nullable=True),
+    sa.Column('tutor_guided_completed_count', sa.Integer(), nullable=True),
+    sa.Column('tutor_guided_abandoned_count', sa.Integer(), nullable=True),
+    sa.Column('tutor_helpfulness_rated_count', sa.Integer(), nullable=True),
+    sa.Column('tutor_questions_skipped_count', sa.Integer(), nullable=True),
+    sa.Column('template_inserted_count', sa.Integer(), nullable=True),
+    sa.Column('suggestion_clicked_count', sa.Integer(), nullable=True),
+    sa.Column('compare_enabled_count', sa.Integer(), nullable=True),
+    sa.Column('self_consistency_enabled_count', sa.Integer(), nullable=True),
+    sa.Column('few_shot_added_count', sa.Integer(), nullable=True),
+    sa.Column('system_prompt_edited_count', sa.Integer(), nullable=True),
+    sa.Column('variable_added_count', sa.Integer(), nullable=True),
+    sa.Column('regeneration_count', sa.Integer(), nullable=True),
+    sa.Column('continue_generation_count', sa.Integer(), nullable=True),
+    sa.Column('message_feedback_positive_count', sa.Integer(), nullable=True),
+    sa.Column('message_feedback_negative_count', sa.Integer(), nullable=True),
+    sa.Column('project_context_usage_count', sa.Integer(), nullable=True),
+    sa.Column('attachment_usage_count', sa.Integer(), nullable=True),
+    sa.Column('advanced_mode_diversity', sa.Integer(), nullable=True),
     sa.Column('refine_accept_count', sa.Integer(), nullable=True),
     sa.Column('refine_reject_count', sa.Integer(), nullable=True),
     sa.Column('advanced_actions_count', sa.Integer(), nullable=True),
@@ -377,6 +420,13 @@ def downgrade() -> None:
     op.drop_index(op.f('ix_interaction_logs_id'), table_name='interaction_logs')
     op.drop_index(op.f('ix_interaction_logs_chat_id'), table_name='interaction_logs')
     op.drop_table('interaction_logs')
+    op.drop_index('ix_chat_message_feedback_user_email_created_at', table_name='chat_message_feedback')
+    op.drop_index(op.f('ix_chat_message_feedback_user_email'), table_name='chat_message_feedback')
+    op.drop_index(op.f('ix_chat_message_feedback_updated_at'), table_name='chat_message_feedback')
+    op.drop_index(op.f('ix_chat_message_feedback_session_id'), table_name='chat_message_feedback')
+    op.drop_index(op.f('ix_chat_message_feedback_message_id'), table_name='chat_message_feedback')
+    op.drop_index(op.f('ix_chat_message_feedback_created_at'), table_name='chat_message_feedback')
+    op.drop_table('chat_message_feedback')
     op.drop_index('ix_chat_messages_session_id_created_at', table_name='chat_messages')
     op.drop_index(op.f('ix_chat_messages_session_id'), table_name='chat_messages')
     op.drop_index(op.f('ix_chat_messages_created_at'), table_name='chat_messages')

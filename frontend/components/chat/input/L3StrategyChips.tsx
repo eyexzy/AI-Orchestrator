@@ -1,9 +1,10 @@
 "use client";
 
-import { useState } from "react";
-import { cn } from "@/lib/utils";
 import { useTranslation } from "@/lib/store/i18nStore";
 import { Button } from "@/components/ui/button";
+import { actionToast } from "@/components/ui/action-toast";
+import { Tooltip } from "@/components/ui/tooltip";
+import { Plus } from "lucide-react";
 
 interface L3StrategyChipsProps {
   onInjectCoT: () => void;
@@ -15,56 +16,44 @@ export function L3StrategyChips({
   onInjectStepBack,
 }: L3StrategyChipsProps) {
   const { t } = useTranslation();
-  const [cotActive, setCotActive] = useState(false);
-  const [sbActive, setSbActive] = useState(false);
 
   const handleCoT = () => {
     onInjectCoT();
-    setCotActive(true);
-    setTimeout(() => setCotActive(false), 2000);
+    actionToast.saved(t("chips.cotAdded"));
   };
 
   const handleStepBack = () => {
     onInjectStepBack();
-    setSbActive(true);
-    setTimeout(() => setSbActive(false), 2000);
+    actionToast.saved(t("chips.stepBackAdded"));
   };
 
   return (
     <>
-      <Button
-        type="button"
-        variant="chip"
-        shape="rounded"
-        size="sm"
-        onClick={handleCoT}
-        leftIcon={<span className={cn("font-mono text-xs font-bold", cotActive ? "text-amber-700" : "text-ds-text-tertiary")}>+</span>}
-        className={cn(
-          cotActive && "bg-amber-100 text-amber-900 shadow-[0_0_0_1px_var(--ds-amber-300)] hover:bg-amber-200 hover:text-amber-900",
-        )}
-        title={t("chips.cotTitle")}
-      >
-        CoT
-      </Button>
+      <Tooltip content={t("tooltip.l3Cot")} trackingId="l3_cot_chip">
+        <Button
+          type="button"
+          variant="chip"
+          shape="rounded"
+          size="sm"
+          onClick={handleCoT}
+          leftIcon={<Plus size={14} strokeWidth={2.2} className="text-current" />}
+        >
+          CoT
+        </Button>
+      </Tooltip>
 
-      <Button
-        type="button"
-        variant="chip"
-        shape="rounded"
-        size="sm"
-        onClick={handleStepBack}
-        leftIcon={<span className={cn("font-mono text-xs font-bold", sbActive ? "text-teal-700" : "text-ds-text-tertiary")}>+</span>}
-        className={cn(
-          sbActive && "bg-teal-100 text-teal-900 shadow-[0_0_0_1px_var(--ds-teal-300)] hover:bg-teal-200 hover:text-teal-900",
-        )}
-        title={t("chips.stepBackTitle")}
-      >
-        Step-Back
-      </Button>
-
-      <span className="font-mono text-xs select-none text-ds-text-tertiary opacity-60">
-        {cotActive ? `\u2713 ${t("chips.cotAdded")}` : sbActive ? `\u2713 ${t("chips.stepBackAdded")}` : ""}
-      </span>
+      <Tooltip content={t("tooltip.l3StepBack")} trackingId="l3_step_back_chip">
+        <Button
+          type="button"
+          variant="chip"
+          shape="rounded"
+          size="sm"
+          onClick={handleStepBack}
+          leftIcon={<Plus size={14} strokeWidth={2.2} className="text-current" />}
+        >
+          Step-Back
+        </Button>
+      </Tooltip>
     </>
   );
 }

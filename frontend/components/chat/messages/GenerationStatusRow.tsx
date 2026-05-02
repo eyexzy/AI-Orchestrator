@@ -19,13 +19,13 @@ function formatDurationLabel(
 
   if (tone === "thought") {
     return language === "uk"
-      ? `Думав ${seconds} с`
-      : `Thought for ${seconds}s`;
+      ? `Відповідь почалась за ${seconds} с`
+      : `Response started in ${seconds}s`;
   }
 
   return language === "uk"
-    ? `Працював ${seconds} с`
-    : `Worked for ${seconds}s`;
+    ? `Завершено за ${seconds} с`
+    : `Completed in ${seconds}s`;
 }
 
 export function GenerationStatusRow({

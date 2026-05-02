@@ -393,17 +393,27 @@ def _score_tool_mastery(
 
     # Rolling advanced adoption from user profile (0–1.0)
     rolling_adv = user_features.get("advanced_actions_per_session", 0.0)
+    diversity = user_features.get("advanced_mode_diversity", 0.0)
+    specific_advanced_total = sum(float(user_features.get(key, 0) or 0) for key in (
+        "system_prompt_edited_count",
+        "variable_added_count",
+        "few_shot_added_count",
+        "compare_enabled_count",
+        "self_consistency_enabled_count",
+        "project_context_usage_count",
+        "attachment_usage_count",
+    ))
     rolling_pts = 0.0
-    if rolling_adv >= 3.0:
+    if rolling_adv >= 3.0 or diversity >= 4 or specific_advanced_total >= 8:
         rolling_pts = 1.0
-    elif rolling_adv >= 1.0:
+    elif rolling_adv >= 1.0 or diversity >= 2 or specific_advanced_total >= 3:
         rolling_pts = 0.5
-    elif rolling_adv >= 0.3:
+    elif rolling_adv >= 0.3 or specific_advanced_total >= 1:
         rolling_pts = 0.2
     breakdown.append(ScoreBreakdown(
         category="TM: Rolling Adoption",
         points=round(rolling_pts, 2), max_points=1.0,
-        detail=f"{rolling_adv:.1f} advanced actions/session (rolling)",
+        detail=f"{rolling_adv:.1f} advanced actions/session, diversity {diversity:.1f}",
     ))
 
     total = min(adv_pts + tool_pts + rolling_pts, BLOCK_MAX)
@@ -450,16 +460,17 @@ def _score_autonomy(
     # Low help ratio from user aggregates (0–1.0)
     help_pts = 0.0
     help_ratio = user_features.get("help_ratio", 0.0)
+    tutor_completion_rate = user_features.get("tutor_completion_rate")
     if help_ratio == 0.0 and user_features.get("total_prompts", 0) >= 3:
         help_pts = 1.0
-    elif help_ratio < 0.1:
+    elif help_ratio < 0.1 or (tutor_completion_rate is not None and tutor_completion_rate >= 0.8 and help_ratio < 0.3):
         help_pts = 0.7
-    elif help_ratio < HIGH_HELP_RATIO_THRESHOLD:
+    elif help_ratio < HIGH_HELP_RATIO_THRESHOLD or (tutor_completion_rate is not None and tutor_completion_rate >= 0.5):
         help_pts = 0.3
     breakdown.append(ScoreBreakdown(
         category="AU: Low Help Ratio",
         points=round(help_pts, 2), max_points=1.0,
-        detail=f"help ratio: {help_ratio:.3f}",
+        detail=f"help ratio: {help_ratio:.3f}, tutor completion: {tutor_completion_rate if tutor_completion_rate is not None else 'n/a'}",
     ))
 
     total = min(suf_pts + cancel_pts + help_pts, BLOCK_MAX)
@@ -481,7 +492,7 @@ def _score_efficiency(
         spd_pts = 1.0
         reasons.append("Fast typing speed")
     elif effective_speed > TYPING_SPEED_THRESHOLD * 0.6:
-        spd_pts = 0.4
+        spd_pts = 0.5
     breakdown.append(ScoreBreakdown(
         category="EF: Typing Speed",
         points=round(spd_pts, 2), max_points=1.0,
@@ -507,7 +518,7 @@ def _score_efficiency(
         avg_pts = 1.0
         reasons.append("Consistently long prompts")
     elif metrics.avg_prompt_length > AVG_PROMPT_LENGTH_THRESHOLD * 0.5:
-        avg_pts = 0.4
+        avg_pts = 0.5
     breakdown.append(ScoreBreakdown(
         category="EF: Avg Prompt Length",
         points=round(avg_pts, 2), max_points=1.0,
@@ -573,7 +584,23 @@ def _score_stability(
         detail=f"{sessions_count} sessions tracked",
     ))
 
-    total = min(struct_pts + accept_pts + depth_pts, BLOCK_MAX)
+    positive_rate = user_features.get("message_feedback_positive_rate")
+    negative_rate = user_features.get("message_feedback_negative_rate")
+    feedback_pts = 0.0
+    if positive_rate is not None:
+        if positive_rate >= 0.75:
+            feedback_pts = 0.5
+        elif positive_rate >= 0.5:
+            feedback_pts = 0.25
+    if negative_rate is not None and negative_rate >= 0.5:
+        feedback_pts -= 0.25
+    breakdown.append(ScoreBreakdown(
+        category="ST: Response Feedback",
+        points=round(feedback_pts, 2), max_points=0.5,
+        detail=f"positive: {positive_rate if positive_rate is not None else 'n/a'}, negative: {negative_rate if negative_rate is not None else 'n/a'}",
+    ))
+
+    total = min(struct_pts + accept_pts + depth_pts + feedback_pts, BLOCK_MAX)
     return round(total, 2), breakdown
 
 
@@ -712,7 +739,13 @@ def compute_score(
 
     if ml_conf > ML_BLEND_MIN_CONFIDENCE:
         ml_normalized = (ml_level - 1) / 2.0
-        ml_weight = ML_BLEND_BASE_WEIGHT * ml_conf
+        # Symmetric blending: weight each source by its relative confidence.
+        # ML influence is capped at 50% so rule engine always has majority vote.
+        total_conf = confidence + ml_conf
+        if total_conf > 0:
+            ml_weight = min(0.5, (ml_conf / total_conf) * ML_BLEND_BASE_WEIGHT * 2)
+        else:
+            ml_weight = ML_BLEND_BASE_WEIGHT
         blended = normalized * (1 - ml_weight) + ml_normalized * ml_weight
         if abs(blended - normalized) > ML_BLEND_REASON_DELTA:
             reasons.append(f"ML adjustment: L{ml_level} ({ml_conf:.0%} confidence)")

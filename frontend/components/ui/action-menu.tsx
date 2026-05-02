@@ -113,7 +113,7 @@ export function ActionMenu({ anchorEl, onClose, items, align = "start" }: Action
                   item.onClick();
                   onClose();
                 }}
-                className={`flex w-full cursor-pointer items-center gap-2.5 rounded-md border-none bg-transparent px-3 py-2 text-[13px] font-medium transition-colors ${
+                className={`flex w-full cursor-pointer items-center gap-2.5 rounded-md border-none bg-transparent px-3 py-2 text-[14px] font-medium transition-colors ${
                   isDanger
                     ? "text-red-600 hover:bg-red-100"
                     : "text-ds-text hover:bg-gray-alpha-200"

@@ -26,7 +26,7 @@ export type ActionToastKind =
   | "error";
 
 const actionToastVariants = cva(
-  "pointer-events-none select-none flex w-[min(22rem,calc(100vw-1.5rem))] max-w-full items-center gap-2.5 rounded-xl border px-3 py-2.5 shadow-geist-lg",
+  "pointer-events-none flex w-fit min-w-0 max-w-[calc(100vw-1.5rem)] select-none items-start gap-2.5 rounded-xl border px-3 py-2.5 shadow-geist-lg sm:max-w-[42rem]",
   {
     variants: {
       tone: {
@@ -58,7 +58,7 @@ const actionToastIconVariants = cva("flex h-5 w-5 shrink-0 items-center justify-
   },
 });
 
-const actionToastTitleVariants = cva("shrink-0 whitespace-nowrap text-[12.5px] font-medium leading-4", {
+const actionToastTitleVariants = cva("min-w-0 whitespace-normal break-words text-[13px] font-medium leading-5", {
   variants: {
     tone: {
       neutral: "text-ds-text",
@@ -74,7 +74,7 @@ const actionToastTitleVariants = cva("shrink-0 whitespace-nowrap text-[12.5px] f
 });
 
 const actionToastDescriptionVariants = cva(
-  "min-w-0 overflow-hidden text-ellipsis whitespace-nowrap text-[12.5px] leading-4 before:mr-1.5 before:inline-block before:h-1 before:w-1 before:rounded-full before:bg-current before:align-middle before:opacity-35 before:content-['']",
+  "min-w-0 whitespace-normal break-words text-[13px] leading-5 before:mr-1.5 before:inline-block before:h-1 before:w-1 before:rounded-full before:bg-current before:align-middle before:opacity-35 before:content-['']",
   {
     variants: {
       tone: {
@@ -91,7 +91,7 @@ const actionToastDescriptionVariants = cva(
   },
 );
 
-const actionToastInlineTextVariants = cva("min-w-0 flex flex-1 items-center overflow-hidden", {
+const actionToastInlineTextVariants = cva("min-w-0 flex flex-1 flex-wrap items-center gap-x-1.5", {
   variants: {
     tone: {
       neutral: "",

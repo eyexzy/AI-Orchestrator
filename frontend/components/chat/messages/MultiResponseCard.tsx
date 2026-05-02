@@ -75,10 +75,10 @@ export function MultiResponseCard({
       <div className="px-5 py-4">
         <div className="mb-4 flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <span className="rounded bg-gray-alpha-200 px-2 py-0.5 font-mono text-xs font-semibold text-ds-text-secondary">
+            <span className="rounded bg-gray-alpha-200 px-2 py-0.5 text-[13px] font-semibold text-ds-text-secondary">
               {currentTab.shortLabel}
             </span>
-            <span className="font-mono text-sm font-semibold text-ds-text">
+            <span className="text-[14px] font-semibold text-ds-text">
               {currentTab.label}
             </span>
           </div>
@@ -96,7 +96,7 @@ export function MultiResponseCard({
 
         {isSelfConsistency ? (
           <div className="mt-3 flex items-center justify-between">
-            <span className="text-xs font-mono text-ds-text-tertiary">
+            <span className="text-[13px] text-ds-text-tertiary">
               {t("msg.run")} {Math.max(1, activeIndex + 1)} / {tabs.length}
             </span>
             <SelectBestButton

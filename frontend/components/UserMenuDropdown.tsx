@@ -10,6 +10,7 @@ import {
   CircleHelp,
   LogOut,
   ChevronsUpDown,
+  ShieldCheck,
 } from "lucide-react";
 import { useTranslation, useI18nStore, type Language } from "@/lib/store/i18nStore";
 import { useDraftStore } from "@/lib/store/draftStore";
@@ -241,8 +242,8 @@ export function UserMenuDropdown({
         {triggerVariant === "sidebar" && sidebarOpen && (
           <>
             <div className="min-w-0">
-              <p className="truncate text-[14px] font-medium text-ds-text">{displayName}</p>
-              <p className="mt-0.5 truncate text-[12px] leading-4 text-ds-text-tertiary">
+              <p className="truncate text-[15px] font-medium leading-5 text-ds-text">{displayName}</p>
+              <p className="mt-0.5 truncate text-[14px] leading-5 text-ds-text-tertiary">
                 {planLabel}
               </p>
             </div>
@@ -264,15 +265,15 @@ export function UserMenuDropdown({
         >
           <div className="px-3 py-3">
             {!hideNameInMenu && name && (
-              <p className="text-[14px] font-medium text-ds-text">{name}</p>
+              <p className="text-[15px] font-medium text-ds-text">{name}</p>
             )}
             {email && (
-              <p className={`text-[13px] text-ds-text-tertiary truncate ${!hideNameInMenu && name ? "mt-0.5" : ""}`}>
+              <p className={`truncate text-[14px] text-ds-text-tertiary ${!hideNameInMenu && name ? "mt-0.5" : ""}`}>
                 {email}
               </p>
             )}
             {hideNameInMenu && !email && (
-              <p className="text-[13px] text-ds-text-tertiary truncate">
+              <p className="truncate text-[14px] text-ds-text-tertiary">
                 {displayName}
               </p>
             )}
@@ -282,7 +283,7 @@ export function UserMenuDropdown({
 
           <div className="space-y-0.5">
             <Link
-              href="/dashboard"
+              href="/profile"
               data-user-menu-item="true"
               role="menuitem"
               onClick={() => setOpen(false)}
@@ -311,6 +312,23 @@ export function UserMenuDropdown({
               <span>{t("menu.accountSettings")}</span>
             </Link>
 
+            {session?.user?.email === "eyexzy@gmail.com" && (
+              <Link
+                href="/admin"
+                data-user-menu-item="true"
+                role="menuitem"
+                onClick={() => setOpen(false)}
+                className={`flex items-center ${menuBtn} rounded-lg h-10`}
+              >
+                <ShieldCheck
+                  size={16}
+                  strokeWidth={2}
+                  className="shrink-0 text-current"
+                />
+                <span>{t("menu.adminPanel")}</span>
+              </Link>
+            )}
+
             <Button
               type="button"
               variant="tertiary"
@@ -338,7 +356,7 @@ export function UserMenuDropdown({
           <Separator className="-mx-2 my-1.5 w-auto" />
 
           <div className="px-3 py-1.5">
-            <p className="text-[13px] font-medium leading-4 text-ds-text-tertiary">
+            <p className="text-[14px] font-medium leading-5 text-ds-text-tertiary">
               {t("menu.preferences")}
             </p>
           </div>

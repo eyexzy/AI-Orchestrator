@@ -35,8 +35,10 @@ function readPersistedActiveChatId(): string | null {
 }
 
 export type Role = "user" | "assistant";
+export type MessageFeedbackVote = "like" | "dislike";
 
 export const NEW_CHAT_SENTINEL = "New Chat";
+const CHAT_HISTORY_MESSAGE_LIMIT = 60;
 
 export interface ChatSession {
   id: string;
@@ -45,6 +47,7 @@ export interface ChatSession {
   project_id?: string | null;
   project_name?: string | null;
   parent_chat_id?: string | null;
+  parent_chat_title?: string | null;
   forked_from_message_id?: number | null;
   created_at: string;
   updated_at: string;
@@ -161,8 +164,13 @@ interface ChatState {
     selectedMetadata: Record<string, unknown>,
   ) => void;
   editAndResend: (messageId: string | number, newText: string, attachments?: MessageAttachment[]) => Promise<void>;
+  regenerateMessage: (messageId: string | number) => Promise<ChatMessage | null>;
   regenerateLastResponse: () => Promise<void>;
   continueAssistantMessage: (messageId: string | number) => Promise<ChatMessage | null>;
+  rateAssistantMessage: (
+    messageId: string | number,
+    vote: MessageFeedbackVote,
+  ) => Promise<void>;
 }
 
 type ChatStateSetter = (
@@ -199,12 +207,32 @@ function createClientChatId() {
 
 function buildHistory(
   messages: ChatMessage[],
-  limit = 20,
+  limit = CHAT_HISTORY_MESSAGE_LIMIT,
 ): Array<{ role: Role; content: string }> {
   return messages
     .filter((message) => !message.isOptimistic && !message.isError && message.content.trim())
     .slice(-limit)
     .map((message) => ({ role: message.role, content: message.content }));
+}
+
+function filterForkInheritedMessages(
+  chat: ChatSession | null | undefined,
+  messages: ChatMessage[],
+): ChatMessage[] {
+  if (!chat?.parent_chat_id || !chat.forked_from_message_id || !chat.created_at) {
+    return messages;
+  }
+
+  const forkCreatedAt = Date.parse(chat.created_at);
+  if (!Number.isFinite(forkCreatedAt)) {
+    return messages;
+  }
+
+  return messages.filter((message) => {
+    if (!message.created_at) return true;
+    const messageCreatedAt = Date.parse(message.created_at);
+    return !Number.isFinite(messageCreatedAt) || messageCreatedAt >= forkCreatedAt;
+  });
 }
 
 interface PersistedChatMessage {
@@ -341,6 +369,7 @@ interface PersistedChatSession {
   project_id?: unknown;
   project_name?: unknown;
   parent_chat_id?: unknown;
+  parent_chat_title?: unknown;
   forked_from_message_id?: unknown;
   created_at?: unknown;
   updated_at?: unknown;
@@ -359,6 +388,10 @@ function parseChatSessionFromDB(chat: unknown): ChatSession {
     project_id: typeof persisted.project_id === "string" ? persisted.project_id : null,
     project_name: typeof persisted.project_name === "string" ? persisted.project_name : null,
     parent_chat_id: typeof persisted.parent_chat_id === "string" ? persisted.parent_chat_id : null,
+    parent_chat_title:
+      typeof persisted.parent_chat_title === "string"
+        ? persisted.parent_chat_title
+        : null,
     forked_from_message_id:
       typeof persisted.forked_from_message_id === "number"
         ? persisted.forked_from_message_id
@@ -381,6 +414,7 @@ function parseChatSessionFromDB(chat: unknown): ChatSession {
 type GeneratePayload = {
   prompt: string;
   history: Array<{ role: Role; content: string }>;
+  history_limit: number;
   system_message: string;
   model: string;
   temperature: number;
@@ -413,6 +447,7 @@ function makePayload(
   const payload: GeneratePayload = {
     prompt: text,
     history,
+    history_limit: history.length,
     system_message: opts.system_message ?? "",
     model,
     temperature: opts.temperature,
@@ -569,25 +604,6 @@ function formatChatSendErrorMessage(
   }
 
   return fallbackMessage;
-}
-
-function parseRequestOptionsFromMetadata(metadata?: Record<string, unknown>) {
-  const requestOptions = isObjectRecord(metadata?.request_options)
-    ? metadata.request_options
-    : {};
-
-  return {
-    model: typeof requestOptions.model_id === "string" ? requestOptions.model_id : undefined,
-    temperature:
-      typeof requestOptions.temperature === "number" ? requestOptions.temperature : undefined,
-    max_tokens:
-      typeof requestOptions.max_tokens === "number" ? requestOptions.max_tokens : undefined,
-    top_p: typeof requestOptions.top_p === "number" ? requestOptions.top_p : undefined,
-    system_message:
-      typeof requestOptions.system_message === "string"
-        ? requestOptions.system_message
-        : undefined,
-  };
 }
 
 function withGenerationDuration(
@@ -901,8 +917,13 @@ function mergeGenerationSnapshot(
     if (typeof summary.provider === "string") {
       nextMetadata.provider = summary.provider;
     }
-    if (typeof summary.estimated_tokens === "number") {
-      nextMetadata.tokens = summary.estimated_tokens;
+    if (typeof summary.total_tokens === "number") {
+      nextMetadata.tokens = summary.total_tokens;
+    } else if (
+      typeof summary.prompt_tokens === "number" &&
+      typeof summary.completion_tokens === "number"
+    ) {
+      nextMetadata.tokens = summary.prompt_tokens + summary.completion_tokens;
     }
     if (typeof summary.duration_ms === "number") {
       nextMetadata.generation_ms = summary.duration_ms;
@@ -948,6 +969,24 @@ function createStreamingChunkUpdater(
       return latestContent;
     },
   };
+}
+
+function buildInlineAttachmentsFromMessage(
+  message?: ChatMessage,
+): Array<{ id: string; filename: string; mimeType: string; data: string }> | undefined {
+  const inlineAttachments = message?.attachments?.flatMap((attachment) => {
+    const data = attachment.previewUrl?.includes(",")
+      ? attachment.previewUrl.split(",")[1]
+      : attachment.previewUrl ?? "";
+    return [{
+      id: attachment.id,
+      filename: attachment.filename,
+      mimeType: attachment.mimeType,
+      data,
+    }];
+  });
+
+  return inlineAttachments?.length ? inlineAttachments : undefined;
 }
 
 export const useChatStore = create<ChatState>((set, get) => ({
@@ -1016,7 +1055,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         const loadedChats: ChatSession[] = Array.isArray(data)
           ? data
               .map(parseChatSessionFromDB)
-              .filter((chat) => chat.message_count > 0)
+              .filter((chat) => chat.message_count > 0 || Boolean(chat.parent_chat_id))
           : [];
         const uniqueChats = dedupeChatSessions(loadedChats);
         const isCurrentScope =
@@ -1066,6 +1105,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   selectChat: async (id, messageIdToFocus) => {
     const currentState = get();
+    const selectedChat = currentState.chats.find((chat) => chat.id === id);
+    const isKnownEmptyDraft =
+      selectedChat &&
+      selectedChat.message_count === 0 &&
+      !selectedChat.parent_chat_id;
+
     if (
       currentState.activeChatId === id &&
       currentState.messages.length > 0 &&
@@ -1075,19 +1120,39 @@ export const useChatStore = create<ChatState>((set, get) => ({
       return;
     }
 
+    if (isKnownEmptyDraft) {
+      persistActiveChatId(id);
+      chatMessagesCache.set(id, { messages: [], fetchedAt: Date.now() });
+      set({
+        activeChatId: id,
+        isLoadingMessages: false,
+        messages: [],
+        messagesError: null,
+        pendingFocusMessageId: messageIdToFocus ?? null,
+      });
+      useUserLevelStore.getState().setChatId(id);
+      useUserLevelStore.getState().resetMetrics();
+      return;
+    }
+
     const cachedMessages = chatMessagesCache.get(id);
     if (
       cachedMessages &&
       Date.now() - cachedMessages.fetchedAt < CHAT_MESSAGES_CACHE_TTL_MS
     ) {
+      const selectedChat = get().chats.find((chat) => chat.id === id);
+      const visibleMessages = filterForkInheritedMessages(selectedChat, cachedMessages.messages);
       persistActiveChatId(id);
       set({
         activeChatId: id,
         isLoadingMessages: false,
-        messages: cachedMessages.messages,
+        messages: visibleMessages,
         messagesError: null,
         pendingFocusMessageId: messageIdToFocus ?? null,
       });
+      if (visibleMessages.length !== cachedMessages.messages.length) {
+        chatMessagesCache.set(id, { messages: visibleMessages, fetchedAt: Date.now() });
+      }
       useUserLevelStore.getState().setChatId(id);
       useUserLevelStore.getState().resetMetrics();
       return;
@@ -1112,9 +1177,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
       const data: unknown = await res.json();
       if (get().activeChatId === id) {
-        const parsedMessages = Array.isArray(data)
+        const selectedChat = get().chats.find((chat) => chat.id === id);
+        const parsedMessagesRaw = Array.isArray(data)
           ? data.map(parseMessageFromDB)
           : [];
+        const parsedMessages = filterForkInheritedMessages(selectedChat, parsedMessagesRaw);
         chatMessagesCache.set(id, {
           messages: parsedMessages,
           fetchedAt: Date.now(),
@@ -1440,34 +1507,39 @@ export const useChatStore = create<ChatState>((set, get) => ({
     });
   },
 
-  regenerateLastResponse: async () => {
+  regenerateMessage: async (messageId) => {
     const state = get();
     const chatId = state.activeChatId;
-    let lastUserIdx = -1;
-    for (let i = state.messages.length - 1; i >= 0; i--) {
+    const assistantIdx = state.messages.findIndex(
+      (message) => message.id === messageId && message.role === "assistant",
+    );
+    if (!chatId || assistantIdx === -1) return null;
+
+    let userIdx = -1;
+    for (let i = assistantIdx - 1; i >= 0; i--) {
       if (state.messages[i].role === "user") {
-        lastUserIdx = i;
+        userIdx = i;
         break;
       }
     }
-    if (!chatId || lastUserIdx === -1) return;
+    if (userIdx === -1) return null;
 
-    const lastUserMsg = state.messages[lastUserIdx];
-    const preservedMessages = state.messages.slice(0, lastUserIdx);
-    const preserveAfterId = lastUserIdx > 0
-      ? normalizeServerMessageId(state.messages[lastUserIdx - 1]?.id)
+    const sourceUserMsg = state.messages[userIdx];
+    const preservedMessages = state.messages.slice(0, userIdx);
+    const preserveAfterId = userIdx > 0
+      ? normalizeServerMessageId(state.messages[userIdx - 1]?.id)
       : 0;
 
-    if (lastUserIdx > 0 && preserveAfterId === null) {
+    if (userIdx > 0 && preserveAfterId === null) {
       actionToast.error(getTranslation("chat.syncError"));
-      return;
+      return null;
     }
 
     try {
       await truncateChatMessages(chatId, preserveAfterId ?? 0);
     } catch {
       actionToast.error(getTranslation("chat.syncError"));
-      return;
+      return null;
     }
 
     set((store) => ({
@@ -1484,18 +1556,25 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }));
 
     const sendOpts = get().composerSendOpts ?? get().lastSendOpts;
-    if (!sendOpts) return;
+    if (!sendOpts) return null;
 
-    // Re-attach files from the original user message
-    const inlineAttachments = lastUserMsg.attachments?.flatMap((a) => {
-      const data = a.previewUrl?.includes(",") ? a.previewUrl.split(",")[1] : a.previewUrl ?? "";
-      return [{ id: a.id, filename: a.filename, mimeType: a.mimeType, data }];
-    });
-
-    await get().sendMessage(lastUserMsg.content, {
+    return get().sendMessage(sourceUserMsg.content, {
       ...sendOpts,
-      inlineAttachments: inlineAttachments?.length ? inlineAttachments : undefined,
+      inlineAttachments: buildInlineAttachmentsFromMessage(sourceUserMsg),
     });
+  },
+
+  regenerateLastResponse: async () => {
+    const state = get();
+    let lastAssistantId: string | number | null = null;
+    for (let i = state.messages.length - 1; i >= 0; i--) {
+      if (state.messages[i].role === "assistant") {
+        lastAssistantId = state.messages[i].id;
+        break;
+      }
+    }
+    if (lastAssistantId === null) return;
+    await get().regenerateMessage(lastAssistantId);
   },
 
   continueAssistantMessage: async (messageId) => {
@@ -1522,20 +1601,15 @@ export const useChatStore = create<ChatState>((set, get) => ({
       return null;
     }
 
-    const requestOptions = parseRequestOptionsFromMetadata(targetMessage.metadata);
     // composerSendOpts reflects the live config sidebar — always prefer it
     const liveOpts = get().composerSendOpts ?? get().lastSendOpts;
     if (!liveOpts) return null;
 
     const continuationOpts: SendMessageOpts = {
       ...liveOpts,
-      // For continuation, honour the model/params that were used in the original
-      // request so the LLM sees a consistent context, but allow live override.
-      model: liveOpts.model ?? requestOptions.model ?? "or-llama-70b",
-      temperature: liveOpts.temperature ?? requestOptions.temperature ?? 0.7,
-      max_tokens: liveOpts.max_tokens ?? requestOptions.max_tokens ?? 2048,
-      top_p: liveOpts.top_p ?? requestOptions.top_p ?? 1.0,
-      system_message: liveOpts.system_message ?? requestOptions.system_message ?? "",
+      compareModel: undefined,
+      compareModelLabel: undefined,
+      selfConsistencyEnabled: false,
       stream: true,
       forceNewChat: false,
     };
@@ -1742,9 +1816,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
                         first_token_ms: data.usage?.latency_ms,
                         stream_chars: mergedContent.length,
                         estimated_tokens: data.usage?.completion_tokens ?? data.usage?.total_tokens,
+                        prompt_tokens: data.usage?.prompt_tokens,
+                        completion_tokens: data.usage?.completion_tokens,
+                        total_tokens: data.usage?.total_tokens,
                         model_label: continuationOpts.model,
                         model_id: continuationOpts.model,
                         provider: data.provider,
+                        cost_usd:
+                          typeof data.raw?.usage?.cost_usd === "number"
+                            ? data.raw.usage.cost_usd
+                            : undefined,
                       },
                     },
                   ),
@@ -1815,6 +1896,57 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }
   },
 
+  rateAssistantMessage: async (messageId, vote) => {
+    const persistedMessageId = normalizeServerMessageId(messageId);
+    if (persistedMessageId === null) {
+      return;
+    }
+
+    const currentMessage = get().messages.find((message) => message.id === messageId);
+    const currentVote =
+      isObjectRecord(currentMessage?.metadata?.user_feedback) &&
+      (currentMessage?.metadata?.user_feedback.vote === "like" ||
+        currentMessage?.metadata?.user_feedback.vote === "dislike")
+        ? currentMessage.metadata.user_feedback.vote
+        : null;
+
+    const nextVote: MessageFeedbackVote | null = currentVote === vote ? null : vote;
+
+    set((state) => ({
+      messages: state.messages.map((message) =>
+        message.id === messageId
+          ? {
+              ...message,
+              metadata: applyMessageFeedbackMetadata(message.metadata, nextVote),
+            }
+          : message,
+      ),
+    }));
+
+    try {
+      const res = await fetch(`/api/chat-messages/${persistedMessageId}/feedback`, {
+        method: nextVote ? "POST" : "DELETE",
+        headers: nextVote ? { "Content-Type": "application/json" } : undefined,
+        body: nextVote ? JSON.stringify({ vote: nextVote }) : undefined,
+      });
+      if (!res.ok) {
+        throw new Error(await readResponseError(res, "Failed to save message feedback"));
+      }
+    } catch (error) {
+      set((state) => ({
+        messages: state.messages.map((message) =>
+          message.id === messageId
+            ? {
+                ...message,
+                metadata: applyMessageFeedbackMetadata(message.metadata, currentVote),
+              }
+            : message,
+        ),
+      }));
+      actionToast.error(getErrorMessage(error, "Failed to save message feedback"));
+    }
+  },
+
   stopGeneration: () => {
     activeGenerationController?.abort();
     activeGenerationController = null;
@@ -1838,7 +1970,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
     const { activeChatId, messages } = get();
     let chatId = activeChatId;
-    let historyMessages = messages;
+    let historyMessages = filterForkInheritedMessages(
+      get().chats.find((chat) => chat.id === activeChatId),
+      messages,
+    );
 
     if (opts.forceNewChat || !chatId) {
       const nextChatId = createClientChatId();
@@ -1853,6 +1988,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         project_id: opts.projectId ?? null,
         project_name: project?.name ?? null,
         parent_chat_id: null,
+        parent_chat_title: null,
         forked_from_message_id: null,
         created_at: now,
         updated_at: now,
@@ -2228,9 +2364,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
         stream_chunks: 0,
         stream_chars: typeof data.text === "string" ? data.text.length : 0,
         estimated_tokens: data.usage?.completion_tokens ?? data.usage?.total_tokens,
+        prompt_tokens: data.usage?.prompt_tokens,
+        completion_tokens: data.usage?.completion_tokens,
+        total_tokens: data.usage?.total_tokens,
         model_label: opts.modelLabel ?? data.usage?.model ?? opts.model,
         model_id: opts.model,
         provider: data.provider,
+        cost_usd:
+          typeof data.raw?.usage?.cost_usd === "number"
+            ? data.raw.usage.cost_usd
+            : undefined,
       };
       const fallbackMessage: ChatMessage = {
         id: asstMsgId,
@@ -2394,25 +2537,58 @@ export function hydrateChatStoreFromPersistence(userEmail?: string | null): void
   const persistedChatsCache = readPersistedChatsCache(userEmail);
   const persistedActiveChatId = readPersistedActiveChatId();
   const persistedActiveChatMessagesCache = readPersistedActiveChatMessagesCache(userEmail);
+  const persistedChats = persistedChatsCache?.chats ?? [];
+  const persistedActiveChat = persistedActiveChatId
+    ? persistedChats.find((chat) => chat.id === persistedActiveChatId)
+    : null;
+  const persistedActiveMessages =
+    persistedActiveChatId &&
+    persistedActiveChatMessagesCache?.chatId === persistedActiveChatId
+      ? filterForkInheritedMessages(
+          persistedActiveChat,
+          persistedActiveChatMessagesCache.messages,
+        )
+      : [];
 
   chatsLastFetchedAt = persistedChatsCache?.fetchedAt ?? 0;
   chatMessagesCache.clear();
 
   if (persistedActiveChatMessagesCache) {
     chatMessagesCache.set(persistedActiveChatMessagesCache.chatId, {
-      messages: persistedActiveChatMessagesCache.messages,
+      messages:
+        persistedActiveChatMessagesCache.chatId === persistedActiveChatId
+          ? persistedActiveMessages
+          : persistedActiveChatMessagesCache.messages,
       fetchedAt: persistedActiveChatMessagesCache.fetchedAt,
     });
   }
 
   useChatStore.setState({
-    chats: persistedChatsCache?.chats ?? [],
+    chats: persistedChats,
     activeChatId: persistedActiveChatId,
-    messages:
-      persistedActiveChatId &&
-      persistedActiveChatMessagesCache?.chatId === persistedActiveChatId
-        ? persistedActiveChatMessagesCache.messages
-        : [],
+    messages: persistedActiveMessages,
     sidebarOpen: readPersistedSidebarOpen(userEmail),
   });
+}
+
+function applyMessageFeedbackMetadata(
+  metadata: Record<string, unknown> | undefined,
+  vote: MessageFeedbackVote | null,
+): Record<string, unknown> {
+  const nextMetadata = {
+    ...(isObjectRecord(metadata) ? metadata : {}),
+  };
+
+  if (vote === null) {
+    delete nextMetadata.user_feedback;
+    return nextMetadata;
+  }
+
+  nextMetadata.user_feedback = {
+    vote,
+    updated_at: new Date().toISOString(),
+    provider_forwarded: false,
+    provider_forwarding_supported: false,
+  };
+  return nextMetadata;
 }

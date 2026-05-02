@@ -219,50 +219,244 @@ class SklearnClassifier:
 # Synthetic training data (used when no real feedback exists)
 
 def _create_synthetic_training_data():
-    """Generate synthetic data for cold-start.
-    Returns (texts, behavioral_X, y).
+    """Generate diverse synthetic data for cold-start.
+
+    Behavioral features order:
+      [prompt_length, word_count, has_structure, chars_per_second,
+       session_message_count, avg_prompt_length, used_advanced_features_count,
+       tooltip_click_count]
+
+    Coverage: 20 L1 + 20 L2 + 20 L3 = 60 samples across diverse topics
+    (AI/tech, cooking, writing, legal, creative, business, education, science)
+    and both Ukrainian and English.
     """
     samples = [
-        # L1: short, vague, no structure
-        ("напиши про штучний інтелект", [20, 4, 0, 1.5, 1, 20, 0, 2], 1),
-        ("що таке машинне навчання", [35, 6, 0, 2.0, 2, 30, 0, 1], 1),
-        ("розкажи про нейронні мережі", [15, 3, 0, 1.0, 1, 15, 0, 3], 1),
-        ("як працює chatgpt", [45, 8, 0, 2.5, 3, 35, 0, 0], 1),
-        ("що можна зробити з ai", [30, 5, 0, 1.8, 2, 28, 0, 2], 1),
-        # L2: medium, some technical terms, some structure
-        ("Поясни як працює fine-tuning моделей GPT. Які є підходи до transfer learning?",
-         [120, 22, 0, 4.0, 5, 110, 1, 0], 2),
-        ("Порівняй RAG та fine-tuning для побудови чат-бота з власними даними у форматі таблиці",
-         [95, 18, 0, 5.0, 4, 100, 2, 0], 2),
-        ("Напиши приклад використання LangChain з vector store для пошуку по документах",
-         [150, 28, 1, 4.5, 6, 130, 1, 1], 2),
-        ("Як налаштувати temperature та top-p параметри для різних задач генерації тексту?",
-         [85, 16, 0, 5.5, 5, 90, 3, 0], 2),
-        ("Поясни різницю між embedding моделями та генеративними LLM. Наведи приклади використання",
-         [110, 20, 1, 4.2, 7, 105, 2, 0], 2),
-        # L3: long, structured, heavy technical vocabulary
+        # ── L1: short, vague, no constraints, slow typing, few messages, clicks tooltips ──
+
+        # Tech topics
+        ("напиши про штучний інтелект",
+         [30, 5, 0, 1.5, 1, 30, 0, 3], 1),
+        ("що таке машинне навчання",
+         [28, 5, 0, 1.8, 2, 28, 0, 2], 1),
+        ("розкажи про python",
+         [20, 3, 0, 1.2, 1, 20, 0, 2], 1),
+        ("як зробити сайт",
+         [18, 3, 0, 1.0, 1, 18, 0, 3], 1),
+        ("what is chatgpt",
+         [15, 3, 0, 2.0, 2, 15, 0, 1], 1),
+
+        # Everyday topics
+        ("напиши рецепт борщу",
+         [22, 4, 0, 1.6, 1, 22, 0, 2], 1),
+        ("як схуднути",
+         [14, 2, 0, 1.3, 1, 14, 0, 3], 1),
+        ("розкажи про україну",
+         [22, 3, 0, 1.5, 2, 20, 0, 2], 1),
+        ("напиши вірш",
+         [12, 2, 0, 1.1, 1, 12, 0, 2], 1),
+        ("write a story",
+         [14, 3, 0, 1.8, 1, 14, 0, 1], 1),
+
+        # Edge cases: slightly longer but still vague/unstructured
+        ("можеш пояснити що таке база даних простими словами",
+         [52, 9, 0, 2.2, 2, 45, 0, 2], 1),
+        ("напиши щось цікаве про космос для мене",
+         [40, 7, 0, 1.9, 1, 38, 0, 3], 1),
+        ("tell me about machine learning please",
+         [37, 6, 0, 2.5, 2, 37, 0, 1], 1),
+        ("як навчитися програмувати",
+         [28, 4, 0, 1.7, 3, 25, 0, 2], 1),
+        ("поясни що таке нейронна мережа",
+         [33, 6, 0, 2.0, 2, 33, 0, 2], 1),
+
+        # Minimal output — single-word or two-word queries
+        ("переклади текст",
+         [16, 2, 0, 1.4, 1, 16, 0, 3], 1),
+        ("summarize this",
+         [13, 2, 0, 1.5, 1, 13, 0, 1], 1),
+        ("напиши email",
+         [13, 2, 0, 1.2, 2, 13, 0, 2], 1),
+        ("explain sql",
+         [10, 2, 0, 1.6, 1, 10, 0, 1], 1),
+        ("що таке api",
+         [12, 3, 0, 1.3, 1, 12, 0, 3], 1),
+
+        # ── L2: medium length, some specificity, moderate speed, occasional advanced use ──
+
+        # Tech / AI
+        ("Поясни як працює fine-tuning моделей GPT і які є підходи до transfer learning",
+         [80, 15, 0, 4.0, 5, 85, 1, 0], 2),
+        ("Порівняй RAG та fine-tuning для побудови чат-бота. Наведи переваги кожного підходу",
+         [95, 17, 0, 4.5, 4, 90, 2, 0], 2),
+        ("Як налаштувати temperature та top-p для різних задач генерації тексту?",
+         [78, 13, 0, 5.0, 5, 80, 2, 1], 2),
+        ("Write a Python function that reads a CSV file and calculates average values per column",
+         [90, 16, 1, 5.5, 6, 88, 1, 0], 2),
+        ("Explain the difference between SQL JOIN types with examples for each",
+         [68, 12, 0, 4.8, 4, 72, 1, 0], 2),
+
+        # Business / writing
+        ("Напиши email колезі з проханням перенести зустріч на завтра на 14:00, тон — ділова",
+         [95, 17, 0, 4.2, 5, 92, 1, 0], 2),
+        ("Склади план маркетингової кампанії для запуску мобільного застосунку. Аудиторія — молодь 18-25",
+         [105, 18, 0, 5.2, 6, 100, 2, 0], 2),
+        ("Write a professional LinkedIn post about launching a new product. Keep it under 200 words",
+         [92, 16, 0, 5.8, 5, 95, 1, 0], 2),
+        ("Допоможи написати резюме для позиції junior developer. Є 1 рік досвіду у Python та SQL",
+         [100, 18, 0, 4.6, 7, 98, 2, 1], 2),
+        ("Explain agile methodology and how sprints work. Give a concrete 2-week sprint example",
+         [88, 15, 0, 5.1, 5, 85, 1, 0], 2),
+
+        # Education / science
+        ("Поясни принцип роботи фотосинтезу простою мовою для учнів 8 класу",
+         [75, 13, 0, 4.3, 4, 78, 1, 0], 2),
+        ("Summarize the key causes of World War I in bullet points for a high school student",
+         [85, 15, 0, 5.0, 5, 82, 1, 0], 2),
+        ("Напиши задачу з математики на тему відсотків для 6-го класу з рішенням",
+         [80, 14, 0, 4.7, 4, 82, 1, 0], 2),
+        ("Explain how vaccines work and why herd immunity matters. Keep it factual, no jargon",
+         [82, 15, 0, 5.3, 6, 80, 2, 0], 2),
+        ("Як написати наукову статтю? Поясни структуру: вступ, методи, результати, обговорення",
+         [90, 15, 0, 4.9, 5, 88, 1, 0], 2),
+
+        # Creative / everyday
+        ("Напиши короткий сценарій для YouTube відео про подорожі. Тривалість — 3 хвилини",
+         [88, 15, 0, 4.4, 5, 85, 2, 0], 2),
+        ("Generate 5 unique names for a coffee shop with a cozy, Scandinavian aesthetic",
+         [78, 14, 0, 5.6, 4, 80, 1, 0], 2),
+        ("Напиши привітання на день народження другу. Стиль — гумористичний, неформальний",
+         [85, 14, 0, 4.1, 3, 82, 1, 1], 2),
+        ("Compose a short poem about autumn in the city. Use vivid imagery, 8–12 lines",
+         [72, 14, 0, 5.2, 4, 75, 1, 0], 2),
+        ("Translate this business email to formal Ukrainian and adjust tone for C-level audience",
+         [88, 15, 0, 5.4, 5, 85, 2, 0], 2),
+
+        # ── L3: long, structured, role assignment, multi-step, high typing speed, no tooltips ──
+
+        # AI / ML engineering
         ("Act as a senior ML engineer. Compare transformer attention mechanisms: "
          "self-attention vs cross-attention vs multi-head attention. "
-         "Provide code examples in PyTorch and analyze computational complexity O(n²d).",
-         [280, 55, 1, 8.0, 12, 250, 4, 0], 3),
+         "Provide code examples in PyTorch. Analyze computational complexity O(n²d). "
+         "Format: markdown with code blocks.",
+         [310, 55, 1, 9.0, 14, 290, 5, 0], 3),
         ("Ти — експерт з NLP. Розроби pipeline для класифікації тексту: "
-         "1) TF-IDF vectorization 2) Feature engineering 3) Model selection (LogReg vs SVM vs RF) "
-         "4) Hyperparameter tuning з GridSearchCV 5) Evaluation з confusion matrix та ROC-AUC.",
-         [350, 70, 1, 9.5, 15, 300, 5, 0], 3),
-        ("Design a RAG system architecture using ChromaDB as vector store, "
-         "OpenAI embeddings for retrieval, and implement chain-of-thought prompting "
-         "with few-shot examples. Include error handling and streaming.",
-         [220, 45, 1, 7.5, 10, 220, 3, 0], 3),
-        ("Реалізуй REST API на FastAPI з WebSocket streaming для LLM inference. "
-         "Використай async/await, connection pooling для PostgreSQL, "
-         "Redis кеш для embeddings, та Docker compose для деплою. "
-         "Покажи Dockerfile та CI/CD pipeline.",
-         [400, 80, 1, 10.0, 18, 380, 6, 0], 3),
-        ("Implement ablation study: train Random Forest classifier, "
-         "compute SHAP values for feature importance, plot learning curves, "
-         "and compare precision/recall/F1 across 5-fold cross-validation. "
-         "Use scikit-learn Pipeline with StandardScaler.",
-         [310, 62, 1, 8.8, 14, 290, 4, 0], 3),
+         "1) TF-IDF vectorization 2) Feature engineering 3) Model selection (LogReg/SVM/RF) "
+         "4) Hyperparameter tuning з GridSearchCV 5) Evaluation: confusion matrix + ROC-AUC. "
+         "Поверни повний код Python.",
+         [380, 65, 1, 10.5, 16, 360, 6, 0], 3),
+        ("Design a production RAG system: ChromaDB vector store, OpenAI text-embedding-3-small, "
+         "LangChain retrieval chain, chain-of-thought prompting, few-shot examples. "
+         "Include: error handling, async streaming, token budget management. "
+         "Output: architecture diagram + annotated code.",
+         [290, 52, 1, 8.5, 12, 280, 5, 0], 3),
+        ("Implement ablation study for Random Forest: compute SHAP feature importance, "
+         "plot learning curves, compare precision/recall/F1 across 5-fold CV. "
+         "Use sklearn Pipeline with StandardScaler + ColumnTransformer. "
+         "Return: reproducible code + interpretation of results.",
+         [320, 58, 1, 9.2, 13, 310, 5, 0], 3),
+        ("You are a data engineer. Build an ETL pipeline: "
+         "1) ingest CSV from S3 2) validate schema with Pydantic 3) transform with pandas "
+         "4) load to PostgreSQL with upsert 5) schedule with Airflow DAG. "
+         "Handle NULL values, duplicates, encoding errors. Include unit tests.",
+         [350, 63, 1, 8.8, 15, 335, 6, 0], 3),
+
+        # Backend / system design
+        ("Реалізуй REST API на FastAPI: async endpoints, SQLAlchemy async ORM, Alembic migrations, "
+         "Redis cache для GET запитів, rate limiting з slowapi, JWT auth, "
+         "structured JSON logging, Docker + docker-compose, GitHub Actions CI/CD. "
+         "Поверни: структуру проєкту + ключові файли з коментарями.",
+         [420, 72, 1, 11.0, 18, 410, 7, 0], 3),
+        ("Design a microservices architecture for an e-commerce platform: "
+         "user service, product catalog, order processing, payment gateway, notification service. "
+         "Include: API Gateway, event bus (Kafka), distributed tracing (Jaeger), "
+         "circuit breaker pattern, eventual consistency strategy.",
+         [330, 58, 1, 8.2, 13, 320, 5, 0], 3),
+        ("You are a senior backend engineer. Optimize this PostgreSQL query for a 50M-row table: "
+         "avoid N+1, use proper indexes, consider partitioning by date, "
+         "add EXPLAIN ANALYZE output interpretation. "
+         "Target: < 100ms response time at p99.",
+         [280, 50, 1, 8.6, 11, 275, 4, 0], 3),
+
+        # Research / academic writing
+        ("Ти — науковий редактор. Перевір цей розділ дисертації: "
+         "1) логічність аргументації 2) відповідність APA 7 стилю цитування "
+         "3) академічний тон без пасивних конструкцій 4) перехід між абзацами. "
+         "Поверни: виправлений текст + коментарі по кожному пункту.",
+         [295, 52, 1, 9.5, 12, 285, 5, 0], 3),
+        ("Act as a research assistant. Conduct a structured literature review on "
+         "adaptive user interfaces: "
+         "1) define scope (2015–2024, HCI + ML papers) "
+         "2) identify key themes "
+         "3) compare approaches: rule-based vs ML-driven "
+         "4) identify research gaps "
+         "5) suggest citation sources. Format as academic report.",
+         [360, 65, 1, 8.0, 14, 350, 5, 0], 3),
+
+        # Business strategy / legal
+        ("You are a business strategist. Conduct a SWOT analysis for a B2B SaaS startup "
+         "entering the Eastern European market. Include: competitive landscape, "
+         "regulatory risks (GDPR compliance), go-to-market strategy for SME segment, "
+         "pricing model comparison (freemium vs seat-based), 12-month OKR framework.",
+         [330, 57, 1, 7.8, 13, 320, 5, 0], 3),
+        ("Ти — юридичний консультант. Проаналізуй цей договір про надання послуг: "
+         "1) виявити ризикові клаузи для виконавця 2) перевірити відповідність ЦКУ "
+         "3) запропонувати альтернативні формулювання для п.4.2 і п.7.1 "
+         "4) оцінити механізм вирішення спорів. Формат: структурований звіт.",
+         [310, 55, 1, 9.8, 12, 300, 6, 0], 3),
+
+        # Creative writing with constraints
+        ("You are a professional screenwriter. Write act 1 of a short film script (5 pages): "
+         "genre: psychological thriller, setting: Kyiv 2025, protagonist: female data scientist. "
+         "Follow 3-act structure, include inciting incident on page 3, "
+         "use proper screenplay format (INT./EXT., action lines, dialogue). "
+         "Tone: tense, cerebral.",
+         [360, 65, 1, 8.4, 15, 348, 5, 0], 3),
+        ("Напиши маркетинговий текст для лендінгу SaaS-продукту: "
+         "цільова аудиторія — CTOs компаній 50-200 осіб, "
+         "ключові болі: інтеграція, безпека даних, масштабованість. "
+         "Структура: заголовок (до 10 слів), підзаголовок, 3 блоки переваг, CTA. "
+         "Тон: впевнений, технічно обгрунтований, без кліше.",
+         [340, 60, 1, 9.1, 13, 330, 5, 0], 3),
+
+        # Education design
+        ("Act as an instructional designer. Create a 4-week online course curriculum on "
+         "prompt engineering for non-technical professionals: "
+         "week 1: fundamentals, week 2: domain-specific templates, "
+         "week 3: iterative refinement techniques, week 4: capstone project. "
+         "Include: learning objectives (Bloom's taxonomy), assessment rubrics, "
+         "estimated time per module.",
+         [370, 65, 1, 8.7, 14, 360, 5, 0], 3),
+
+        # Data analysis
+        ("Ти — аналітик даних. Проведи аналіз датасету поведінки користувачів: "
+         "1) descriptive statistics для всіх числових колонок "
+         "2) кореляційна матриця з heatmap (seaborn) "
+         "3) сегментація користувачів через k-means (k=3) "
+         "4) інтерпретація кластерів через feature importance "
+         "5) рекомендації для продуктової команди. "
+         "Поверни: повний Python код + висновки.",
+         [390, 70, 1, 10.2, 17, 380, 7, 0], 3),
+
+        # System prompting / AI workflow
+        ("Design a multi-agent AI workflow for automated code review: "
+         "agent 1: static analysis (AST parsing, complexity metrics), "
+         "agent 2: security scanner (OWASP top 10), "
+         "agent 3: style checker (PEP8/ESLint), "
+         "agent 4: test coverage analyzer, "
+         "orchestrator: aggregates reports, prioritizes issues, generates PR comment. "
+         "Specify: tools, inter-agent communication protocol, output schema.",
+         [400, 70, 1, 9.5, 16, 390, 7, 0], 3),
+
+        # Short but highly structured L3 (edge case — brevity ≠ novice)
+        ("You are a DevOps expert. Output: Kubernetes HPA config for a FastAPI service. "
+         "Constraints: min 2 replicas, max 10, CPU threshold 70%, memory 80%. "
+         "Use apiVersion apps/v1. Include readinessProbe.",
+         [220, 40, 1, 10.0, 11, 215, 5, 0], 3),
+        ("Ти — архітектор БД. Спроєктуй схему для SaaS з multi-tenancy: "
+         "row-level security через user_email, індекси для OLAP запитів, "
+         "партиціонування по created_at, soft delete через deleted_at. "
+         "Поверни: SQL DDL + обґрунтування кожного рішення.",
+         [250, 45, 1, 9.8, 12, 245, 6, 0], 3),
     ]
 
     texts = [s[0] for s in samples]
@@ -274,6 +468,10 @@ def _create_synthetic_training_data():
 # Global classifier instance
 
 _classifier = SklearnClassifier()
+
+# ID of the model row currently loaded in this process.
+# Used by the background sync loop to detect when a newer model is in the DB.
+_loaded_model_id: int | None = None
 
 
 def get_classifier() -> SklearnClassifier:
@@ -357,6 +555,7 @@ def ml_predict_batch(
 
 async def load_latest_model_from_db(db) -> dict | None:
     """Load latest model version from DB into global classifier."""
+    global _loaded_model_id
     from sqlalchemy import select
     from database import MLModelCache
 
@@ -371,6 +570,7 @@ async def load_latest_model_from_db(db) -> dict | None:
 
     payload = json.loads(cache_row.weights_json)
     get_classifier().from_dict(payload)
+    _loaded_model_id = cache_row.id
     return {
         "id": cache_row.id,
         "model_type": cache_row.model_type,
@@ -379,3 +579,29 @@ async def load_latest_model_from_db(db) -> dict | None:
         "samples_used": cache_row.samples_used,
         "updated_at": cache_row.updated_at.isoformat() if cache_row.updated_at else None,
     }
+
+
+async def check_and_reload_if_newer(db) -> bool:
+    """Check if DB has a newer model than what this process has loaded.
+
+    Called by the background sync loop every N seconds so that all worker
+    processes pick up a model retrained in another process automatically.
+    Returns True if the model was reloaded.
+    """
+    global _loaded_model_id
+    from sqlalchemy import select
+    from database import MLModelCache
+
+    row = await db.execute(
+        select(MLModelCache.id)
+        .order_by(MLModelCache.updated_at.desc(), MLModelCache.id.desc())
+        .limit(1)
+    )
+    latest_id: int | None = row.scalar()
+    if latest_id is None:
+        return False
+    if _loaded_model_id is not None and latest_id == _loaded_model_id:
+        return False  # already up to date
+
+    meta = await load_latest_model_from_db(db)
+    return meta is not None

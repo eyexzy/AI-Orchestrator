@@ -2,15 +2,16 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from database import AsyncSessionLocal, UploadedFile
-from dependencies import RATE_LIMIT_GENERATE, get_current_user, get_db, limiter
+from database import UploadedFile
+from dependencies import get_current_user, get_db, limiter
 from schemas.api import UploadedFileResponse
-from services.files import FileValidationError, process_upload
+from services.files import FileValidationError, MAX_FILE_SIZE_BYTES, process_upload
 
 logger = logging.getLogger("ai-orchestrator")
 
@@ -28,12 +29,21 @@ async def upload_file(
     db: AsyncSession = Depends(get_db),
     user_email: str = Depends(get_current_user),
 ):
+    content_length = request.headers.get("content-length", "").strip()
+    if content_length.isdigit() and int(content_length) > MAX_FILE_SIZE_BYTES:
+        raise HTTPException(status_code=413, detail="Upload exceeds the allowed size limit")
+
     data = await file.read()
     filename = file.filename or "upload"
     mime_type = file.content_type or "application/octet-stream"
 
     try:
-        storage_path, extracted_text = process_upload(data, filename, mime_type)
+        storage_path, extracted_text = await asyncio.to_thread(
+            process_upload,
+            data,
+            filename,
+            mime_type,
+        )
     except FileValidationError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except Exception as exc:

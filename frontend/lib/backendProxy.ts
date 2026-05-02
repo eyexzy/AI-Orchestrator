@@ -129,7 +129,7 @@ export async function proxyPublicJsonRequest({
   try {
     const response = await requestBackend(path, {
       method,
-      cache,
+      cache: cache ?? "no-store",
       headers: requestHeaders,
       body: body !== undefined ? JSON.stringify(body) : undefined,
     });
@@ -160,7 +160,7 @@ export async function proxyUserJsonRequest({
   try {
     const response = await requestBackend(path, {
       method,
-      cache,
+      cache: cache ?? "no-store",
       headers: authHeadersResult.headers,
       body: body !== undefined ? JSON.stringify(body) : undefined,
     });

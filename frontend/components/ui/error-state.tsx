@@ -33,8 +33,8 @@ export function ErrorState({
   return (
     <Note variant="error" action={action} className={cn(className)}>
       <div className="space-y-0.5">
-        {title && <p className="font-semibold text-[13px]">{title}</p>}
-        <p className="text-[13px] opacity-90">{description}</p>
+        {title && <p className="text-[14px] font-semibold">{title}</p>}
+        <p className="text-[14px] opacity-90">{description}</p>
       </div>
     </Note>
   );

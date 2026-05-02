@@ -3,11 +3,12 @@ import json
 import pytest
 from sqlalchemy import select
 
-from database import AdaptationFeedback, MLFeedback, ProductFeedback, UserExperienceProfile
+from database import AdaptationFeedback, ChatMessage, ChatMessageFeedback, ChatSession, MLFeedback, ProductFeedback, UserExperienceProfile
+from routers.chat_message_feedback import delete_chat_message_feedback, save_chat_message_feedback
 from routers.adaptation_feedback import submit_adaptation_feedback
 from routers.feedback import ml_feedback
 from routers.product_feedback import ProductFeedbackRequest, create_product_feedback
-from schemas.api import AdaptationFeedbackCreate, BehavioralMetrics, TrainingFeedback
+from schemas.api import AdaptationFeedbackCreate, BehavioralMetrics, ChatMessageFeedbackRequest, TrainingFeedback
 
 USER = "signals@test.dev"
 
@@ -84,3 +85,61 @@ async def test_ml_feedback_route_saves_labeled_sample(db, req):
     assert row is not None
     assert row.actual_level == 2
     assert row.prompt_text.startswith("Write a structured")
+
+
+@pytest.mark.asyncio
+async def test_chat_message_feedback_route_saves_and_clears_vote(db, req):
+    session = ChatSession(id="chat-feedback", user_email=USER, title="Chat")
+    db.add(session)
+    await db.commit()
+
+    message = ChatMessage(
+        session_id=session.id,
+        role="assistant",
+        content="Here is the answer",
+        metadata_json=json.dumps({
+            "provider": "openrouter",
+            "model_id": "gemini-2.0-flash",
+            "provider_generation_id": "gen_123",
+        }),
+    )
+    db.add(message)
+    await db.commit()
+    await db.refresh(message)
+
+    saved_response = await save_chat_message_feedback(
+        request=req(path=f"/chat-messages/{message.id}/feedback"),
+        message_id=message.id,
+        body=ChatMessageFeedbackRequest(vote="like"),
+        db=db,
+        user_email=USER,
+    )
+    assert saved_response.ok is True
+    assert saved_response.vote == "like"
+    assert saved_response.provider_forwarded is False
+
+    saved = await db.execute(select(ChatMessageFeedback).where(ChatMessageFeedback.message_id == message.id))
+    row = saved.scalars().first()
+    assert row is not None
+    assert row.vote == "like"
+    assert row.provider_generation_id == "gen_123"
+
+    refreshed_message = await db.get(ChatMessage, message.id)
+    metadata = json.loads(refreshed_message.metadata_json)
+    assert metadata["user_feedback"]["vote"] == "like"
+
+    cleared_response = await delete_chat_message_feedback(
+        request=req(path=f"/chat-messages/{message.id}/feedback", method="DELETE"),
+        message_id=message.id,
+        db=db,
+        user_email=USER,
+    )
+    assert cleared_response.ok is True
+    assert cleared_response.vote is None
+
+    remaining = await db.execute(select(ChatMessageFeedback).where(ChatMessageFeedback.message_id == message.id))
+    assert remaining.scalars().first() is None
+
+    refreshed_message = await db.get(ChatMessage, message.id)
+    metadata = json.loads(refreshed_message.metadata_json)
+    assert "user_feedback" not in metadata

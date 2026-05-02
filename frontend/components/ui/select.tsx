@@ -214,7 +214,7 @@ const Select = React.forwardRef<HTMLDivElement, SelectProps>(
                     setOpen(false);
                   }}
                   className={cn(
-                    "group cursor-pointer whitespace-nowrap rounded-md border-none bg-transparent py-1.5 text-left text-[13px] transition-colors",
+                    "group cursor-pointer whitespace-nowrap rounded-md border-none bg-transparent py-1.5 text-left text-[14px] transition-colors",
                     isSelected
                       ? "text-blue-700 hover:bg-blue-100 hover:text-blue-700"
                       : "text-ds-text hover:bg-gray-alpha-200 hover:text-ds-text",
@@ -277,7 +277,7 @@ const Select = React.forwardRef<HTMLDivElement, SelectProps>(
               ? "inline-flex"
               : "flex w-full justify-between",
             disabled && "cursor-not-allowed opacity-50",
-            size === "sm" ? "gap-1 px-2 text-[13px]" : "gap-1.5 px-2.5 text-[14px]",
+            size === "sm" ? "gap-1 px-2 text-[14px]" : "gap-1.5 px-2.5 text-[15px]",
             className,
           )}
         >

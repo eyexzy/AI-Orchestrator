@@ -25,14 +25,14 @@ function VarCard({
       placeholder={valuePlaceholder}
       prefix={
         <span
-          className="font-mono text-[13px] font-semibold text-ds-text truncate max-w-[75px]"
+          className="max-w-[90px] truncate text-[14px] font-semibold text-ds-text"
           title={varKey}
         >
           {varKey}
         </span>
       }
       className="w-full"
-      inputClassName="font-mono text-xs"
+      inputClassName="text-[14px]"
     />
   );
 }
@@ -53,7 +53,7 @@ export function VariableEditor({
         <EmptyState.Placeholder className="mx-0 w-full">
           <>
             {t("config.variablesEmptyPrefix")}{" "}
-            <code className="inline-block bg-transparent px-0 py-0 font-mono text-[10px] leading-none align-middle text-blue-900">
+            <code className="inline-block bg-transparent px-0 py-0 text-[13px] font-medium leading-none align-middle text-blue-900">
               {"{{name}}"}
             </code>{" "}
             {t("config.variablesEmptySuffix")}

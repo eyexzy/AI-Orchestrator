@@ -34,6 +34,8 @@ export interface DataTableProps<T> {
   pageSizeOptions?: number[];
   pageSizeLabel?: string;
   ofLabel?: string;
+  previousPageLabel?: string;
+  nextPageLabel?: string;
   toolbar?: React.ReactNode;
   footer?: React.ReactNode;
   className?: string;
@@ -56,6 +58,8 @@ export function DataTable<T>({
   pageSizeOptions = [10, 25, 50, 100],
   pageSizeLabel = "Show",
   ofLabel = "of",
+  previousPageLabel = "Previous page",
+  nextPageLabel = "Next page",
   toolbar,
   footer,
   className,
@@ -163,7 +167,7 @@ export function DataTable<T>({
               iconOnly
               disabled={page <= 1}
               onClick={() => onPageChange?.(page - 1)}
-              aria-label="Previous page"
+              aria-label={previousPageLabel}
             >
               <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
                 <path fillRule="evenodd" clipRule="evenodd" d="M10.354 3.646a.5.5 0 0 1 0 .708L6.707 8l3.647 3.646a.5.5 0 0 1-.708.708l-4-4a.5.5 0 0 1 0-.708l4-4a.5.5 0 0 1 .708 0z" />
@@ -176,7 +180,7 @@ export function DataTable<T>({
               iconOnly
               disabled={page >= pages}
               onClick={() => onPageChange?.(page + 1)}
-              aria-label="Next page"
+              aria-label={nextPageLabel}
             >
               <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
                 <path fillRule="evenodd" clipRule="evenodd" d="M5.646 3.646a.5.5 0 0 0 0 .708L9.293 8 5.646 11.646a.5.5 0 0 0 .708.708l4-4a.5.5 0 0 0 0-.708l-4-4a.5.5 0 0 0-.708 0z" />

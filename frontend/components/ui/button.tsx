@@ -33,6 +33,8 @@ const buttonVariants = cva(
           "bg-[var(--ds-background-200)] text-[var(--ds-gray-900)] shadow-[0_0_0_1px_var(--ds-gray-300)] hover:bg-[var(--ds-gray-100)] hover:text-[var(--ds-gray-1000)] disabled:bg-[var(--ds-gray-100)] disabled:text-[var(--ds-gray-700)] disabled:shadow-[0_0_0_1px_var(--ds-gray-200)]",
         tertiary:
           "bg-transparent text-[var(--ds-gray-1000)] shadow-none hover:bg-[var(--ds-gray-100)] disabled:bg-transparent disabled:text-[var(--ds-gray-700)]",
+        ghost:
+          "bg-transparent text-[var(--ds-gray-900)] shadow-none hover:bg-[var(--ds-gray-100)] hover:text-[var(--ds-gray-1000)] disabled:bg-transparent disabled:text-[var(--ds-gray-700)]",
         error:
           "bg-[var(--ds-red-700)] text-white shadow-none hover:bg-[var(--ds-red-800)] disabled:bg-[var(--ds-gray-100)] disabled:text-[var(--ds-gray-700)]",
         warning:
@@ -41,7 +43,7 @@ const buttonVariants = cva(
           "bg-transparent text-[var(--ds-gray-1000)] shadow-none hover:underline underline-offset-4 disabled:bg-transparent disabled:text-[var(--ds-gray-700)] disabled:no-underline",
       },
       size: {
-        tiny: "h-6 px-1.5 text-[12px] gap-1",
+        tiny: "h-6 px-1.5 text-[13px] gap-1",
         sm: "h-8 px-2 text-[14px] gap-1.5",
         md: "h-10 px-2.5 text-[14px] gap-2",
         lg: "h-12 px-3.5 text-[16px] gap-2.5",

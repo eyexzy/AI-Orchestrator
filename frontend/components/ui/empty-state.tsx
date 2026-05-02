@@ -67,7 +67,7 @@ const EmptyStatePlaceholder = React.forwardRef<HTMLDivElement, EmptyStatePlaceho
     <div
       ref={ref}
       className={cn(
-        "mx-2 grid min-h-16 place-items-center rounded-lg border-[0.8px] border-dashed border-[var(--ds-gray-400)] px-8 py-4 text-center text-xs leading-4 text-ds-text-secondary",
+        "mx-2 grid min-h-16 place-items-center rounded-lg border-[0.8px] border-dashed border-[var(--ds-gray-400)] px-8 py-4 text-center text-[14px] leading-5 text-ds-text-secondary",
         className,
       )}
       {...props}

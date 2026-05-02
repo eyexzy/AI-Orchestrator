@@ -9,10 +9,17 @@ interface DialogProps {
   open: boolean;
   onOpenChange?: (open: boolean) => void;
   onCancel?: () => void;
+  dismissible?: boolean;
   children: React.ReactNode;
 }
 
-export function Dialog({ open, onOpenChange, onCancel, children }: DialogProps) {
+export function Dialog({
+  open,
+  onOpenChange,
+  onCancel,
+  dismissible = true,
+  children,
+}: DialogProps) {
   const [mounted, setMounted] = React.useState(false);
 
   React.useEffect(() => {
@@ -22,14 +29,14 @@ export function Dialog({ open, onOpenChange, onCancel, children }: DialogProps) 
   React.useEffect(() => {
     if (!open) return;
     const handler = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
+      if (e.key === "Escape" && dismissible) {
         onCancel?.();
         onOpenChange?.(false);
       }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [open, onOpenChange, onCancel]);
+  }, [open, onOpenChange, onCancel, dismissible]);
 
   if (!open || !mounted) return null;
 
@@ -38,6 +45,7 @@ export function Dialog({ open, onOpenChange, onCancel, children }: DialogProps) 
       <div
         className="absolute -inset-4 bg-gray-alpha-900 dark:bg-black/70 transition-opacity duration-150 animate-fade-in [will-change:opacity]"
         onClick={() => {
+          if (!dismissible) return;
           onCancel?.();
           onOpenChange?.(false);
         }}

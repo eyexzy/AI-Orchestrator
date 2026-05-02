@@ -5,6 +5,8 @@ import pytest_asyncio
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from database import Base, UserProfile, UserExperienceProfile, AdaptationDecision
+from routers.analyze import _compute_auto_level
+from routers.profile import _build_response
 
 @pytest_asyncio.fixture()
 async def db():
@@ -24,49 +26,26 @@ async def _create_profiles(db: AsyncSession, *, legacy_level: int=1, legacy_hist
     db.add(exp)
     await db.flush()
     return (profile, exp)
-MIN_USER_LEVEL = 1
-MAX_USER_LEVEL = 3
-HISTORY_WINDOW_SIZE = 3
-PROMOTION_REQUIRED_HIGHER_COUNT = 2
-DEMOTION_REQUIRED_LOWER_COUNT = HISTORY_WINDOW_SIZE
-
 def run_hysteresis(exp: UserExperienceProfile, profile: UserProfile, suggested_level: int) -> tuple[int, list[int], dict]:
     try:
-        history: list[int] = json.loads(exp.level_history_json or '[]')
+        previous_history: list[int] = json.loads(exp.level_history_json or '[]')
     except json.JSONDecodeError:
-        history = []
-    if not history:
+        previous_history = []
+    if not previous_history:
         try:
-            history = json.loads(profile.level_history_json or '[]')
+            previous_history = json.loads(profile.level_history_json or '[]')
         except json.JSONDecodeError:
-            history = []
-    history.append(suggested_level)
-    history = history[-HISTORY_WINDOW_SIZE:]
-    current = exp.current_level if exp.current_level in (1, 2, 3) else profile.current_level if profile.current_level in (1, 2, 3) else MIN_USER_LEVEL
-    higher_count = sum((1 for lv in history if lv > current))
-    lower_count = sum((1 for lv in history if lv < current))
-    all_lower = len(history) == HISTORY_WINDOW_SIZE and lower_count >= DEMOTION_REQUIRED_LOWER_COUNT
-    final_level = current
-    transition_reason: dict = {}
-    if higher_count >= PROMOTION_REQUIRED_HIGHER_COUNT and current < MAX_USER_LEVEL:
-        final_level = current + 1
-        transition_reason['action'] = 'promotion'
-    if all_lower and current > MIN_USER_LEVEL:
-        final_level = current - 1
-        transition_reason['action'] = 'demotion'
-    override = exp.manual_level_override
-    if override is None:
-        override = profile.manual_level_override
-    if override is not None:
-        final_level = override
-        transition_reason['action'] = 'manual_override'
-    if not transition_reason:
-        transition_reason['action'] = 'no_change'
-    exp.current_level = final_level
+            previous_history = []
+    auto_level, history, reason = _compute_auto_level(
+        previous_auto_level=exp.current_level,
+        suggested_level=suggested_level,
+        previous_history=previous_history,
+    )
+    exp.current_level = auto_level
     exp.level_history_json = json.dumps(history)
-    profile.current_level = final_level
+    profile.current_level = auto_level
     profile.level_history_json = json.dumps(history)
-    return (final_level, history, transition_reason)
+    return (auto_level, history, reason)
 
 @pytest.mark.asyncio
 async def test_level_history_written_to_exp(db: AsyncSession):
@@ -101,15 +80,23 @@ async def test_backfill_from_legacy_history(db: AsyncSession):
 async def test_exp_override_takes_precedence(db: AsyncSession):
     profile, exp = await _create_profiles(db, exp_override=3, legacy_override=1)
     final, _, reason = run_hysteresis(exp, profile, suggested_level=2)
-    assert final == 3
-    assert reason['action'] == 'manual_override'
+    response = _build_response(profile, exp)
+    assert final == 1
+    assert exp.current_level == 1
+    assert response.auto_level == 1
+    assert response.current_level == 3
+    assert response.manual_level_override == 3
 
 @pytest.mark.asyncio
 async def test_legacy_override_fallback(db: AsyncSession):
     profile, exp = await _create_profiles(db, exp_override=None, legacy_override=2)
     final, _, reason = run_hysteresis(exp, profile, suggested_level=1)
-    assert final == 2
-    assert reason['action'] == 'manual_override'
+    response = _build_response(profile, exp)
+    assert final == 1
+    assert exp.current_level == 1
+    assert response.auto_level == 1
+    assert response.current_level == 2
+    assert response.manual_level_override == 2
 
 @pytest.mark.asyncio
 async def test_promotion_persisted_to_both(db: AsyncSession):
@@ -120,10 +107,19 @@ async def test_promotion_persisted_to_both(db: AsyncSession):
     assert profile.current_level == 2
 
 @pytest.mark.asyncio
-async def test_demotion_persisted_to_both(db: AsyncSession):
+async def test_auto_l2_can_demote_to_l1_without_level_floor(db: AsyncSession):
     profile, exp = await _create_profiles(db, exp_level=2, legacy_level=2)
     run_hysteresis(exp, profile, suggested_level=1)
     run_hysteresis(exp, profile, suggested_level=1)
     run_hysteresis(exp, profile, suggested_level=1)
     assert exp.current_level == 1
     assert profile.current_level == 1
+
+@pytest.mark.asyncio
+async def test_auto_l3_can_demote_to_l2(db: AsyncSession):
+    profile, exp = await _create_profiles(db, exp_level=3, legacy_level=3)
+    run_hysteresis(exp, profile, suggested_level=2)
+    run_hysteresis(exp, profile, suggested_level=2)
+    run_hysteresis(exp, profile, suggested_level=2)
+    assert exp.current_level == 2
+    assert profile.current_level == 2

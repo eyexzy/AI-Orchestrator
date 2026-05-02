@@ -9,6 +9,7 @@ import sys
 import asyncio
 import argparse
 import logging
+import functools
 
 import numpy as np
 from sklearn.model_selection import train_test_split, cross_val_score, StratifiedKFold
@@ -30,6 +31,45 @@ from ml_classifier import (
 )
 
 logger = logging.getLogger("ml-classifier")
+
+
+def _augment_missing_classes_for_fit(
+    texts: list[str],
+    behavioral_X: np.ndarray,
+    y: np.ndarray,
+    sample_weight: np.ndarray | None = None,
+) -> tuple[list[str], np.ndarray, np.ndarray, np.ndarray | None]:
+    """Add low-weight synthetic rows when a tiny slice has fewer than 2 classes."""
+    present = {int(label) for label in y.tolist()}
+    if len(present) >= 2:
+        return texts, behavioral_X, y, sample_weight
+
+    synthetic_texts, synthetic_behavioral, synthetic_y = _create_synthetic_training_data()
+    extra_texts: list[str] = []
+    extra_behavioral: list[np.ndarray] = []
+    extra_y: list[int] = []
+
+    for level in (1, 2, 3):
+        if level in present:
+            continue
+        idx = int(np.where(synthetic_y == level)[0][0])
+        extra_texts.append(synthetic_texts[idx])
+        extra_behavioral.append(synthetic_behavioral[idx])
+        extra_y.append(level)
+
+    if not extra_y:
+        return texts, behavioral_X, y, sample_weight
+
+    fit_texts = [*texts, *extra_texts]
+    fit_behavioral = np.vstack([behavioral_X, np.asarray(extra_behavioral, dtype=float)])
+    fit_y = np.concatenate([y, np.asarray(extra_y, dtype=y.dtype)])
+    base_weight = sample_weight if sample_weight is not None else np.ones(len(y), dtype=float)
+    fit_weight = np.concatenate([
+        base_weight,
+        np.full(len(extra_y), 0.05, dtype=float),
+    ])
+
+    return fit_texts, fit_behavioral, fit_y, fit_weight
 
 
 def _load_data_from_rows(rows: list) -> tuple[list[str], np.ndarray, np.ndarray]:
@@ -67,7 +107,7 @@ def train_and_evaluate(
     min_class_count = min((y == c).sum() for c in set(y))
 
     # Need at least 2 samples per class in train after split for stratified CV
-    can_split = min_class_count >= 4 and n_samples >= 12
+    can_split = n_classes >= 2 and min_class_count >= 4 and n_samples >= 12
 
     clf = SklearnClassifier(model_type=model_type, model_params=model_params)
 
@@ -110,7 +150,13 @@ def train_and_evaluate(
         cm = confusion_matrix(test_y, test_pred, labels=[1, 2, 3]).tolist()
     else:
         # Not enough data for proper split — train on all, no test metrics
-        clf.fit(texts, behavioral_X, y, sample_weight=sample_weight)
+        fit_texts, fit_behavioral, fit_y, fit_weight = _augment_missing_classes_for_fit(
+            texts,
+            behavioral_X,
+            y,
+            sample_weight,
+        )
+        clf.fit(fit_texts, fit_behavioral, fit_y, sample_weight=fit_weight)
 
         X_all = clf._build_features(texts, behavioral_X, fit=False)
         all_pred = clf.model.predict(X_all)
@@ -179,14 +225,15 @@ async def retrain_from_db(
                 exc,
             )
 
-    result = train_and_evaluate(
-        texts,
-        behavioral_X,
-        y,
+    # Run CPU-bound training in a thread so the async event loop stays free.
+    _train = functools.partial(
+        train_and_evaluate,
+        texts, behavioral_X, y,
         model_type=model_type,
         model_params=model_params,
         sample_weight=sample_weights,
     )
+    result = await asyncio.to_thread(_train)
     clf = result["classifier"]
     result["tuning"] = tuning_result
     result["dataset_stats"] = stats

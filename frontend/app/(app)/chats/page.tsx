@@ -105,11 +105,11 @@ function StaticTableHeader({
 
   return (
     <div className={["grid items-center gap-4 px-4 pb-2", gridClass].join(" ")}>
-      <span className="text-[14px] font-medium text-ds-text-tertiary">{nameLabel}</span>
+      <span className="justify-self-start text-[15px] leading-6 font-medium text-ds-text-tertiary">{nameLabel}</span>
       {showProject && (
-        <span className="text-[14px] font-medium text-ds-text-tertiary">{projectLabel}</span>
+        <span className="justify-self-start text-[15px] leading-6 font-medium text-ds-text-tertiary">{projectLabel}</span>
       )}
-      <span className="text-[14px] font-medium text-ds-text-tertiary">{updatedLabel}</span>
+      <span className="justify-self-start text-[15px] leading-6 font-medium text-ds-text-tertiary">{updatedLabel}</span>
       <div />
     </div>
   );
@@ -163,13 +163,15 @@ function ChatsPageSkeleton({
       </div>
 
       <div className="mt-6 flex flex-1 flex-col min-h-0">
-        <StaticTableHeader
-          showProject={showProject}
-          nameLabel={nameLabel}
-          projectLabel={projectLabel}
-          updatedLabel={updatedLabel}
-        />
-        <div className="mt-0.5 flex-1 min-h-0 overflow-hidden px-1 -mx-1">
+        <div className="mt-0.5 flex-1 min-h-0 overflow-y-auto px-1 -mx-1">
+          <div className="sticky top-0 z-10 bg-background">
+            <StaticTableHeader
+              showProject={showProject}
+              nameLabel={nameLabel}
+              projectLabel={projectLabel}
+              updatedLabel={updatedLabel}
+            />
+          </div>
           <ChatsListSkeleton showProject={showProject} count={8} />
         </div>
       </div>
@@ -203,7 +205,7 @@ function SortableHeader({
       type="button"
       onClick={() => onSort(sortKey)}
       className={[
-        "group flex cursor-pointer items-center gap-1.5 border-none bg-transparent p-0 text-[14px] font-medium transition-colors",
+        "group inline-flex w-fit cursor-pointer items-center gap-1.5 border-none bg-transparent p-0 text-[15px] leading-6 font-medium transition-colors",
         isActive ? "text-ds-text-secondary" : "text-ds-text-tertiary hover:text-ds-text-secondary",
         align === "end" ? "justify-end" : "justify-start",
       ].join(" ")}
@@ -443,12 +445,6 @@ export default function ChatsPage() {
                   />
                 ) : (
                   <div className="flex flex-col h-full min-h-0">
-                    <TableHeader
-                      showProject={canUseProjects}
-                      sortKey={sortKey}
-                      sortDirection={sortDirection}
-                      onSort={handleSort}
-                    />
                     {visibleChats.length === 0 ? (
                       <EmptyState.Panel
                         title={t("chats.emptyTitle")}
@@ -462,26 +458,36 @@ export default function ChatsPage() {
                         className="mt-1 min-h-[420px]"
                       />
                     ) : (
-                      <div className="mt-0.5 flex-1 min-h-0 space-y-1 overflow-y-auto px-1 -mx-1">
-                        {filteredChats.map((chat) => (
-                          <ChatListItem
-                            key={chat.id}
-                            chat={chat}
-                            locale={locale}
+                      <div className="mt-0.5 flex-1 min-h-0 overflow-y-auto px-1 -mx-1">
+                        <div className="sticky top-0 z-10 bg-background">
+                          <TableHeader
                             showProject={canUseProjects}
-                            onSelect={() => void handleOpenChat(chat.id)}
-                            onDelete={() => deleteChat(chat.id)}
-                            onRename={() => {
-                              setRenameTarget(chat);
-                              setRenameModalOpen(true);
-                            }}
-                            onToggleFavorite={() => toggleFavorite(chat.id)}
-                            onAssignProject={() => {
-                              setAssignTarget(chat);
-                              setAssignModalOpen(true);
-                            }}
+                            sortKey={sortKey}
+                            sortDirection={sortDirection}
+                            onSort={handleSort}
                           />
-                        ))}
+                        </div>
+                        <div className="space-y-1">
+                          {filteredChats.map((chat) => (
+                            <ChatListItem
+                              key={chat.id}
+                              chat={chat}
+                              locale={locale}
+                              showProject={canUseProjects}
+                              onSelect={() => void handleOpenChat(chat.id)}
+                              onDelete={() => deleteChat(chat.id)}
+                              onRename={() => {
+                                setRenameTarget(chat);
+                                setRenameModalOpen(true);
+                              }}
+                              onToggleFavorite={() => toggleFavorite(chat.id)}
+                              onAssignProject={() => {
+                                setAssignTarget(chat);
+                                setAssignModalOpen(true);
+                              }}
+                            />
+                          ))}
+                        </div>
                       </div>
                     )}
                   </div>

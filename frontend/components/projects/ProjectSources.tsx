@@ -316,7 +316,7 @@ function TextDocModal({
                 value={content}
                 onChange={(e) => setContent(e.target.value)}
                 placeholder={t("sources.contentPlaceholder")}
-                className="min-h-[180px] resize-none font-mono text-[13px]"
+                className="min-h-[180px] resize-none text-[14px]"
               />
             </div>
           </div>

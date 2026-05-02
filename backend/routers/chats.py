@@ -1,18 +1,21 @@
 import json
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 
 from database import ChatMessage, ChatSession, Project
-from dependencies import get_current_user, get_db
+from dependencies import get_current_user, get_db, limiter
 from schemas.api import (
     ChatSearchResult,
     CreateChatRequest,
     ForkChatRequest,
     UpdateChatRequest,
 )
+
+RATE_LIMIT_CHAT_SEARCH = "60/minute"
 
 router = APIRouter()
 
@@ -39,6 +42,7 @@ def _chat_to_response(
     *,
     message_count: int = 0,
     project_name: str | None = None,
+    parent_chat_title: str | None = None,
 ) -> dict:
     return {
         "id": session.id,
@@ -47,6 +51,7 @@ def _chat_to_response(
         "project_id": session.project_id,
         "project_name": project_name,
         "parent_chat_id": session.parent_chat_id,
+        "parent_chat_title": parent_chat_title,
         "forked_from_message_id": session.forked_from_message_id,
         "created_at": session.created_at.isoformat() if session.created_at else None,
         "updated_at": session.updated_at.isoformat() if session.updated_at else None,
@@ -95,16 +100,19 @@ async def list_chats(
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
 ):
+    ParentChat = aliased(ChatSession)
     stmt = (
         select(
             ChatSession,
             Project.name.label("project_name"),
+            ParentChat.title.label("parent_chat_title"),
             func.count(ChatMessage.id).label("msg_count"),
         )
         .outerjoin(Project, ChatSession.project_id == Project.id)
+        .outerjoin(ParentChat, ChatSession.parent_chat_id == ParentChat.id)
         .outerjoin(ChatMessage, ChatSession.id == ChatMessage.session_id)
         .where(ChatSession.user_email == user_email)
-        .group_by(ChatSession.id, Project.name)
+        .group_by(ChatSession.id, Project.name, ParentChat.title)
         .order_by(ChatSession.updated_at.desc())
         .limit(limit)
         .offset(offset)
@@ -112,8 +120,13 @@ async def list_chats(
     result = await db.execute(stmt)
     rows = result.all()
     return [
-        _chat_to_response(session, message_count=msg_count, project_name=project_name)
-        for session, project_name, msg_count in rows
+        _chat_to_response(
+            session,
+            message_count=msg_count,
+            project_name=project_name,
+            parent_chat_title=parent_chat_title,
+        )
+        for session, project_name, parent_chat_title, msg_count in rows
     ]
 
 
@@ -188,42 +201,22 @@ async def fork_chat(
         forked_from_message_id=req.message_id,
     )
     db.add(forked_session)
-    await db.flush()
-
-    source_messages = (
-        await db.execute(
-            select(ChatMessage)
-            .where(
-                ChatMessage.session_id == chat_id,
-                ChatMessage.id <= req.message_id,
-            )
-            .order_by(ChatMessage.id.asc())
-        )
-    ).scalars().all()
-
-    for message in source_messages:
-        db.add(
-            ChatMessage(
-                session_id=forked_session.id,
-                role=message.role,
-                content=message.content,
-                created_at=message.created_at,
-                metadata_json=message.metadata_json,
-            )
-        )
 
     await db.commit()
     await db.refresh(forked_session)
     return _chat_to_response(
         forked_session,
-        message_count=len(source_messages),
+        message_count=0,
         project_name=project_name,
+        parent_chat_title=source_session.title,
     )
 
 
+@limiter.limit(RATE_LIMIT_CHAT_SEARCH)
 @router.get("/chats/search")
 async def search_chats(
-    query: str = Query(..., max_length=200),
+    request: Request,
+    query: str = Query(..., min_length=2, max_length=200),
     db: AsyncSession = Depends(get_db),
     user_email: str = Depends(get_current_user),
     limit: int = Query(default=20, ge=1, le=100),
@@ -252,6 +245,8 @@ async def search_chats(
                 chat_title=chat.title,
                 project_id=chat.project_id,
                 project_name=project_name,
+                parent_chat_id=chat.parent_chat_id,
+                forked_from_message_id=chat.forked_from_message_id,
                 message_id=msg.id,
                 message_content=msg.content[:150],
                 role=msg.role,
@@ -282,6 +277,8 @@ async def search_chats(
                 chat_title=chat.title,
                 project_id=chat.project_id,
                 project_name=project_name,
+                parent_chat_id=chat.parent_chat_id,
+                forked_from_message_id=chat.forked_from_message_id,
                 message_id=None,
                 message_content=None,
                 role=None,
@@ -299,12 +296,11 @@ async def get_chat_messages(
     db: AsyncSession = Depends(get_db),
     user_email: str = Depends(get_current_user),
 ):
-    await _get_owned_chat_session(db, chat_id, user_email)
-    result = await db.execute(
-        select(ChatMessage)
-        .where(ChatMessage.session_id == chat_id)
-        .order_by(ChatMessage.created_at.asc(), ChatMessage.id.asc())
-    )
+    session = await _get_owned_chat_session(db, chat_id, user_email)
+    stmt = select(ChatMessage).where(ChatMessage.session_id == chat_id)
+    if session.parent_chat_id and session.forked_from_message_id and session.created_at:
+        stmt = stmt.where(ChatMessage.created_at >= session.created_at)
+    result = await db.execute(stmt.order_by(ChatMessage.created_at.asc(), ChatMessage.id.asc()))
     messages = result.scalars().all()
     return [_message_to_response(message) for message in messages]
 
@@ -372,6 +368,6 @@ async def delete_chat(
     user_email: str = Depends(get_current_user),
 ):
     session = await _get_owned_chat_session(db, chat_id, user_email)
-    await db.delete(session)
+    await db.execute(delete(ChatSession).where(ChatSession.id == chat_id))
     await db.commit()
     return {"ok": True}

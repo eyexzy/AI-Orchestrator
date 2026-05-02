@@ -7,18 +7,54 @@ import os
 import uuid
 from pathlib import Path
 
+from services.context_budget import fit_blocks_by_token_budget
+
 logger = logging.getLogger("ai-orchestrator")
 
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
 
-ALLOWED_MIME_TYPES: set[str] = set()
-ALLOWED_EXTENSIONS: set[str] = set()
+DEFAULT_ALLOWED_EXTENSIONS = {
+    ".txt", ".md", ".markdown", ".rst", ".csv", ".tsv",
+    ".json", ".jsonl", ".yaml", ".yml", ".toml", ".ini", ".cfg", ".conf", ".env",
+    ".xml", ".html", ".htm", ".svg",
+    ".py", ".js", ".ts", ".tsx", ".jsx", ".mjs", ".cjs",
+    ".java", ".kt", ".go", ".rs", ".c", ".cpp", ".h", ".hpp",
+    ".cs", ".rb", ".php", ".swift", ".scala", ".sh", ".bash", ".zsh",
+    ".sql", ".graphql", ".proto", ".css", ".scss", ".less",
+    ".log", ".diff", ".patch", ".tex", ".bib",
+    ".pdf", ".docx", ".xlsx", ".xls",
+    ".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".tiff",
+}
+DEFAULT_ALLOWED_MIME_TYPES = {
+    "text/plain", "text/markdown", "text/csv", "text/tab-separated-values",
+    "text/html", "text/css", "text/javascript", "text/xml",
+    "application/json", "application/ld+json", "application/xml",
+    "application/yaml", "application/x-yaml", "application/toml",
+    "application/javascript", "application/typescript", "application/graphql",
+    "application/pdf",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "application/vnd.ms-excel",
+    "image/png", "image/jpeg", "image/webp", "image/gif", "image/bmp", "image/tiff",
+}
+GENERIC_UPLOAD_MIME_TYPES = {"application/octet-stream", "binary/octet-stream"}
 
-MAX_FILE_SIZE_BYTES = 100 * 1024 * 1024  # 100 MB
-MAX_EXTRACTED_CHARS = 50_000
-MAX_PROJECT_SOURCES_CHARS = 150_000
+
+def _parse_csv_env_set(name: str, default: set[str]) -> set[str]:
+    raw = os.getenv(name, "").strip()
+    if not raw:
+        return set(default)
+    values = {item.strip().lower() for item in raw.split(",") if item.strip()}
+    return values or set(default)
+
+
+ALLOWED_MIME_TYPES: set[str] = _parse_csv_env_set("ALLOWED_UPLOAD_MIME_TYPES", DEFAULT_ALLOWED_MIME_TYPES)
+ALLOWED_EXTENSIONS: set[str] = _parse_csv_env_set("ALLOWED_UPLOAD_EXTENSIONS", DEFAULT_ALLOWED_EXTENSIONS)
+
+MAX_FILE_SIZE_BYTES = int(os.getenv("MAX_UPLOAD_FILE_SIZE_BYTES", str(25 * 1024 * 1024)))
+ATTACHMENT_CONTEXT_TOKEN_BUDGET = int(os.getenv("LLM_ATTACHMENT_CONTEXT_TOKEN_BUDGET", "12000"))
 
 # ---------------------------------------------------------------------------
 # Cloudflare R2 storage
@@ -98,15 +134,24 @@ class FileValidationError(ValueError):
 
 
 def validate_file(filename: str, mime_type: str, size_bytes: int) -> None:
-    if ALLOWED_EXTENSIONS:
-        ext = Path(filename).suffix.lower()
-        if ext not in ALLOWED_EXTENSIONS:
-            raise FileValidationError(
-                f"File type '{ext}' is not allowed. "
-                f"Supported: {', '.join(sorted(ALLOWED_EXTENSIONS))}"
-            )
-    if ALLOWED_MIME_TYPES and mime_type not in ALLOWED_MIME_TYPES:
-        raise FileValidationError(f"MIME type '{mime_type}' is not allowed.")
+    safe_filename = Path(filename or "upload").name
+    ext = Path(safe_filename).suffix.lower()
+    normalized_mime = (mime_type or "application/octet-stream").lower().strip()
+
+    if ALLOWED_EXTENSIONS and ext not in ALLOWED_EXTENSIONS:
+        raise FileValidationError(
+            f"File type '{ext or '[none]'}' is not allowed. "
+            f"Supported: {', '.join(sorted(ALLOWED_EXTENSIONS))}"
+        )
+
+    if ALLOWED_MIME_TYPES and normalized_mime not in GENERIC_UPLOAD_MIME_TYPES:
+        mime_allowed = (
+            normalized_mime in ALLOWED_MIME_TYPES
+            or normalized_mime.startswith("text/")
+        )
+        if not mime_allowed:
+            raise FileValidationError(f"MIME type '{normalized_mime}' is not allowed.")
+
     if size_bytes > MAX_FILE_SIZE_BYTES:
         limit_mb = MAX_FILE_SIZE_BYTES // (1024 * 1024)
         raise FileValidationError(
@@ -292,16 +337,23 @@ def process_upload(data: bytes, filename: str, mime_type: str) -> tuple[str, str
     validate_file(filename, mime_type, len(data))
     storage_path = save_file_bytes(data, filename, mime_type)
     extracted = _extract_text(data, mime_type, filename)
-    return storage_path, extracted[:MAX_EXTRACTED_CHARS]
+    return storage_path, extracted
 
 
-def build_attachment_context(extracted_texts: list[tuple[str, str]]) -> str:
+def build_attachment_context(
+    extracted_texts: list[tuple[str, str]],
+    *,
+    max_tokens: int = ATTACHMENT_CONTEXT_TOKEN_BUDGET,
+) -> str:
     if not extracted_texts:
         return ""
+    blocks, _used, omitted = fit_blocks_by_token_budget(
+        [(filename, text.strip() or "(no extractable text)") for filename, text in extracted_texts],
+        max_tokens=max_tokens,
+        omitted_label="attached file",
+    )
     parts: list[str] = ["[Attached Files]"]
-    for filename, text in extracted_texts:
-        if text.strip():
-            parts.append(f"--- {filename} ---\n{text.strip()}")
-        else:
-            parts.append(f"--- {filename} --- (no extractable text)")
+    parts.extend(blocks)
+    if omitted:
+        parts.append(f"[{omitted} additional attached file(s) omitted from this request to fit the context budget.]")
     return "\n\n".join(parts)
