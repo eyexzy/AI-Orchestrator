@@ -84,7 +84,7 @@ async def test_project_crud_and_chat_assignment(db):
 
 
 @pytest.mark.asyncio
-async def test_fork_chat_from_message_keeps_project_metadata(db):
+async def test_fork_chat_from_message_keeps_project_metadata(db, req):
     project = await create_project(
         ProjectCreate(name="Thesis", description="Main branch"),
         db=db,
@@ -113,13 +113,21 @@ async def test_fork_chat_from_message_keeps_project_metadata(db):
 
     assert forked_chat["parent_chat_id"] == original_chat["id"]
     assert forked_chat["forked_from_message_id"] == original_messages[0]["id"]
+    assert forked_chat["parent_chat_title"] == "Original thread"
     assert forked_chat["project_id"] == project["id"]
     assert forked_chat["project_name"] == "Thesis"
-    assert forked_chat["message_count"] == 1
+    assert forked_chat["message_count"] == 0
 
     forked_messages = await get_chat_messages(chat_id=forked_chat["id"], db=db, user_email=USER)
-    assert len(forked_messages) == 1
-    assert forked_messages[0]["content"] == "First prompt"
+    assert forked_messages == []
 
-    hits = await search_chats(query="Original", db=db, user_email=USER, limit=20, offset=0)
+    hits = await search_chats(
+        request=req(path="/chats/search", method="GET"),
+        query="Original",
+        db=db,
+        user_email=USER,
+        limit=20,
+        offset=0,
+    )
     assert any(item["project_name"] == "Thesis" for item in hits)
+    assert any(item["parent_chat_id"] == original_chat["id"] for item in hits)

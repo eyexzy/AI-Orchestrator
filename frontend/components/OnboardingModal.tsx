@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Sparkles, ArrowRight, ChevronRight } from "lucide-react";
+import { ArrowRight, ChevronRight } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -122,9 +122,11 @@ export function OnboardingModal() {
     patchProfilePreferences({ onboarding_completed: true }, userEmail)
       .then((data) => {
         const persistedLevel = normalizeLevel(data.current_level);
+        const persistedAutoLevel = normalizeLevel(data.auto_level) ?? persistedLevel;
         useUserLevelStore.setState({
           onboardingCompleted: data.onboarding_completed ?? true,
           ...(persistedLevel !== null ? { level: persistedLevel } : {}),
+          ...(persistedAutoLevel !== null ? { autoLevel: persistedAutoLevel } : {}),
         });
       })
       .catch(() => {});
@@ -146,7 +148,11 @@ export function OnboardingModal() {
     const startLevel = groundTruth;
     const elapsedMs = Date.now() - startTimeRef.current;
 
-    useUserLevelStore.getState().setLevel(startLevel);
+    useUserLevelStore.setState({
+      level: startLevel,
+      autoLevel: startLevel,
+      highestAutoLevelReached: startLevel,
+    });
     useUserLevelStore.getState().setGroundTruth(groundTruth);
     useUserLevelStore.setState({ onboardingCompleted: true });
 
@@ -165,9 +171,11 @@ export function OnboardingModal() {
     }, userEmail)
       .then((data) => {
         const persistedLevel = normalizeLevel(data.current_level);
+        const persistedAutoLevel = normalizeLevel(data.auto_level) ?? persistedLevel;
         useUserLevelStore.setState({
           onboardingCompleted: data.onboarding_completed ?? true,
           ...(persistedLevel !== null ? { level: persistedLevel } : {}),
+          ...(persistedAutoLevel !== null ? { autoLevel: persistedAutoLevel } : {}),
         });
       })
       .catch(() => {});
@@ -182,20 +190,17 @@ export function OnboardingModal() {
   const canProceed = selectedScore != null;
 
   return (
-    <Dialog open={open} onOpenChange={(v) => !v && handleCloseCompletely()}>
+    <Dialog open={open} dismissible={false} onOpenChange={(v) => !v && handleCloseCompletely()}>
       <DialogContent className="max-w-[560px] text-ds-text">
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <Sparkles size={18} strokeWidth={2} className="text-blue-700" />
-            <span>{t("onboarding.welcome")}</span>
-          </DialogTitle>
+          <DialogTitle>{t("onboarding.welcome")}</DialogTitle>
         </DialogHeader>
 
         <div className="flex items-start justify-between gap-4 px-6 pt-4">
           <DialogDescription className="mt-0 max-w-[400px]">
             {t("onboarding.description")}
           </DialogDescription>
-          <span className="rounded-full border border-gray-alpha-200 bg-gray-alpha-100 px-2 py-1 text-xs font-mono text-ds-text-tertiary shrink-0">
+          <span className="shrink-0 pt-1 text-[13px] leading-5 text-ds-text-tertiary">
             {step}/{TOTAL_STEPS}
           </span>
         </div>
@@ -243,10 +248,9 @@ export function OnboardingModal() {
           {step === 1 ? (
             <Button
               type="button"
-              variant="link"
+              variant="ghost"
               size="sm"
               onClick={handleSkip}
-              className="h-auto px-0 text-sm text-ds-text-tertiary hover:text-ds-text-secondary"
             >
               {t("onboarding.skip")}
             </Button>
@@ -257,6 +261,7 @@ export function OnboardingModal() {
           <div className="flex items-center gap-2">
             {!isLastStep && (
               <Button
+                variant="default"
                 onClick={handleNext}
                 size="sm"
                 disabled={!canProceed}
@@ -267,6 +272,7 @@ export function OnboardingModal() {
             )}
             {isLastStep && (
               <Button
+                variant="default"
                 onClick={handleStart}
                 size="sm"
                 disabled={!canProceed}

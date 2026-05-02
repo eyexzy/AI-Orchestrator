@@ -1,7 +1,8 @@
+import json
 from datetime import datetime
 from typing import Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 # Analyze endpoint schemas
 class BehavioralMetrics(BaseModel):
@@ -45,6 +46,11 @@ class ScoreBreakdown(BaseModel):
 class AnalyzeResponse(BaseModel):
     suggested_level: int   = Field(ge=1, le=3)
     final_level:     int   = Field(ge=1, le=3)
+    auto_level:      int   = Field(default=1, ge=1, le=3)
+    effective_ui_level: int = Field(default=1, ge=1, le=3)
+    manual_level_override: Optional[int] = None
+    manual_override_active: bool = False
+    previous_auto_level: int | None = Field(default=None, ge=1, le=3)
     confidence:      float = Field(ge=0, le=1)
     reasoning:       list[str]
     score:           float
@@ -55,20 +61,20 @@ class AnalyzeResponse(BaseModel):
 
 # Generate endpoint schemas
 class HistoryMessage(BaseModel):
-    role:    str # "user" "assistant"
-    content: str
+    role:    str = Field(..., max_length=16) # "user" "assistant"
+    content: str = Field(..., max_length=20000)
 
 
 class InlineAttachment(BaseModel):
     """File sent inline as base64 — processed directly by the LLM (vision/document)."""
-    filename: str
-    mime_type: str
-    data: str  # base64-encoded file bytes
+    filename: str = Field(..., max_length=255)
+    mime_type: str = Field(..., max_length=128)
+    data: str = Field(..., max_length=12000000)  # base64-encoded file bytes
 
 
 class GenerateRequest(BaseModel):
-    prompt:         str
-    system_message: str = ""
+    prompt:         str = Field(..., min_length=1, max_length=20000)
+    system_message: str = Field(default="", max_length=20000)
     model:          str = "gemini-2.0-flash"
     temperature:    float = Field(default=0.7, ge=0.0, le=2.0)
     max_tokens:     int   = Field(default=2048, ge=1, le=4096)
@@ -77,19 +83,28 @@ class GenerateRequest(BaseModel):
     session_id:     str | None = None
     history:        list[HistoryMessage] = Field(default_factory=list)
     history_limit:  int = Field(default=20, ge=0, le=100)
-    continuation_text: str = ""
+    continuation_text: str = Field(default="", max_length=40000)
     continuation_message_id: int | None = None
-    attachment_ids: list[str] = Field(default_factory=list)
-    inline_attachments: list[InlineAttachment] = Field(default_factory=list)
+    attachment_ids: list[str] = Field(default_factory=list, max_length=12)
+    inline_attachments: list[InlineAttachment] = Field(default_factory=list, max_length=4)
     project_id: str | None = None
+
+    @model_validator(mode="after")
+    def validate_history_volume(self):
+        if len(self.history) > 100:
+            raise ValueError("history is too long")
+        total_history_chars = sum(len(item.content) for item in self.history)
+        if total_history_chars > 200000:
+            raise ValueError("history content is too large")
+        return self
 
 
 MultiGenerateMode = Literal["compare", "self_consistency"]
 
 
 class MultiGenerateRequest(BaseModel):
-    prompt:              str
-    system_message:      str = ""
+    prompt:              str = Field(..., min_length=1, max_length=20000)
+    system_message:      str = Field(default="", max_length=20000)
     model:               str = "gemini-2.0-flash"
     model_label:         str | None = None
     compare_model:       str | None = None
@@ -103,6 +118,15 @@ class MultiGenerateRequest(BaseModel):
     mode:                MultiGenerateMode
     run_count:           int = Field(default=3, ge=2, le=5)
     project_id:          str | None = None
+
+    @model_validator(mode="after")
+    def validate_history_volume(self):
+        if len(self.history) > 100:
+            raise ValueError("history is too long")
+        total_history_chars = sum(len(item.content) for item in self.history)
+        if total_history_chars > 200000:
+            raise ValueError("history content is too large")
+        return self
 
 
 class UsageStats(BaseModel):
@@ -126,6 +150,8 @@ class RefineRequest(BaseModel):
     language: Optional[str] = None # "en" | "uk"; auto-detected if None
     level: Optional[int] = Field(default=None, ge=1, le=3)
     clarification_answers: Optional[dict[str, str]] = None
+    history: list[HistoryMessage] = Field(default_factory=list)
+    history_limit: int = Field(default=30, ge=0, le=100)
 
 
 class TutorQuestion(BaseModel):
@@ -161,6 +187,21 @@ class ForkChatRequest(BaseModel):
     message_id: int = Field(..., ge=1)
     title: Optional[str] = Field(default=None, max_length=255)
     project_id: Optional[str] = None
+
+
+ChatMessageFeedbackVote = Literal["like", "dislike"]
+
+
+class ChatMessageFeedbackRequest(BaseModel):
+    vote: ChatMessageFeedbackVote
+
+
+class ChatMessageFeedbackResponse(BaseModel):
+    ok: bool = True
+    vote: ChatMessageFeedbackVote | None = None
+    provider_forwarded: bool = False
+    provider_forwarding_supported: bool = False
+    provider_generation_id: str | None = None
 
 
 # ML retrain schema
@@ -251,6 +292,8 @@ class ChatSearchResult(BaseModel):
     chat_title:      str
     project_id:      str | None = None
     project_name:    str | None = None
+    parent_chat_id:  str | None = None
+    forked_from_message_id: int | None = None
     message_id:      int | None = None
     message_content: str | None = None
     role:            str | None = None
@@ -303,7 +346,7 @@ class ProjectSourceResponse(BaseModel):
 
 class AddTextSourceRequest(BaseModel):
     title: str = Field(..., min_length=1, max_length=255)
-    content: str = Field(..., min_length=1, max_length=50000)
+    content: str = Field(..., min_length=1, max_length=500000)
 
 
 # Profile preferences schemas
@@ -325,6 +368,8 @@ class ProfilePreferencesResponse(BaseModel):
     theme:                     str
     language:                  str
     current_level:             int = Field(default=1, ge=1, le=3)
+    auto_level:                int = Field(default=1, ge=1, le=3)
+    effective_level:           int = Field(default=1, ge=1, le=3)
     initial_level:             int = Field(default=1, ge=1, le=3)
     self_assessed_level:       Optional[int] = None
     manual_level_override:     Optional[int] = None
@@ -364,6 +409,14 @@ class UserEventCreate(BaseModel):
     event_context:      dict = Field(default_factory=dict)
     payload:            dict = Field(default_factory=dict)
 
+    @field_validator("event_context", "payload")
+    @classmethod
+    def validate_json_payload_size(cls, value: dict):
+        serialized = json.dumps(value, ensure_ascii=False)
+        if len(serialized) > 32000:
+            raise ValueError("payload is too large")
+        return value
+
 
 class UserEventBatchCreate(BaseModel):
     events:             list[UserEventCreate] = Field(..., min_length=1, max_length=50)
@@ -396,6 +449,26 @@ class SessionMetricsResponse(BaseModel):
     median_prompt_length:     float = 0.0
     structured_prompt_ratio:  float = 0.0
     tooltip_open_count:       int = 0
+    tutor_open_count:         int = 0
+    tutor_guided_started_count: int = 0
+    tutor_guided_completed_count: int = 0
+    tutor_guided_abandoned_count: int = 0
+    tutor_helpfulness_rated_count: int = 0
+    tutor_questions_skipped_count: int = 0
+    template_inserted_count:  int = 0
+    suggestion_clicked_count: int = 0
+    compare_enabled_count:    int = 0
+    self_consistency_enabled_count: int = 0
+    few_shot_added_count:     int = 0
+    system_prompt_edited_count: int = 0
+    variable_added_count:     int = 0
+    regeneration_count:       int = 0
+    continue_generation_count: int = 0
+    message_feedback_positive_count: int = 0
+    message_feedback_negative_count: int = 0
+    project_context_usage_count: int = 0
+    attachment_usage_count:   int = 0
+    advanced_mode_diversity:  int = 0
     refine_accept_count:      int = 0
     refine_reject_count:      int = 0
     advanced_actions_count:   int = 0
@@ -482,6 +555,9 @@ class DashboardDecisionItem(BaseModel):
     ml_score:           float | None = None
     ml_level:           int | None = None
     final_level:        int
+    auto_level:         int | None = None
+    effective_ui_level: int | None = None
+    manual_override_active: bool = False
     confidence:         float | None = None
     transition_reason:  dict = Field(default_factory=dict)
     created_at:         datetime | None = None
@@ -489,6 +565,9 @@ class DashboardDecisionItem(BaseModel):
 
 class DashboardResponse(BaseModel):
     current_level:        int = 1
+    auto_level:           int = 1
+    effective_level:      int = 1
+    manual_level_override: int | None = None
     suggested_level:      int | None = None
     self_assessed_level:  int | None = None
     initial_level:        int = 1

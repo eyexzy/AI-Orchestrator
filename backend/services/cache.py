@@ -86,6 +86,8 @@ class CacheService:
         self.backend: InMemoryCacheBackend | RedisCacheBackend = InMemoryCacheBackend()
         self.backend_name = "memory"
         self.redis_url = os.getenv("REDIS_URL", "").strip()
+        self._factory_locks: dict[str, asyncio.Lock] = {}
+        self._factory_locks_guard = asyncio.Lock()
 
     async def initialize(self) -> None:
         if self.redis_url and Redis is not None:
@@ -146,9 +148,32 @@ class CacheService:
         if cached_value is not None:
             return cached_value
 
-        fresh_value = await factory()
-        await self.set_json(key, fresh_value, ttl_seconds)
-        return fresh_value
+        lock = await self._get_factory_lock(key)
+        try:
+            async with lock:
+                cached_value = await self.get_json(key)
+                if cached_value is not None:
+                    return cached_value
+
+                fresh_value = await factory()
+                await self.set_json(key, fresh_value, ttl_seconds)
+                return fresh_value
+        finally:
+            await self._release_factory_lock(key, lock)
+
+    async def _get_factory_lock(self, key: str) -> asyncio.Lock:
+        async with self._factory_locks_guard:
+            lock = self._factory_locks.get(key)
+            if lock is None:
+                lock = asyncio.Lock()
+                self._factory_locks[key] = lock
+            return lock
+
+    async def _release_factory_lock(self, key: str, lock: asyncio.Lock) -> None:
+        async with self._factory_locks_guard:
+            current = self._factory_locks.get(key)
+            if current is lock and not lock.locked():
+                self._factory_locks.pop(key, None)
 
 
 cache = CacheService()

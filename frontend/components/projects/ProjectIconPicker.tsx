@@ -232,7 +232,7 @@ export function ProjectIconPicker({
                     className={cn(
                       "flex h-10 w-10 cursor-pointer items-center justify-center rounded-lg border-none bg-transparent transition-[background-color,box-shadow,color]",
                       isSelected
-                        ? "bg-gray-alpha-200 shadow-[0_0_0_1px_var(--ds-gray-alpha-500)]"
+                        ? "bg-gray-alpha-200"
                         : "hover:bg-gray-alpha-200",
                     )}
                     aria-label={PROJECT_ICON_LABELS[option]}

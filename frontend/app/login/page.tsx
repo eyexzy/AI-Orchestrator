@@ -170,7 +170,7 @@ export default function LoginPage() {
         {/* Logo */}
         <div className="mb-8 text-center">
           <h1 className="text-lg font-semibold tracking-tight text-ds-text">
-            AI&#8209;Orchestrator
+            Nexa
           </h1>
           <p className="mt-1 text-[15px] text-ds-text-secondary">
             {t("login.subtitle")}
@@ -224,7 +224,7 @@ export default function LoginPage() {
             {/* Divider */}
             <div className="flex items-center gap-3">
               <Separator className="flex-1" />
-              <span className="text-xs text-ds-text-tertiary">{t("login.or")}</span>
+              <span className="text-[13px] text-ds-text-tertiary">{t("login.or")}</span>
               <Separator className="flex-1" />
             </div>
 
@@ -243,7 +243,7 @@ export default function LoginPage() {
                   {...register("email")}
                 />
                 {errors.email && (
-                  <p className="text-xs text-red-700">{errors.email.message}</p>
+                  <p className="text-[13px] text-red-700">{errors.email.message}</p>
                 )}
               </div>
 
@@ -258,7 +258,7 @@ export default function LoginPage() {
               </Button>
             </form>
 
-            <p className="pt-2 text-center text-xs leading-relaxed text-ds-text-tertiary">
+            <p className="pt-2 text-center text-[13px] leading-relaxed text-ds-text-tertiary">
               {t("login.hint")}
             </p>
           </CardContent>

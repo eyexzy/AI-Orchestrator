@@ -372,8 +372,7 @@ export default function ProjectDetailPage() {
     [projectId, visibleChats],
   );
 
-  const combinedError = projectsError || chatListError;
-  const isLoading = isLoadingProjects || isLoadingChats;
+  const projectLoadError = projectsError;
 
   const handleInputVariableNamesChange = (names: string[]) => {
     setInputVariableNames((prev) => (sameNames(prev, names) ? prev : names));
@@ -573,7 +572,7 @@ export default function ProjectDetailPage() {
     return null;
   }
 
-  if (isLoading) {
+  if (isLoadingProjects && !project) {
     return (
       <ProjectDetailSkeleton
         backLabel={t("projects.backToProjects")}
@@ -582,13 +581,13 @@ export default function ProjectDetailPage() {
     );
   }
 
-  if (combinedError) {
+  if (projectLoadError && !project) {
     return (
       <div className="px-6 py-10">
         <ErrorState
           centered
           title={t("projects.loadErrorTitle")}
-          description={combinedError}
+          description={projectLoadError}
           actionLabel={t("common.retry")}
           onAction={() => {
             if (!profileLoaded || !userEmail) return;
@@ -618,10 +617,12 @@ export default function ProjectDetailPage() {
     <>
       <main className="flex-1 overflow-hidden">
         <ProjectWorkspaceView
-        project={project}
-        chats={projectChats}
-        composerResetKey={composerResetKey}
-        isLaunchingPrompt={isLaunchingPrompt}
+          project={project}
+          chats={projectChats}
+          isLoadingChats={isLoadingChats}
+          chatsError={chatListError}
+          composerResetKey={composerResetKey}
+          isLaunchingPrompt={isLaunchingPrompt}
           onBack={() => router.push("/projects")}
           onCustomize={() => setEditOpen(true)}
           onUpdateProjectIdentity={async (payload) => {

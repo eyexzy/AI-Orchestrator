@@ -1,12 +1,28 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { useRouter } from "next/navigation";
+import { useProjectStore } from "@/lib/store/projectStore";
 
-const APP_ROUTES = ["/chat", "/chats", "/dashboard", "/settings", "/projects"];
+const APP_ROUTES = ["/chat", "/chats", "/profile", "/settings", "/projects"];
+const MAX_PROJECT_ROUTE_PREFETCHES = 12;
 
 export function RoutePrefetcher() {
   const router = useRouter();
+  const projects = useProjectStore((s) => s.projects);
+  const prefetchedRoutesRef = useRef<Set<string>>(new Set());
+
+  const projectRoutes = useMemo(() => {
+    return [...projects]
+      .sort((a, b) => {
+        if (a.is_favorite !== b.is_favorite) {
+          return a.is_favorite ? -1 : 1;
+        }
+        return (b.updated_at ?? "").localeCompare(a.updated_at ?? "");
+      })
+      .slice(0, MAX_PROJECT_ROUTE_PREFETCHES)
+      .map((project) => `/projects/${project.id}`);
+  }, [projects]);
 
   useEffect(() => {
     let timeoutId: ReturnType<typeof globalThis.setTimeout> | null = null;
@@ -14,7 +30,17 @@ export function RoutePrefetcher() {
 
     const prefetchRoutes = () => {
       for (const route of APP_ROUTES) {
-        router.prefetch(route);
+        if (!prefetchedRoutesRef.current.has(route)) {
+          router.prefetch(route);
+          prefetchedRoutesRef.current.add(route);
+        }
+      }
+
+      for (const route of projectRoutes) {
+        if (!prefetchedRoutesRef.current.has(route)) {
+          router.prefetch(route);
+          prefetchedRoutesRef.current.add(route);
+        }
       }
     };
 
@@ -32,7 +58,7 @@ export function RoutePrefetcher() {
         globalThis.clearTimeout(timeoutId);
       }
     };
-  }, [router]);
+  }, [projectRoutes, router]);
 
   return null;
 }

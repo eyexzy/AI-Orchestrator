@@ -1,4 +1,5 @@
 import json
+from datetime import date, datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, Request
 from sqlalchemy import delete, func, select
@@ -41,45 +42,52 @@ router = APIRouter()
 MIN_USER_LEVEL = 1
 
 
+def _valid_level(value: int | None) -> int | None:
+    return value if value in (1, 2, 3) else None
+
+
+def _manual_override(
+    profile: UserProfile | None,
+    exp: UserExperienceProfile | None,
+) -> int | None:
+    return (
+        _valid_level(exp.manual_level_override if exp else None)
+        or _valid_level(profile.manual_level_override if profile else None)
+    )
+
+
+def _auto_current_level(
+    profile: UserProfile | None,
+    exp: UserExperienceProfile | None,
+) -> int:
+    return (
+        _valid_level(exp.current_level if exp else None)
+        or _valid_level(profile.current_level if profile else None)
+        or MIN_USER_LEVEL
+    )
+
+
 def _effective_current_level(
     profile: UserProfile | None,
     exp: UserExperienceProfile | None,
 ) -> int:
-    # Manual override wins
-    override = None
-    if exp and exp.manual_level_override in (1, 2, 3):
-        override = exp.manual_level_override
-    elif profile and profile.manual_level_override in (1, 2, 3):
-        override = profile.manual_level_override
-    if override:
-        return override
-
-    # Experience profile is the source of truth
-    if exp and exp.current_level in (1, 2, 3):
-        return exp.current_level
-
-    # Fall back to legacy profile
-    if profile and profile.current_level in (1, 2, 3):
-        return profile.current_level
-
-    return MIN_USER_LEVEL
+    return _manual_override(profile, exp) or _auto_current_level(profile, exp)
 
 
 def _build_response(
     profile: UserProfile | None,
     exp: UserExperienceProfile | None,
 ) -> ProfilePreferencesResponse:
-    level = _effective_current_level(profile, exp)
-
-    # manual_level_override: exp is source of truth, legacy profile is fallback
-    override = exp.manual_level_override if exp else None
-    if override is None and profile:
-        override = profile.manual_level_override
+    auto_level = _auto_current_level(profile, exp)
+    override = _manual_override(profile, exp)
+    effective_level = override or auto_level
 
     return ProfilePreferencesResponse(
         theme=(profile.theme if profile else None) or "system",
         language=(profile.language if profile else None) or "en",
-        current_level=level,
+        current_level=effective_level,
+        auto_level=auto_level,
+        effective_level=effective_level,
         initial_level=exp.initial_level if exp else MIN_USER_LEVEL,
         self_assessed_level=exp.self_assessed_level if exp else None,
         manual_level_override=override,
@@ -166,11 +174,11 @@ async def update_preferences(
 
         if body.self_assessed_level is not None:
             exp.self_assessed_level = body.self_assessed_level
-            # On first onboarding, set initial_level and current_level
+            # On first onboarding, seed the real Auto level.
             if exp.initial_level == 1 and exp.current_level == 1:
                 exp.initial_level = body.self_assessed_level
                 exp.current_level = body.self_assessed_level
-            # Sync to legacy UserProfile for backward compat
+            # Sync Auto level to legacy UserProfile for backward compat.
             profile.current_level = exp.current_level
 
         if "manual_level_override" in body.model_fields_set:
@@ -197,7 +205,7 @@ async def get_dashboard(
     db: AsyncSession = Depends(get_db),
 ):
     """User-scoped dashboard: persisted profile state + recent adaptation decisions."""
-    _, exp = await _get_both(db, user_email)
+    profile, exp = await _get_both(db, user_email)
 
     # Recent adaptation decisions
     decisions_stmt = (
@@ -209,19 +217,27 @@ async def get_dashboard(
     decisions_result = await db.execute(decisions_stmt)
     decisions = decisions_result.scalars().all()
 
-    decision_items = [
-        DashboardDecisionItem(
-            rule_score=d.rule_score,
-            rule_level=d.rule_level,
-            ml_score=d.ml_score,
-            ml_level=d.ml_level,
-            final_level=d.final_level,
-            confidence=d.confidence,
-            transition_reason=json.loads(d.transition_reason_json or "{}"),
-            created_at=d.created_at,
+    decision_items = []
+    for d in decisions:
+        try:
+            transition_reason = json.loads(d.transition_reason_json or "{}")
+        except (json.JSONDecodeError, TypeError):
+            transition_reason = {}
+        decision_items.append(
+            DashboardDecisionItem(
+                rule_score=d.rule_score,
+                rule_level=d.rule_level,
+                ml_score=d.ml_score,
+                ml_level=d.ml_level,
+                final_level=d.final_level,
+                auto_level=transition_reason.get("auto_level") or d.final_level,
+                effective_ui_level=transition_reason.get("effective_ui_level") or d.final_level,
+                manual_override_active=bool(transition_reason.get("manual_override_active")),
+                confidence=d.confidence,
+                transition_reason=transition_reason,
+                created_at=d.created_at,
+            )
         )
-        for d in decisions
-    ]
 
     if not exp:
         return DashboardResponse(recent_decisions=decision_items)
@@ -238,8 +254,15 @@ async def get_dashboard(
     except (json.JSONDecodeError, TypeError):
         pass
 
+    auto_level = _auto_current_level(profile, exp)
+    override = _manual_override(profile, exp)
+    effective_level = override or auto_level
+
     return DashboardResponse(
-        current_level=exp.current_level or 1,
+        current_level=auto_level,
+        auto_level=auto_level,
+        effective_level=effective_level,
+        manual_level_override=override,
         suggested_level=exp.suggested_level_last,
         self_assessed_level=exp.self_assessed_level,
         initial_level=exp.initial_level or 1,
@@ -257,6 +280,16 @@ async def _count(db: AsyncSession, model, user_email: str) -> int:
     stmt = select(func.count()).select_from(model).where(model.user_email == user_email)
     result = await db.execute(stmt)
     return int(result.scalar() or 0)
+
+
+def _to_iso_day(value: object) -> str | None:
+    if isinstance(value, datetime):
+        return value.date().isoformat()
+    if isinstance(value, date):
+        return value.isoformat()
+    if isinstance(value, str):
+        return value[:10]
+    return None
 
 
 @limiter.limit("30/minute")
@@ -289,6 +322,52 @@ async def get_account_stats(
         events_count=events_count,
         decisions_count=decisions_count,
     )
+
+
+@limiter.limit("30/minute")
+@router.get("/profile/activity")
+async def get_profile_activity(
+    request: Request,
+    user_email: str = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    range_days = 364
+    today = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    since = today - timedelta(days=range_days - 1)
+
+    message_stmt = (
+        select(sa_func.date(ChatMessage.created_at).label("day"), func.count(ChatMessage.id).label("count"))
+        .join(ChatSession, ChatMessage.session_id == ChatSession.id)
+        .where(
+            ChatSession.user_email == user_email,
+            ChatMessage.created_at >= since,
+        )
+        .group_by(sa_func.date(ChatMessage.created_at))
+    )
+
+    counts_by_day: dict[str, int] = {}
+    total_messages = 0
+
+    for row in (await db.execute(message_stmt)).all():
+        day_key = _to_iso_day(row.day)
+        if not day_key:
+            continue
+        count = int(row.count or 0)
+        counts_by_day[day_key] = counts_by_day.get(day_key, 0) + count
+        total_messages += count
+
+    days = [
+        {"date": day_key, "count": counts_by_day[day_key]}
+        for day_key in sorted(counts_by_day.keys())
+    ]
+
+    return {
+        "days": days,
+        "total_active_days": sum(1 for count in counts_by_day.values() if count > 0),
+        "total_events": total_messages,
+        "total_messages": total_messages,
+        "range_days": range_days,
+    }
 
 
 @limiter.limit("6/minute")

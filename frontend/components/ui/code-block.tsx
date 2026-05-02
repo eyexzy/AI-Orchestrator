@@ -26,6 +26,7 @@ import yamlLanguage from "react-syntax-highlighter/dist/esm/languages/prism/yaml
 import { Copy, Check, FileCode } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tooltip } from "@/components/ui/tooltip";
+import { useTranslation } from "@/lib/store/i18nStore";
 
 /* language names */
 export function formatLanguageName(lang: string): string {
@@ -51,7 +52,7 @@ type ResolvedThemeMode = "light" | "dark";
 export { PrismLight as SyntaxHighlighter } from "react-syntax-highlighter";
 export { type SyntaxHighlighterProps } from "react-syntax-highlighter";
 
-export const CODE_FONT_FAMILY = "var(--font-geist-mono), monospace";
+export const CODE_FONT_FAMILY = "var(--font-geist-sans), system-ui, -apple-system, sans-serif";
 
 const REGISTERED_LANGUAGES: Array<[string, SyntaxLanguageDefinition]> = [
   ["bash", bashLanguage],
@@ -287,17 +288,28 @@ export function CodeSurface({
   );
 }
 
-export function CodeBlock({ language, code }: { language: string; code: string }) {
+export function CodeBlock({
+  language,
+  code,
+  copyValue,
+  footer,
+}: {
+  language: string;
+  code: string;
+  copyValue?: string;
+  footer?: React.ReactNode;
+}) {
+  const { t } = useTranslation();
   const [copied, setCopied] = useState(false);
 
   const handleCopy = useCallback(async () => {
     try {
-      await navigator.clipboard.writeText(code);
+      await navigator.clipboard.writeText(copyValue ?? code);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch {
     }
-  }, [code]);
+  }, [code, copyValue]);
 
   const lang = language || "text";
 
@@ -308,19 +320,19 @@ export function CodeBlock({ language, code }: { language: string; code: string }
         {/* Left: file icon + language label */}
         <div className="flex items-center gap-2">
           <FileCode size={14} strokeWidth={2} className="opacity-70" />
-          <span className="font-mono text-[13px] text-ds-gray-900 select-none">
+          <span className="select-none text-[13px] text-ds-gray-900">
             {formatLanguageName(lang)}
           </span>
         </div>
 
         {/* Right: icon-only copy button */}
-        <Tooltip content={copied ? "Copied!" : "Copy code"}>
+        <Tooltip content={copied ? t("markdown.copied") : t("markdown.copyCode")}>
           <Button
             variant="tertiary"
             size="sm"
             iconOnly
             onClick={handleCopy}
-            aria-label="Copy code"
+            aria-label={t("markdown.copyCode")}
             className="text-ds-text-tertiary hover:text-ds-text"
           >
             {copied ? <Check size={14} strokeWidth={2} /> : <Copy size={14} strokeWidth={2} />}
@@ -330,6 +342,7 @@ export function CodeBlock({ language, code }: { language: string; code: string }
 
       {/* Code body */}
       <CodeSurface language={lang} code={code} />
+      {footer ? <div className="bg-background-100 px-3 pb-3">{footer}</div> : null}
     </div>
   );
 }

@@ -30,35 +30,11 @@ import { useUserLevelStore } from "@/lib/store/userLevelStore";
 import { useTranslation } from "@/lib/store/i18nStore";
 import { Material } from "@/components/ui/material";
 import { ActionMenu } from "@/components/ui/action-menu";
-
-/* Color palette */
-const COLOR_OPTIONS = [
-  "gray", "blue", "purple", "pink", "red", "amber", "green", "teal",
-] as const;
-
-const COLOR_BG: Record<string, string> = {
-  gray: "bg-black dark:bg-white shadow-[0_0_0_1px_var(--ds-gray-alpha-400)]",
-  blue: "bg-blue-700",
-  purple: "bg-purple-700",
-  pink: "bg-pink-700",
-  red: "bg-red-700",
-  amber: "bg-amber-700",
-  green: "bg-green-700",
-  teal: "bg-teal-700",
-};
-
-const COLOR_RING: Record<string, string> = {
-  gray: "ring-black dark:ring-white",
-  blue: "ring-blue-700",
-  purple: "ring-purple-700",
-  pink: "ring-pink-700",
-  red: "ring-red-700",
-  amber: "ring-amber-700",
-  green: "ring-green-700",
-  teal: "ring-teal-700",
-};
-
-
+import {
+  PROJECT_COLOR_OPTIONS,
+  PROJECT_COLOR_RING_CLASSES,
+  PROJECT_COLOR_SWATCH_CLASSES,
+} from "@/components/projects/projectTheme";
 
 function ColorPicker({
   value,
@@ -69,13 +45,13 @@ function ColorPicker({
 }) {
   return (
     <div className="flex items-center gap-2">
-      {COLOR_OPTIONS.map((c) => (
+      {PROJECT_COLOR_OPTIONS.map((c) => (
         <button
           key={c}
           type="button"
           onClick={() => onChange(c)}
-          className={`h-6 w-6 shrink-0 rounded-full transition-all ${COLOR_BG[c]} ${value === c
-            ? `ring-2 ring-offset-2 ring-offset-background ${COLOR_RING[c]}`
+          className={`h-6 w-6 shrink-0 rounded-full transition-all ${PROJECT_COLOR_SWATCH_CLASSES[c]} ${value === c
+            ? `ring-2 ring-offset-2 ring-offset-background ${PROJECT_COLOR_RING_CLASSES[c]}`
             : "hover:ring-1 hover:ring-gray-alpha-400 hover:ring-offset-1 hover:ring-offset-background"
             }`}
           aria-label={c}
@@ -133,8 +109,8 @@ function extractVariableNames(...texts: string[]): string[] {
 }
 
 /* Field helpers */
-const labelCls = "block text-[13px] font-medium text-ds-text mb-1.5";
-const textareaCls = "min-h-[80px] font-mono text-xs leading-relaxed";
+const labelCls = "mb-1.5 block text-[14px] font-medium text-ds-text";
+const textareaCls = "min-h-[80px] text-[14px] leading-relaxed";
 
 /* Sortable template item */
 function SortableTemplateItem({
@@ -495,7 +471,7 @@ export function TemplateManagerModal({ open, onOpenChange }: TemplateManagerModa
                   {/* Favorites section */}
                   {filteredTemplates.filter((t) => t.is_favorite).length > 0 && (
                     <div>
-                      <h4 className="mb-3 text-xs font-semibold uppercase tracking-wider text-ds-text-tertiary font-mono">{t("templateManager.starred")}</h4>
+                      <h4 className="mb-3 text-[15px] font-semibold text-ds-text-secondary">{t("templateManager.starred")}</h4>
                       <div className="space-y-2 py-1">
                         {filteredTemplates
                           .filter((t) => t.is_favorite)
@@ -516,7 +492,7 @@ export function TemplateManagerModal({ open, onOpenChange }: TemplateManagerModa
                   {/* All Templates section */}
                   {filteredTemplates.filter((t) => !t.is_favorite).length > 0 && (
                     <div>
-                      <h4 className="mb-3 text-xs font-semibold uppercase tracking-wider text-ds-text-tertiary font-mono">{t("templateManager.allTemplates")}</h4>
+                      <h4 className="mb-3 text-[15px] font-semibold text-ds-text-secondary">{t("templateManager.allTemplates")}</h4>
                       <div className="space-y-2 py-1">
                         {filteredTemplates
                           .filter((t) => !t.is_favorite)
@@ -633,8 +609,8 @@ export function TemplateManagerModal({ open, onOpenChange }: TemplateManagerModa
                   rows={4}
                   textareaClassName={textareaCls}
                 />
-                <p className="mt-1.5 text-[11px] text-ds-text-tertiary">
-                  {t("templateManager.escapeVariableHelp")} <code className="bg-transparent px-0 py-0 font-mono text-blue-900">{"\\{{text}}"}</code>
+                <p className="mt-1.5 text-[13px] text-ds-text-tertiary">
+                  {t("templateManager.escapeVariableHelp")} <code className="bg-transparent px-0 py-0 font-medium text-blue-900">{"\\{{text}}"}</code>
                 </p>
               </div>
 

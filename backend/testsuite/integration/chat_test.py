@@ -11,7 +11,7 @@ OTHER = "other@test.dev"
 
 
 @pytest.mark.asyncio
-async def test_chat_flow(db):
+async def test_chat_flow(db, req):
     created = await create_chat(CreateChatRequest(user_email=OTHER, title="Alpha"), db=db, user_email=USER)
     chat_id = created["id"]
     db.add_all([
@@ -25,7 +25,14 @@ async def test_chat_flow(db):
     assert chats[0]["message_count"] == 2
     messages = await get_chat_messages(chat_id=chat_id, db=db, user_email=USER)
     assert [item["role"] for item in messages] == ["user", "assistant"]
-    hits = await search_chats(query="Assistant", db=db, user_email=USER, limit=20, offset=0)
+    hits = await search_chats(
+        request=req(path="/chats/search", method="GET"),
+        query="Assistant",
+        db=db,
+        user_email=USER,
+        limit=20,
+        offset=0,
+    )
     assert any(item["chat_id"] == chat_id for item in hits)
     await update_chat(chat_id=chat_id, req=UpdateChatRequest(title="Beta", is_favorite=True), db=db, user_email=USER)
     chats = await list_chats(db=db, user_email=USER, limit=50, offset=0)

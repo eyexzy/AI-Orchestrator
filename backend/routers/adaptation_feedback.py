@@ -36,27 +36,35 @@ async def submit_adaptation_feedback(
     a snapshot of the current user features for future ML training.
     """
 
-    # Auto-populate feature snapshot from UserExperienceProfile if not provided
     feature_snapshot = body.feature_snapshot
-    if not feature_snapshot:
-        exp_result = await db.execute(
-            select(UserExperienceProfile).where(
-                UserExperienceProfile.user_email == user_email
-            )
+    exp_result = await db.execute(
+        select(UserExperienceProfile).where(
+            UserExperienceProfile.user_email == user_email
         )
-        exp = exp_result.scalars().first()
-        if exp:
+    )
+    exp = exp_result.scalars().first()
+
+    if exp:
+        if not feature_snapshot:
             try:
                 feature_snapshot = json.loads(exp.profile_features_json or "{}")
             except (json.JSONDecodeError, TypeError):
                 feature_snapshot = {}
 
-            # Also include current scoring state
-            feature_snapshot["_current_level"] = exp.current_level
-            feature_snapshot["_suggested_level_last"] = exp.suggested_level_last
-            feature_snapshot["_rule_score_last"] = exp.rule_score_last
-            feature_snapshot["_ml_score_last"] = exp.ml_score_last
-            feature_snapshot["_confidence_last"] = exp.confidence_last
+        auto_level = exp.current_level
+        manual_override = exp.manual_level_override if exp.manual_level_override in (1, 2, 3) else None
+        effective_ui_level = manual_override or auto_level
+
+        feature_snapshot.setdefault("auto_level_at_time", auto_level)
+        feature_snapshot.setdefault("effective_ui_level_at_time", effective_ui_level)
+        feature_snapshot.setdefault("manual_override_active", manual_override is not None)
+        feature_snapshot.setdefault("manual_level_override", manual_override)
+        feature_snapshot.setdefault("suggested_level_at_time", exp.suggested_level_last)
+        feature_snapshot["_current_level"] = auto_level
+        feature_snapshot["_suggested_level_last"] = exp.suggested_level_last
+        feature_snapshot["_rule_score_last"] = exp.rule_score_last
+        feature_snapshot["_ml_score_last"] = exp.ml_score_last
+        feature_snapshot["_confidence_last"] = exp.confidence_last
 
     row = AdaptationFeedback(
         user_email=user_email,

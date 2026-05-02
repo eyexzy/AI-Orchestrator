@@ -47,6 +47,69 @@ class LabeledSample:
     weight: float
 
 
+def _valid_level(value: object) -> int | None:
+    return int(value) if value in (1, 2, 3, "1", "2", "3") else None
+
+
+def _auto_label_from_feedback(row: AdaptationFeedback, snapshot: dict) -> int | None:
+    """Resolve feedback to the real Auto/user level, not forced UI."""
+    manual_active = bool(snapshot.get("manual_override_active"))
+    base_level = _valid_level(snapshot.get("auto_level_at_time"))
+    if base_level is None and not manual_active:
+        base_level = _valid_level(row.ui_level_at_time)
+    answer = row.answer_value
+
+    if row.question_type == "self_assess_level":
+        direct_level = _valid_level(answer)
+        if direct_level is not None:
+            return direct_level
+        if base_level is None:
+            return None
+        if answer == "more_guidance":
+            return max(1, base_level - 1)
+        if answer == "current_guidance_fits":
+            return base_level
+        if answer == "less_guidance":
+            return min(3, base_level + 1)
+        return None
+
+    if base_level is None:
+        return None
+
+    if row.question_type in ("level_change_agreement", "periodic_level_check"):
+        if answer in ("agree", "current_layout_fits"):
+            return base_level
+        if answer == "simpler_layout":
+            return max(1, base_level - 1)
+        if answer == "more_control_needed":
+            return min(3, base_level + 1)
+        return None
+    if row.question_type == "scenario_satisfaction":
+        if answer in ("just_right", "improved", "no_change"):
+            return base_level
+        if answer == "too_easy":
+            return min(3, base_level + 1)
+        if answer in ("too_hard", "less_clear"):
+            return max(1, base_level - 1)
+        return None
+    if row.question_type == "help_series_check":
+        if answer in ("fine", "just_exploring", "learning_feature", "looking_for_shortcut"):
+            return base_level
+        if answer in ("too_complex", "interface_unclear"):
+            return max(1, base_level - 1)
+        return None
+    return None
+
+
+def _auto_label_from_decision(decision: AdaptationDecision) -> int | None:
+    """Use high-confidence Auto decisions as silver labels, never forced UI."""
+    try:
+        transition = json.loads(decision.transition_reason_json or "{}")
+    except (json.JSONDecodeError, TypeError):
+        transition = {}
+    return _valid_level(transition.get("auto_level")) or _valid_level(decision.final_level)
+
+
 # Gold: explicit adaptation feedback
 
 async def _build_gold_samples(db: AsyncSession) -> list[LabeledSample]:
@@ -64,7 +127,13 @@ async def _build_gold_samples(db: AsyncSession) -> list[LabeledSample]:
 
     samples: list[LabeledSample] = []
     for row in rows:
-        label: int | None = None
+        snapshot = {}
+        try:
+            snapshot = json.loads(row.feature_snapshot_json or "{}")
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+        label = _auto_label_from_feedback(row, snapshot)
         qt = row.question_type
         av = row.answer_value
 
@@ -100,6 +169,7 @@ async def _build_gold_samples(db: AsyncSession) -> list[LabeledSample]:
             snapshot = json.loads(row.feature_snapshot_json or "{}")
         except (json.JSONDecodeError, TypeError):
             pass
+        label = _auto_label_from_feedback(row, snapshot) or label
 
         # Look up the nearest interaction log for this session
         prompt_text = ""
@@ -179,7 +249,8 @@ async def _build_silver_samples(
             continue
         seen_sessions.add(sid)
 
-        if d.final_level not in (1, 2, 3):
+        label = _auto_label_from_decision(d)
+        if label not in (1, 2, 3):
             continue
 
         # Get latest prompt for this session
@@ -213,7 +284,7 @@ async def _build_silver_samples(
         samples.append(LabeledSample(
             prompt_text=prompt_text,
             behavioral_features=beh,
-            label=d.final_level,
+            label=label,
             tier="silver",
             weight=SILVER_WEIGHT,
         ))
@@ -290,10 +361,7 @@ async def build_dataset(
 
     async with AsyncSessionLocal() as db:
         gold = await _build_gold_samples(db)
-        gold_session_ids = {
-            s.prompt_text[:50] for s in gold  # rough dedup key
-        }
-        # Use session IDs from adaptation feedback for dedup
+        # Dedup by session_id — skip silver sessions that already have a gold label
         fb_result = await db.execute(select(AdaptationFeedback.session_id))
         gold_sids = {r[0] for r in fb_result.all() if r[0]}
 
@@ -302,7 +370,14 @@ async def build_dataset(
 
     all_samples = gold + silver + bronze
 
-    if include_synthetic and len(all_samples) < min_samples:
+    # Add synthetic data if: too few total samples OR any class is missing entirely.
+    # A missing class causes sklearn to crash with "only one class" error.
+    real_class_counts = {1: 0, 2: 0, 3: 0}
+    for s in all_samples:
+        real_class_counts[s.label] = real_class_counts.get(s.label, 0) + 1
+    has_missing_class = any(real_class_counts[lvl] == 0 for lvl in (1, 2, 3))
+
+    if include_synthetic and (len(all_samples) < min_samples or has_missing_class):
         synthetic = _build_synthetic_samples()
         all_samples.extend(synthetic)
 

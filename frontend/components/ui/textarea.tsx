@@ -43,9 +43,9 @@ const textareaFieldVariants = cva(
         chat: "",
       },
       size: {
-        sm: "min-h-20 text-[13px]",
-        md: "min-h-24 text-[14px]",
-        lg: "min-h-28 text-[15px]",
+        sm: "min-h-20 text-[14px]",
+        md: "min-h-24 text-[15px]",
+        lg: "min-h-28 text-[16px]",
       },
     },
     defaultVariants: { variant: "default", size: "md" },

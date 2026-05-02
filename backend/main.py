@@ -12,6 +12,7 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import JSONResponse
 from slowapi.errors import RateLimitExceeded
 
@@ -59,6 +60,7 @@ def _apply_response_headers(response: JSONResponse | object, request_id: str):
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Cache-Control"] = "no-store"
     response.headers["Content-Security-Policy"] = (
         "default-src 'self'; "
         "script-src 'self'; "
@@ -222,9 +224,34 @@ async def lifespan(app: FastAPI):
         logger.warning("[app] startup_without_database")
         ml_classifier._train_fresh()
 
+    # Background task: every 30 s each worker checks if a newer ML model
+    # was saved to the DB (e.g. by another worker after admin retraining)
+    # and hot-reloads it so all workers converge within one sync interval.
+    ML_SYNC_INTERVAL_SECONDS = 30
+
+    async def _ml_model_sync_loop():
+        while True:
+            await asyncio.sleep(ML_SYNC_INTERVAL_SECONDS)
+            try:
+                async with AsyncSessionLocal() as db:
+                    reloaded = await ml_classifier.check_and_reload_if_newer(db)
+                    if reloaded:
+                        logger.info("[ml] model_reloaded_by_background_sync")
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.warning("[ml] background_sync_error", extra={"error": str(exc)})
+
+    ml_sync_task = asyncio.create_task(_ml_model_sync_loop())
+    logger.info("[ml] background_sync_started", extra={"interval_s": ML_SYNC_INTERVAL_SECONDS})
+
     try:
         yield
     finally:
+        ml_sync_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await ml_sync_task
+
         if semantic_warmup_task is not None and not semantic_warmup_task.done():
             semantic_warmup_task.cancel()
             with suppress(asyncio.CancelledError):
@@ -251,12 +278,19 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="AI-Orchestrator Backend",
+    title="Nexa Backend",
     version="0.9.0",
     description="Adaptive UX scoring engine + multi-provider LLM proxy",
     lifespan=lifespan,
 )
 app.state.limiter = limiter
+
+ALLOWED_HOSTS = [
+    host.strip()
+    for host in os.getenv("ALLOWED_HOSTS", "localhost,127.0.0.1,::1").split(",")
+    if host.strip()
+]
+app.add_middleware(TrustedHostMiddleware, allowed_hosts=ALLOWED_HOSTS)
 
 ALLOWED_ORIGINS = os.getenv(
     "ALLOWED_ORIGINS",
@@ -266,7 +300,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PATCH", "PUT", "DELETE"],
+    allow_methods=["GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["Content-Type", "Authorization", "X-Api-Key", "X-Request-ID"],
 )
 
@@ -375,6 +409,7 @@ from routers.adaptation_feedback import router as adaptation_feedback_router
 from routers.product_feedback import router as product_feedback_router
 from routers.projects import router as projects_router
 from routers.files import router as files_router
+from routers.chat_message_feedback import router as chat_message_feedback_router
 
 app.include_router(analyze_router)
 app.include_router(generate_router)
@@ -388,3 +423,4 @@ app.include_router(events_router)
 app.include_router(adaptation_feedback_router)
 app.include_router(product_feedback_router)
 app.include_router(files_router)
+app.include_router(chat_message_feedback_router)

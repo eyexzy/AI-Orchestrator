@@ -12,6 +12,21 @@ export interface ModelOption {
   vision?: boolean;
 }
 
+const SUPPORTED_MODEL_IDS = new Set([
+  "claude-sonnet-4-5",
+  "claude-haiku-4-5",
+  "gpt-4o",
+  "gpt-4o-mini",
+  "o4-mini",
+  "gemini-2.5-flash",
+  "gemini-2.0-flash",
+  "gemini-2.5-pro",
+]);
+
+function onlySupportedModels(models: ModelOption[]): ModelOption[] {
+  return models.filter((model) => SUPPORTED_MODEL_IDS.has(model.value));
+}
+
 /* Fallback used when the backend is unreachable */
 const FALLBACK_MODELS: ModelOption[] = [
   // Claude
@@ -25,13 +40,6 @@ const FALLBACK_MODELS: ModelOption[] = [
   { value: "gemini-2.5-flash",  label: "Gemini 2.5 Flash",  provider: "openrouter", available: true, free: false, context: 1000000, vision: true },
   { value: "gemini-2.0-flash",  label: "Gemini 2.0 Flash",  provider: "openrouter", available: true, free: false, context: 1000000, vision: true },
   { value: "gemini-2.5-pro",    label: "Gemini 2.5 Pro",    provider: "openrouter", available: true, free: false, context: 1000000, vision: true },
-  // Free
-  { value: "or-llama-70b",      label: "Llama 3.3 70B",     provider: "openrouter", available: true, free: true,  context: 131072,  vision: false },
-  { value: "or-deepseek-r1",    label: "DeepSeek R1",        provider: "openrouter", available: true, free: true,  context: 163840,  vision: false },
-  { value: "or-gemma-3-27b",    label: "Gemma 3 27B",        provider: "openrouter", available: true, free: true,  context: 131072,  vision: true  },
-  { value: "or-qwen3-30b",      label: "Qwen3 30B",          provider: "openrouter", available: true, free: true,  context: 40960,   vision: false },
-  { value: "or-mistral-small",  label: "Mistral Small 3.1",  provider: "openrouter", available: true, free: true,  context: 131072,  vision: false },
-  { value: "or-llama-scout",    label: "Llama 4 Scout",      provider: "openrouter", available: true, free: true,  context: 10000000, vision: true },
 ];
 
 interface ModelsState {
@@ -89,16 +97,18 @@ export const useModelsStore = create<ModelsState>((set, get) => ({
           vision?: boolean;
         }> = data.models ?? {};
 
-        const mapped: ModelOption[] = Object.entries(backendModels).map(
-          ([value, info]) => ({
-            value,
-            label: info.label,
-            provider: info.provider,
-            available: info.available,
-            free: info.free ?? false,
-            context: info.context,
-            vision: info.vision ?? false,
-          }),
+        const mapped: ModelOption[] = onlySupportedModels(
+          Object.entries(backendModels).map(
+            ([value, info]) => ({
+              value,
+              label: info.label,
+              provider: info.provider,
+              available: info.available,
+              free: info.free ?? false,
+              context: info.context,
+              vision: info.vision ?? false,
+            }),
+          ),
         );
 
         if (mapped.length > 0) {
@@ -128,5 +138,5 @@ export function hydrateModelsStoreFromPersistence(): void {
   if (!persistedModelsCache) return;
 
   modelsLastFetchedAt = persistedModelsCache.fetchedAt;
-  useModelsStore.setState({ models: persistedModelsCache.models });
+  useModelsStore.setState({ models: onlySupportedModels(persistedModelsCache.models) });
 }

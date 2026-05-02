@@ -4,10 +4,14 @@ import {
   useRef, useEffect, useCallback, useState,
   type KeyboardEvent, type ReactNode, type RefObject, type MutableRefObject,
 } from "react";
-import { ArrowUp, Plus, Upload, Folder } from "lucide-react";
+import { ArrowUp, Plus, Upload, Folder, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { AttachmentChip, type AttachmentChipData } from "@/components/ui/attachment-chip";
+import { ProjectIcon } from "@/components/projects/ProjectIcon";
+import { InputNoticeBar, type InputNotice } from "@/components/chat/InputNoticeBar";
+import { Tooltip } from "@/components/ui/tooltip";
+import { useTranslation } from "@/lib/store/i18nStore";
 import { cn } from "@/lib/utils";
 import { createPortal } from "react-dom";
 
@@ -26,6 +30,7 @@ export interface ChatInputBoxProps {
   onBlur?: () => void;
   placeholder?: string;
   disabled?: boolean;
+  sendDisabled?: boolean;
   isSending?: boolean;
   topSlot?: ReactNode;
   bottomSlot?: ReactNode;
@@ -33,15 +38,24 @@ export interface ChatInputBoxProps {
   maxHeight?: number;
   inputRef?: RefObject<HTMLTextAreaElement | null>;
   attachments?: AttachmentChipData[];
+  notice?: InputNotice | null;
   onAttach?: (files: FileList) => void;
   onRemoveAttachment?: (id: string) => void;
   onChipClick?: (chip: AttachmentChipData) => void;
   inProject?: boolean;
   onManageProject?: () => void;
+  currentProject?: {
+    name: string;
+    icon_name?: string | null;
+    accent_color?: string | null;
+  } | null;
+  onClearProject?: () => void;
   /** Drag is happening anywhere over the window (set by parent) */
   externalDragging?: boolean;
   /** Enhance button rendered inside the action bar (left of send) */
   enhanceSlot?: ReactNode;
+  showL1Tooltips?: boolean;
+  bottomSlotFloating?: boolean;
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
@@ -134,12 +148,15 @@ function PlusMenu({ anchorEl, onClose, onUpload, onManageProject, inProject }: P
 export function ChatInputBox({
   value, onChange, onSend, onStop, onFocus, onBlur,
   placeholder = "Type a message...",
-  disabled = false, isSending = false, topSlot, bottomSlot,
+  disabled = false, sendDisabled = false, isSending = false, topSlot, bottomSlot,
   mono = false, maxHeight = 200, inputRef: externalInputRef,
-  attachments, onAttach, onRemoveAttachment, onChipClick,
-  inProject, onManageProject, externalDragging = false,
+  attachments, notice, onAttach, onRemoveAttachment, onChipClick,
+  inProject, onManageProject, currentProject, onClearProject, externalDragging = false,
   enhanceSlot,
+  showL1Tooltips = false,
+  bottomSlotFloating = false,
 }: ChatInputBoxProps) {
+  const { t } = useTranslation();
   const internalRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const plusBtnRef = useRef<HTMLButtonElement>(null);
@@ -191,13 +208,53 @@ export function ChatInputBox({
     if (e.dataTransfer.files.length > 0 && onAttach) onAttach(e.dataTransfer.files);
   };
 
-  const canSend = value.trim().length > 0 && !disabled;
+  const canSend = value.trim().length > 0 && !disabled && !sendDisabled;
   const canStop = isSending && typeof onStop === "function";
   const actionDisabled = !canSend && !canStop;
   const hasAttachments = attachments && attachments.length > 0;
+  const attachButton = (
+    <button
+      ref={plusBtnRef}
+      type="button"
+      disabled={disabled}
+      onClick={() => setMenuOpen((v) => !v)}
+      aria-label="Attach files"
+      className={cn(
+        "flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-transparent bg-transparent text-ds-text-tertiary transition-colors hover:bg-gray-alpha-200 hover:text-ds-text disabled:opacity-50",
+        menuOpen && "bg-gray-alpha-200 text-ds-text",
+      )}
+    >
+      <Plus size={16} strokeWidth={2} />
+    </button>
+  );
+  const sendButton = (
+    <Button
+      variant="default"
+      shape="square"
+      size="sm"
+      iconOnly
+      disabled={actionDisabled}
+      onClick={() => {
+        if (canStop) { onStop?.(); return; }
+        if (canSend) onSend();
+      }}
+      title={canStop ? "Stop generation" : canSend ? "Send (Enter)" : "Type a message"}
+      className="active:scale-[0.88] !h-7 !w-7 overflow-hidden rounded-md"
+    >
+      {canStop ? (
+        <svg width="18" height="18" viewBox="0 0 18 18" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <circle cx="9" cy="9" r="8" stroke="currentColor" strokeWidth="1.75" />
+          <rect x="5.5" y="5.5" width="7" height="7" rx="1" fill="currentColor" />
+        </svg>
+      ) : (
+        <ArrowUp size={16} strokeWidth={2} />
+      )}
+    </Button>
+  );
 
   return (
-    <div className="w-full">
+    <div className="relative w-full overflow-visible">
+      <div className={cn("relative overflow-visible", notice && "pb-[33px]")}>
       {/* Input pill — p-3 matches v0 uniform 12px padding */}
       <div
         onDragEnter={handleDragEnter}
@@ -205,10 +262,10 @@ export function ChatInputBox({
         onDragOver={handleDragOver}
         onDrop={handleDrop}
         className={cn(
-          "relative cursor-text rounded-xl bg-background-100 p-3 transition-[border-color] duration-150",
+          "relative z-20 cursor-text rounded-xl bg-background-100 p-3 transition-[border-color] duration-150",
           dragging
             ? "border border-dashed border-gray-alpha-400"
-            : "border border-gray-alpha-400 hover:border-gray-alpha-500 focus-within:border-gray-alpha-500",
+            : "border border-gray-alpha-400 focus-within:border-gray-alpha-500",
         )}
       >
         {/* Drop overlay — matches v0: dashed border + bg-gray-alpha-100 + full text */}
@@ -274,19 +331,9 @@ export function ChatInputBox({
                     e.target.value = "";
                   }}
                 />
-                <button
-                  ref={plusBtnRef}
-                  type="button"
-                  disabled={disabled}
-                  onClick={() => setMenuOpen((v) => !v)}
-                  aria-label="Attach files"
-                  className={cn(
-                    "flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-transparent bg-transparent text-ds-text-tertiary transition-colors hover:bg-gray-alpha-200 hover:text-ds-text disabled:opacity-50",
-                    menuOpen && "bg-gray-alpha-200 text-ds-text",
-                  )}
-                >
-                  <Plus size={16} strokeWidth={2} />
-                </button>
+                {showL1Tooltips ? (
+                  <Tooltip content={t("tooltip.l1Attach")} trackingId="l1_attach_button">{attachButton}</Tooltip>
+                ) : attachButton}
 
                 {menuOpen && (
                   <PlusMenu
@@ -299,38 +346,66 @@ export function ChatInputBox({
                 )}
               </>
             )}
+
+            {currentProject && (
+              <div
+                className={cn(
+                  "group flex h-7 items-center overflow-hidden rounded-md bg-gray-alpha-200 transition-[width,padding] duration-150",
+                  onClearProject ? "w-7 pr-0 hover:w-[3.45rem]" : "w-7",
+                )}
+              >
+                <button
+                  type="button"
+                  onClick={() => onManageProject?.()}
+                  className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-transparent text-ds-text transition-colors hover:text-ds-text"
+                  title={currentProject.name}
+                  aria-label={currentProject.name}
+                >
+                  <ProjectIcon
+                    iconName={currentProject.icon_name}
+                    color={currentProject.accent_color}
+                    size={16}
+                    strokeWidth={2}
+                  />
+                </button>
+                {onClearProject && (
+                  <button
+                    type="button"
+                    onClick={onClearProject}
+                    className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-transparent text-ds-text-tertiary opacity-0 transition-[opacity,color] duration-150 group-hover:opacity-100 hover:text-ds-text"
+                    aria-label="Remove project"
+                    title="Remove project"
+                  >
+                    <X size={14} strokeWidth={2} />
+                  </button>
+                )}
+              </div>
+            )}
           </div>
 
           {/* Right: enhance + send */}
           <div className="ml-auto flex items-center gap-0.5 sm:gap-1">
             {enhanceSlot}
-            <Button
-              variant="default"
-              shape="square"
-              size="sm"
-              iconOnly
-              disabled={actionDisabled}
-              onClick={() => {
-                if (canStop) { onStop?.(); return; }
-                if (canSend) onSend();
-              }}
-              title={canStop ? "Stop generation" : canSend ? "Send (Enter)" : "Type a message"}
-              className="active:scale-[0.88] !h-7 !w-7 overflow-hidden rounded-md"
-            >
-              {canStop ? (
-                <svg width="18" height="18" viewBox="0 0 18 18" fill="none" xmlns="http://www.w3.org/2000/svg">
-                  <circle cx="9" cy="9" r="8" stroke="currentColor" strokeWidth="1.75" />
-                  <rect x="5.5" y="5.5" width="7" height="7" rx="1" fill="currentColor" />
-                </svg>
-              ) : (
-                <ArrowUp size={16} strokeWidth={2} />
-              )}
-            </Button>
+            {showL1Tooltips ? (
+              <Tooltip content={t("tooltip.l1Send")} trackingId="l1_send_button">{sendButton}</Tooltip>
+            ) : sendButton}
           </div>
         </div>
       </div>
 
-      {bottomSlot && <div className="mt-2">{bottomSlot}</div>}
+        {notice && <InputNoticeBar notice={notice} />}
+      </div>
+
+      {bottomSlot && (
+        <div
+          className={cn(
+            "mt-2",
+            bottomSlotFloating && "absolute left-1/2 top-full z-10 mt-2 w-full -translate-x-1/2",
+          )}
+        >
+          {bottomSlot}
+        </div>
+      )}
     </div>
   );
 }

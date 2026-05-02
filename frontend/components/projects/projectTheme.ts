@@ -74,35 +74,35 @@ export const PROJECT_BADGE_VARIANTS: Record<ProjectColor, NonNullable<BadgeProps
 
 export const PROJECT_COLOR_SWATCH_CLASSES: Record<ProjectColor, string> = {
   gray: "bg-black dark:bg-white shadow-[0_0_0_1px_var(--ds-gray-alpha-400)]",
-  blue: "bg-blue-700",
-  purple: "bg-purple-700",
-  pink: "bg-pink-700",
-  red: "bg-red-700",
-  amber: "bg-amber-700",
-  green: "bg-green-700",
-  teal: "bg-teal-700",
+  blue: "bg-blue-800",
+  purple: "bg-purple-800",
+  pink: "bg-pink-800",
+  red: "bg-red-800",
+  amber: "bg-amber-800",
+  green: "bg-green-800",
+  teal: "bg-teal-800",
 };
 
 export const PROJECT_COLOR_RING_CLASSES: Record<ProjectColor, string> = {
   gray: "ring-black dark:ring-white",
-  blue: "ring-blue-700",
-  purple: "ring-purple-700",
-  pink: "ring-pink-700",
-  red: "ring-red-700",
-  amber: "ring-amber-700",
-  green: "ring-green-700",
-  teal: "ring-teal-700",
+  blue: "ring-blue-800",
+  purple: "ring-purple-800",
+  pink: "ring-pink-800",
+  red: "ring-red-800",
+  amber: "ring-amber-800",
+  green: "ring-green-800",
+  teal: "ring-teal-800",
 };
 
 export const PROJECT_COLOR_ICON_CLASSES: Record<ProjectColor, string> = {
   gray: "text-gray-1000",
-  blue: "text-blue-900",
-  purple: "text-purple-900",
-  pink: "text-pink-900",
-  red: "text-red-900",
-  amber: "text-amber-900",
-  green: "text-green-900",
-  teal: "text-teal-900",
+  blue: "text-blue-800",
+  purple: "text-purple-800",
+  pink: "text-pink-800",
+  red: "text-red-800",
+  amber: "text-amber-800",
+  green: "text-green-800",
+  teal: "text-teal-800",
 };
 
 export const PROJECT_ICON_COMPONENTS: Record<ProjectIconName, LucideIcon> = {

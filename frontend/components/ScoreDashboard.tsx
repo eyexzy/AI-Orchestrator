@@ -64,6 +64,9 @@ interface DashboardDecision {
 
 interface DashboardData {
   current_level: number;
+  auto_level?: number;
+  effective_level?: number;
+  manual_level_override?: number | null;
   suggested_level: number | null;
   self_assessed_level: number | null;
   initial_level: number;
@@ -152,9 +155,9 @@ function Bar({ value, max = 100, color }: { value: number; max?: number; color?:
 function StatCard({ label, value, sub }: { label: string; value: string | number; sub?: string }) {
   return (
     <div className="rounded-xl p-3 bg-gray-alpha-100 border border-gray-alpha-200">
-      <p className="text-xs text-ds-text-tertiary">{label}</p>
-      <p className="mt-0.5 font-mono text-[15px] font-medium text-ds-text">{value}</p>
-      {sub && <p className="mt-0.5 text-[11px] text-ds-text-tertiary">{sub}</p>}
+      <p className="text-[13px] text-ds-text-tertiary">{label}</p>
+      <p className="mt-0.5 text-[15px] font-medium text-ds-text">{value}</p>
+      {sub && <p className="mt-0.5 text-[13px] text-ds-text-tertiary">{sub}</p>}
     </div>
   );
 }
@@ -300,6 +303,7 @@ function TransitionIcon({ action }: { action: string }) {
 export function ScoreDashboard() {
   const {
     level,
+    autoLevel,
     userEmail,
     confidence: localConfidence,
     reasoning,
@@ -317,19 +321,20 @@ export function ScoreDashboard() {
 
   useLayoutEffect(() => {
     const cached = hydrateDashboardCache(userEmail);
-    if (!cached || cached.data.current_level !== level) {
+    if (!cached || (cached.data.auto_level ?? cached.data.current_level) !== autoLevel) {
       return;
     }
 
     setDashboard(cached.data);
     setLoading(false);
-  }, [level, userEmail]);
+  }, [autoLevel, userEmail]);
 
   useEffect(() => {
     let cancelled = false;
     const cacheKey = getDashboardCacheKey(userEmail);
     const cached = hydrateDashboardCache(userEmail);
-    const hasMatchingCache = cached !== null && cached.data.current_level === level;
+    const hasMatchingCache =
+      cached !== null && (cached.data.auto_level ?? cached.data.current_level) === autoLevel;
     const hasFreshCache =
       hasMatchingCache &&
       Date.now() - cached.fetchedAt < PROFILE_PREFERENCES_CACHE_TTL_MS;
@@ -372,10 +377,11 @@ export function ScoreDashboard() {
         if (!cancelled) setLoading(false);
       });
     return () => { cancelled = true; };
-  }, [level, userEmail]); // re-fetch when level changes
+  }, [autoLevel, userEmail]); // re-fetch when Auto level changes
 
-  const accent = LEVEL_COLORS[level] ?? LEVEL_COLORS[1];
-  const progress = progressToNext(normalizedScore, level, thresholds);
+  const dashboardAutoLevel = (dashboard?.auto_level ?? dashboard?.current_level ?? autoLevel) as 1 | 2 | 3;
+  const accent = LEVEL_COLORS[dashboardAutoLevel] ?? LEVEL_COLORS[1];
+  const progress = progressToNext(normalizedScore, dashboardAutoLevel, thresholds);
   const accentText = accent.text;
   const accentBg = accent.bg;
 
@@ -399,7 +405,7 @@ export function ScoreDashboard() {
           <PieChart size={32} strokeWidth={2} />
         </div>
         <p className="text-[15px] text-ds-text-secondary">Waiting for input</p>
-        <p className="mt-1 text-xs text-ds-text-tertiary">
+        <p className="mt-1 text-[14px] text-ds-text-tertiary">
           Send a message to see the analysis
         </p>
       </div>
@@ -412,16 +418,16 @@ export function ScoreDashboard() {
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
           <div
-            className="flex h-10 w-10 items-center justify-center rounded-xl font-mono text-sm font-bold"
+            className="flex h-10 w-10 items-center justify-center rounded-xl text-sm font-bold"
             style={{ backgroundColor: accentBg, color: accentText }}
           >
-            {level}
+            {dashboardAutoLevel}
           </div>
           <div>
             <p className="text-[15px] font-semibold text-ds-text">
-              {LEVEL_NAMES[level] ?? `Level ${level}`}
+              {LEVEL_NAMES[dashboardAutoLevel] ?? `Level ${dashboardAutoLevel}`}
             </p>
-            <p className="text-xs text-ds-text-tertiary">
+            <p className="text-[13px] text-ds-text-tertiary">
               {confidence !== null ? `${Math.round(confidence * 100)}% confidence` : "No data yet"}
             </p>
           </div>
@@ -459,7 +465,7 @@ export function ScoreDashboard() {
         <StatCard
           label="Suggested"
           value={suggestedLevel !== null ? `L${suggestedLevel}` : "—"}
-          sub={suggestedLevel !== null && suggestedLevel !== level ? "differs from current" : undefined}
+          sub={suggestedLevel !== null && suggestedLevel !== dashboardAutoLevel ? "differs from current" : undefined}
         />
         <StatCard
           label="Confidence"
@@ -473,14 +479,14 @@ export function ScoreDashboard() {
         <>
           <div className="divider" />
           <div className="space-y-2">
-            <div className="flex items-center justify-between text-xs">
+            <div className="flex items-center justify-between text-[14px]">
               <span className="text-ds-text-tertiary">Progress</span>
-              <span className="font-mono text-ds-text-secondary">
+              <span className="font-medium text-ds-text-secondary">
                 {score.toFixed(1)}/15.0
               </span>
             </div>
             <Bar value={progress.percent} color={accentText} />
-            <p className="text-xs text-ds-text-tertiary">{progress.label}</p>
+            <p className="text-[14px] text-ds-text-tertiary">{progress.label}</p>
           </div>
         </>
       )}
@@ -488,7 +494,7 @@ export function ScoreDashboard() {
       {/* Mentor tip */}
       {hasAnalyzed && breakdown.length > 0 && (
         <>
-          <TipCard breakdown={breakdown} reasoning={reasoning} level={level} score={score} />
+          <TipCard breakdown={breakdown} reasoning={reasoning} level={dashboardAutoLevel} score={score} />
         </>
       )}
 
@@ -500,9 +506,9 @@ export function ScoreDashboard() {
             <p className="config-label">Breakdown</p>
             {breakdown.map((item) => (
               <div key={item.category} className="space-y-1">
-                <div className="flex items-center justify-between text-xs">
+                <div className="flex items-center justify-between text-[13px]">
                   <span className="text-ds-text-secondary">{item.category}</span>
-                  <span className="font-mono text-ds-text-tertiary">
+                  <span className="font-medium text-ds-text-tertiary">
                     {item.points < 0 ? "" : "+"}{item.points.toFixed(1)}/{item.max_points.toFixed(1)}
                   </span>
                 </div>
@@ -526,8 +532,8 @@ export function ScoreDashboard() {
                 <div key={f.label} className="flex items-center gap-2 rounded-lg px-3 py-2 bg-gray-alpha-100 border border-gray-alpha-200">
                   <f.icon size={13} className="shrink-0 text-ds-text-tertiary" />
                   <div className="min-w-0">
-                    <p className="text-[11px] text-ds-text-tertiary truncate">{f.label}</p>
-                    <p className="font-mono text-[12px] font-medium text-ds-text">{f.value}</p>
+                    <p className="truncate text-[13px] text-ds-text-tertiary">{f.label}</p>
+                    <p className="text-[13px] font-medium text-ds-text">{f.value}</p>
                   </div>
                 </div>
               ))}
@@ -568,19 +574,19 @@ export function ScoreDashboard() {
                 return (
                   <div
                     key={i}
-                    className="flex items-center justify-between rounded-lg px-3 py-2 text-xs bg-gray-alpha-100 border border-gray-alpha-200"
+                    className="flex items-center justify-between rounded-lg border border-gray-alpha-200 bg-gray-alpha-100 px-3 py-2 text-[13px]"
                   >
                     <div className="flex items-center gap-2">
                       <TransitionIcon action={action} />
-                      <span className="font-mono text-ds-text">L{d.final_level}</span>
+                      <span className="font-medium text-ds-text">L{d.final_level}</span>
                       <span className="text-ds-text-tertiary">{action.replace("_", " ")}</span>
                     </div>
                     <div className="flex items-center gap-3 text-ds-text-tertiary">
                       {d.rule_score !== null && (
-                        <span className="font-mono">R:{d.rule_score.toFixed(1)}</span>
+                        <span className="font-medium">R:{d.rule_score.toFixed(1)}</span>
                       )}
                       {d.confidence !== null && (
-                        <span className="font-mono">{Math.round(d.confidence * 100)}%</span>
+                        <span className="font-medium">{Math.round(d.confidence * 100)}%</span>
                       )}
                       <span>{ts}</span>
                     </div>

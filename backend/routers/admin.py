@@ -10,7 +10,7 @@ from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import ml_classifier
-from database import InteractionLog, MLFeedback, MLModelCache
+from database import AdaptationDecision, AdaptationFeedback, InteractionLog, MLFeedback, MLModelCache, UserExperienceProfile
 from dependencies import check_admin_key, get_db, limiter
 from schemas.api import RetrainResponse
 from services.cache import cache
@@ -109,8 +109,7 @@ async def ml_retrain(
             model_type=model_type,
             use_tuning=use_tuning,
         )
-        clf = eval_result["classifier"]
-        ml_classifier._classifier.from_dict(clf.to_dict())
+        # Hot-reload already done inside retrain_from_db — just invalidate cache.
         await _invalidate_admin_stats_cache()
 
         return RetrainResponse(
@@ -132,6 +131,77 @@ async def ml_retrain(
     except Exception as e:
         logger.error(f"[retrain] Retrain failed: {type(e).__name__}: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@router.get("/dataset/stats", dependencies=[Depends(check_admin_key)])
+async def dataset_stats(db: AsyncSession = Depends(get_db)):
+    """Return training dataset statistics with quality assessment."""
+    SILVER_CONF_THRESHOLD = 0.6
+    SYNTHETIC_COUNT = 60  # matches _create_synthetic_training_data()
+    TARGET_TEST_USERS = 100
+    TARGET_GOLD_SAMPLES = 200
+    TARGET_SILVER_SAMPLES = 1000
+    TARGET_BRONZE_SAMPLES = 100
+    TARGET_REAL_SAMPLES = 1000
+
+    gold_r = await db.execute(select(func.count(AdaptationFeedback.id)))
+    gold_count = gold_r.scalar() or 0
+
+    silver_r = await db.execute(
+        select(func.count(AdaptationDecision.id))
+        .where(AdaptationDecision.confidence >= SILVER_CONF_THRESHOLD)
+    )
+    silver_count = silver_r.scalar() or 0
+
+    bronze_r = await db.execute(select(func.count(MLFeedback.id)))
+    bronze_count = bronze_r.scalar() or 0
+
+    # Gold distribution by level
+    dist_r = await db.execute(
+        select(AdaptationFeedback.ui_level_at_time, func.count(AdaptationFeedback.id))
+        .where(AdaptationFeedback.ui_level_at_time.in_([1, 2, 3]))
+        .group_by(AdaptationFeedback.ui_level_at_time)
+    )
+    gold_dist = {str(row[0]): row[1] for row in dist_r.all()}
+
+    real_total = gold_count + silver_count + bronze_count
+    # Synthetic is added when: total too low OR any class has 0 samples
+    has_missing_class = any(gold_dist.get(str(l), 0) == 0 for l in [1, 2, 3])
+    will_use_synthetic = real_total < TARGET_REAL_SAMPLES or has_missing_class
+
+    issues: list[str] = []
+    if gold_count < TARGET_GOLD_SAMPLES:
+        issues.append(f"Золоті приклади: {gold_count}/{TARGET_GOLD_SAMPLES} - потрібно більше явного фідбеку")
+    if real_total < TARGET_REAL_SAMPLES:
+        issues.append(f"Реальні приклади: {real_total}/{TARGET_REAL_SAMPLES} - ціль розрахована на 100 тестерів")
+    if gold_dist:
+        counts = [gold_dist.get(str(l), 0) for l in [1, 2, 3]]
+        missing = [f"L{l}" for l in [1, 2, 3] if gold_dist.get(str(l), 0) == 0]
+        if missing:
+            issues.append(f"Немає золотих прикладів для {', '.join(missing)}")
+        elif max(counts) > 0 and min(counts) > 0 and max(counts) / min(counts) > 3:
+            issues.append("Дисбаланс класів у золотих мітках (>3x різниця між рівнями)")
+
+    recommendation = "ready" if gold_count >= TARGET_GOLD_SAMPLES and real_total >= TARGET_REAL_SAMPLES and not any("Дисбаланс" in i or "Немає золотих" in i for i in issues) else "collect_more"
+
+    return {
+        "gold": gold_count,
+        "silver": silver_count,
+        "bronze": bronze_count,
+        "synthetic": SYNTHETIC_COUNT,
+        "real_total": real_total,
+        "will_use_synthetic": will_use_synthetic,
+        "gold_distribution": gold_dist,
+        "issues": issues,
+        "recommendation": recommendation,
+        "target_test_users": TARGET_TEST_USERS,
+        "target_gold_samples": TARGET_GOLD_SAMPLES,
+        "target_silver_samples": TARGET_SILVER_SAMPLES,
+        "target_bronze_samples": TARGET_BRONZE_SAMPLES,
+        "target_real_samples": TARGET_REAL_SAMPLES,
+        "min_gold_recommended": TARGET_GOLD_SAMPLES,
+        "min_real_recommended": TARGET_REAL_SAMPLES,
+    }
 
 
 # Export / stats
@@ -271,3 +341,201 @@ async def ml_stats(db: AsyncSession = Depends(get_db)):
         ADMIN_STATS_CACHE_TTL_SECONDS,
         build_ml_stats_payload,
     )
+
+
+# ── Users monitoring ────────────────────────────────────────────────────────
+
+@router.get("/users/stats", dependencies=[Depends(check_admin_key)])
+async def users_stats(db: AsyncSession = Depends(get_db)):
+    """Active-user counts and level distribution across all users."""
+    from datetime import datetime, timezone, timedelta
+
+    now = datetime.now(timezone.utc)
+    hour_ago = now - timedelta(hours=1)
+    day_ago  = now - timedelta(hours=24)
+
+    total_r = await db.execute(select(func.count(UserExperienceProfile.user_email)))
+    total_users = total_r.scalar() or 0
+
+    active_today_r = await db.execute(
+        select(func.count(func.distinct(InteractionLog.user_email)))
+        .where(InteractionLog.timestamp >= day_ago)
+    )
+    active_today = active_today_r.scalar() or 0
+
+    active_hour_r = await db.execute(
+        select(func.count(func.distinct(InteractionLog.user_email)))
+        .where(InteractionLog.timestamp >= hour_ago)
+    )
+    active_hour = active_hour_r.scalar() or 0
+
+    level_r = await db.execute(
+        select(UserExperienceProfile.current_level, func.count(UserExperienceProfile.user_email))
+        .group_by(UserExperienceProfile.current_level)
+    )
+    level_dist = {str(row[0]): row[1] for row in level_r.all() if row[0] in (1, 2, 3)}
+
+    return {
+        "total_users": total_users,
+        "active_today": active_today,
+        "active_last_hour": active_hour,
+        "level_distribution": level_dist,
+    }
+
+
+@router.get("/users/list", dependencies=[Depends(check_admin_key)])
+async def users_list(db: AsyncSession = Depends(get_db)):
+    """All users with their current level, activity, and behavioral metrics."""
+    stats_sub = (
+        select(
+            InteractionLog.user_email,
+            func.count(InteractionLog.id).label("interaction_count"),
+            func.max(InteractionLog.timestamp).label("last_active"),
+        )
+        .group_by(InteractionLog.user_email)
+        .subquery()
+    )
+
+    result = await db.execute(
+        select(
+            UserExperienceProfile.user_email,
+            UserExperienceProfile.current_level,
+            UserExperienceProfile.confidence_last,
+            UserExperienceProfile.profile_features_json,
+            stats_sub.c.interaction_count,
+            stats_sub.c.last_active,
+        )
+        .outerjoin(stats_sub, UserExperienceProfile.user_email == stats_sub.c.user_email)
+        .order_by(stats_sub.c.last_active.desc().nullslast())
+    )
+
+    users = []
+    for row in result.all():
+        features: dict = {}
+        try:
+            features = json.loads(row.profile_features_json or "{}")
+        except Exception:
+            pass
+        users.append({
+            "email": row.user_email,
+            "current_level": row.current_level or 1,
+            "confidence": round(float(row.confidence_last or 0), 2),
+            "interaction_count": row.interaction_count or 0,
+            "sessions_count": int(features.get("sessions_count", 0)),
+            "last_active": row.last_active.isoformat() if row.last_active else None,
+            "help_ratio": round(float(features.get("help_ratio", 0)), 2),
+            "avg_prompt_length": int(features.get("avg_prompt_length_rolling", 0)),
+        })
+
+    return {"users": users, "total": len(users)}
+
+
+@router.get("/users/issues", dependencies=[Depends(check_admin_key)])
+async def users_issues(db: AsyncSession = Depends(get_db)):
+    """Heuristic adaptation issues that need admin attention."""
+    stats_sub = (
+        select(
+            InteractionLog.user_email,
+            func.count(InteractionLog.id).label("interaction_count"),
+            func.max(InteractionLog.timestamp).label("last_active"),
+        )
+        .group_by(InteractionLog.user_email)
+        .subquery()
+    )
+
+    result = await db.execute(
+        select(
+            UserExperienceProfile.user_email,
+            UserExperienceProfile.current_level,
+            UserExperienceProfile.confidence_last,
+            UserExperienceProfile.profile_features_json,
+            stats_sub.c.interaction_count,
+            stats_sub.c.last_active,
+        )
+        .outerjoin(stats_sub, UserExperienceProfile.user_email == stats_sub.c.user_email)
+        .order_by(stats_sub.c.last_active.desc().nullslast())
+    )
+
+    issues = []
+    for row in result.all():
+        try:
+            features = json.loads(row.profile_features_json or "{}")
+            if not isinstance(features, dict):
+                features = {}
+        except Exception:
+            features = {}
+
+        email = row.user_email
+        level = int(row.current_level or 1)
+        confidence = float(row.confidence_last or 0)
+        interactions = int(row.interaction_count or 0)
+        help_ratio = float(features.get("help_ratio", 0) or 0)
+        avg_prompt_length = float(features.get("avg_prompt_length_rolling", 0) or 0)
+
+        if interactions >= 15 and level < 3 and confidence < 0.3:
+            issues.append({
+                "email": email,
+                "severity": "warning",
+                "code": "stuck_level",
+                "title": f"Застряг на L{level}",
+                "detail": f"{interactions} промптів, впевненість {confidence:.2f}",
+                "last_active": row.last_active.isoformat() if row.last_active else None,
+            })
+
+        if interactions >= 5 and help_ratio >= 0.7:
+            issues.append({
+                "email": email,
+                "severity": "warning",
+                "code": "high_help_ratio",
+                "title": "Висока частка допомоги",
+                "detail": f"Частка допомоги {help_ratio:.2f}; користувач може не знаходити функції",
+                "last_active": row.last_active.isoformat() if row.last_active else None,
+            })
+
+        if interactions >= 8 and avg_prompt_length < 20 and level >= 2:
+            issues.append({
+                "email": email,
+                "severity": "info",
+                "code": "short_prompts",
+                "title": "Короткі промпти для поточного рівня",
+                "detail": f"Середня довжина промпта {avg_prompt_length:.0f} символів на L{level}",
+                "last_active": row.last_active.isoformat() if row.last_active else None,
+            })
+
+    severity_rank = {"warning": 0, "info": 1}
+    issues.sort(key=lambda item: (severity_rank.get(item["severity"], 9), item["email"]))
+    return {"issues": issues[:30], "total": len(issues)}
+
+
+@router.get("/activity/hourly", dependencies=[Depends(check_admin_key)])
+async def hourly_activity(db: AsyncSession = Depends(get_db)):
+    """Interaction counts per hour for the last 24 hours."""
+    from datetime import datetime, timezone, timedelta
+    from collections import defaultdict
+
+    now     = datetime.now(timezone.utc)
+    day_ago = now - timedelta(hours=24)
+
+    result = await db.execute(
+        select(InteractionLog.timestamp)
+        .where(InteractionLog.timestamp >= day_ago)
+        .order_by(InteractionLog.timestamp)
+    )
+    timestamps = [row[0] for row in result.all() if row[0]]
+
+    hourly: dict[str, int] = defaultdict(int)
+    for ts in timestamps:
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=timezone.utc)
+        hourly[ts.strftime("%Y-%m-%dT%H:00")] += 1
+
+    hours_data = []
+    for h in range(24):
+        t = (now - timedelta(hours=23 - h)).replace(minute=0, second=0, microsecond=0)
+        hours_data.append({
+            "label": t.strftime("%H:00"),
+            "count": hourly.get(t.strftime("%Y-%m-%dT%H:00"), 0),
+        })
+
+    return {"hours": hours_data, "total": len(timestamps)}
+

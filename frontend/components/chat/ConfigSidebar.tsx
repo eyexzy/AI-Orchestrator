@@ -68,10 +68,51 @@ function SidebarTemplateItem({ tpl, config }: { tpl: PromptTemplate; config: Sid
   );
 }
 
+function InfoTooltipLabel({
+  label,
+  tooltip,
+  tooltipId,
+  align = "start",
+  className,
+}: {
+  label: string;
+  tooltip: string;
+  tooltipId: string;
+  align?: "center" | "start" | "end";
+  className?: string;
+}) {
+  return (
+    <Tooltip align={align} content={tooltip} trackingId={tooltipId}>
+      <span className={cn("inline-flex items-center gap-1", className)}>
+        <span>{label}</span>
+        <span className="inline-flex h-4 w-4 shrink-0 items-center justify-center text-ds-text-tertiary">
+          <svg
+            aria-hidden="true"
+            viewBox="0 0 16 16"
+            className="h-4 w-4"
+          >
+            <path
+              d="M14 8C14 11.3137 11.3137 14 8 14C4.68629 14 2 11.3137 2 8C2 4.68629 4.68629 2 8 2C11.3137 2 14 4.68629 14 8Z"
+              fill="currentColor"
+              fillOpacity="0.08"
+            />
+            <path
+              fillRule="evenodd"
+              clipRule="evenodd"
+              d="M8 6C8.55228 6 9 5.55228 9 5C9 4.44772 8.55228 4 8 4C7.44771 4 7 4.44772 7 5C7 5.55228 7.44771 6 8 6ZM7 7H6.25V8.5H7H7.24999V10.5V11.25H8.74999V10.5V8C8.74999 7.44772 8.30227 7 7.74999 7H7Z"
+              fill="currentColor"
+            />
+          </svg>
+        </span>
+      </span>
+    </Tooltip>
+  );
+}
+
 const ConfigSidebarComponent = ({ config, forceVisible }: { config: SidebarConfig; forceVisible?: boolean }) => {
   const { t, language } = useTranslation();
   const level = useUserLevelStore((s) => s.level);
-  const { trackAdvancedFeature, trackTooltipClick } = useUserLevelStore();
+  const { trackAdvancedFeature } = useUserLevelStore();
   const models = useModelsStore((s) => s.models);
   const fetchModels = useModelsStore((s) => s.fetchModels);
   const customTemplates = useTemplatesStore((s) => s.templates);
@@ -82,11 +123,6 @@ const ConfigSidebarComponent = ({ config, forceVisible }: { config: SidebarConfi
     [customTemplates, level, language, hiddenTemplates],
   );
   const levelMeta = LEVEL_META[level];
-
-  const handleTooltipOpen = useCallback((id: string) => {
-    trackTooltipClick();
-    trackEvent("tooltip_opened", { tooltip_id: id });
-  }, [trackTooltipClick]);
 
   const tempTracked = useRef(false);
   const modelTracked = useRef(false);
@@ -148,9 +184,12 @@ const ConfigSidebarComponent = ({ config, forceVisible }: { config: SidebarConfi
           <div className="flex flex-col gap-5">
             <div className="flex flex-col gap-2">
               <div className="flex items-center justify-between">
-                <Tooltip align="start" content={t("tooltip.compare")} onOpen={() => handleTooltipOpen("compare")}>
-                  <span className="text-[13px] font-medium text-ds-text">{t("config.compare")}</span>
-                </Tooltip>
+                <InfoTooltipLabel
+                  label={t("config.compare")}
+                  tooltip={t("tooltip.compare")}
+                  tooltipId="compare"
+                  className="text-[15px] font-medium text-ds-text"
+                />
                 <Switch
                   checked={config.compareEnabled ?? false}
                   onCheckedChange={(v) => {
@@ -167,9 +206,12 @@ const ConfigSidebarComponent = ({ config, forceVisible }: { config: SidebarConfi
 
             <div className="flex flex-col gap-2">
               <div className="flex items-center justify-between">
-                <Tooltip align="start" content={t("tooltip.check3x")} onOpen={() => handleTooltipOpen("check3x")}>
-                  <span className="text-[13px] font-medium text-ds-text">{t("config.check3x")}</span>
-                </Tooltip>
+                <InfoTooltipLabel
+                  label={t("config.check3x")}
+                  tooltip={t("tooltip.check3x")}
+                  tooltipId="check3x"
+                  className="text-[15px] font-medium text-ds-text"
+                />
                 <Switch
                   checked={config.selfConsistencyEnabled ?? false}
                   onCheckedChange={(v) => {
@@ -186,9 +228,12 @@ const ConfigSidebarComponent = ({ config, forceVisible }: { config: SidebarConfi
 
             <div className="flex flex-col gap-2">
               <div className="flex items-center justify-between">
-                <Tooltip align="start" content={t("tooltip.rawJson")} onOpen={() => handleTooltipOpen("rawJson")}>
-                  <span className="text-[13px] font-medium text-ds-text">{t("config.rawJson")}</span>
-                </Tooltip>
+                <InfoTooltipLabel
+                  label={t("config.rawJson")}
+                  tooltip={t("tooltip.rawJson")}
+                  tooltipId="rawJson"
+                  className="text-[15px] font-medium text-ds-text"
+                />
                 <Switch
                   checked={config.rawJsonEnabled ?? false}
                   onCheckedChange={(v) => {
@@ -215,7 +260,7 @@ const ConfigSidebarComponent = ({ config, forceVisible }: { config: SidebarConfi
               <div className="flex flex-col gap-1.5">
                 <div className="flex items-center gap-1.5">
                   <span className="h-1.5 w-1.5 rounded-full bg-blue-800" />
-                  <span className="text-[12px] font-medium text-ds-text-secondary">
+                  <span className="text-[14px] font-medium text-ds-text-secondary">
                     {t("config.modelA")}
                   </span>
                 </div>
@@ -236,7 +281,7 @@ const ConfigSidebarComponent = ({ config, forceVisible }: { config: SidebarConfi
               <div className="flex flex-col gap-1.5">
                 <div className="flex items-center gap-1.5">
                   <span className="h-1.5 w-1.5 rounded-full bg-green-700" />
-                  <span className="text-[12px] font-medium text-ds-text-secondary">
+                  <span className="text-[14px] font-medium text-ds-text-secondary">
                     {t("config.modelB")}
                   </span>
                 </div>
@@ -295,12 +340,13 @@ const ConfigSidebarComponent = ({ config, forceVisible }: { config: SidebarConfi
 
           <div className="space-y-2">
             <div className="flex items-center justify-between">
-              <Tooltip align="start" content={t("tooltip.temperature")} onOpen={() => handleTooltipOpen("temperature")}>
-                <span className="block cursor-help pb-0 text-[13px] font-medium text-ds-text">
-                  {t("config.temperature")}
-                </span>
-              </Tooltip>
-              <span className="rounded bg-gray-alpha-200 px-2 py-0.5 font-mono text-xs font-medium text-ds-gray-1000">
+              <InfoTooltipLabel
+                label={t("config.temperature")}
+                tooltip={t("tooltip.temperature")}
+                tooltipId="temperature"
+                className="text-[15px] font-medium text-ds-text"
+              />
+              <span className="rounded bg-gray-alpha-200 px-2 py-0.5 text-[13px] font-medium text-ds-gray-1000">
                 {config.temperature.toFixed(2)}
               </span>
             </div>
@@ -322,12 +368,13 @@ const ConfigSidebarComponent = ({ config, forceVisible }: { config: SidebarConfi
 
           <div className="space-y-2">
             <div className="flex items-center justify-between">
-              <Tooltip align="start" content={t("tooltip.maxTokens")} onOpen={() => handleTooltipOpen("maxTokens")}>
-                <span className="block cursor-help pb-0 text-[13px] font-medium text-ds-text">
-                  {t("config.maxTokens")}
-                </span>
-              </Tooltip>
-              <span className="rounded bg-gray-alpha-200 px-2 py-0.5 font-mono text-xs font-medium text-ds-gray-1000">
+              <InfoTooltipLabel
+                label={t("config.maxTokens")}
+                tooltip={t("tooltip.maxTokens")}
+                tooltipId="maxTokens"
+                className="text-[15px] font-medium text-ds-text"
+              />
+              <span className="rounded bg-gray-alpha-200 px-2 py-0.5 text-[13px] font-medium text-ds-gray-1000">
                 {config.maxTokens}
               </span>
             </div>
@@ -344,12 +391,13 @@ const ConfigSidebarComponent = ({ config, forceVisible }: { config: SidebarConfi
             <>
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
-                  <Tooltip align="start" content={t("tooltip.topP")} onOpen={() => handleTooltipOpen("topP")}>
-                    <span className="block cursor-help pb-0 text-[13px] font-medium text-ds-text">
-                      {t("config.topP")}
-                    </span>
-                  </Tooltip>
-                  <span className="rounded bg-gray-alpha-200 px-2 py-0.5 font-mono text-xs font-medium text-ds-gray-1000">
+                  <InfoTooltipLabel
+                    label={t("config.topP")}
+                    tooltip={t("tooltip.topP")}
+                    tooltipId="topP"
+                    className="text-[15px] font-medium text-ds-text"
+                  />
+                  <span className="rounded bg-gray-alpha-200 px-2 py-0.5 text-[13px] font-medium text-ds-gray-1000">
                     {(config.topP ?? 1.0).toFixed(2)}
                   </span>
                 </div>
@@ -422,11 +470,11 @@ const ConfigSidebarComponent = ({ config, forceVisible }: { config: SidebarConfi
                 }
               }}
               placeholder={t("config.systemPlaceholder")}
-              className="min-h-[100px] font-mono text-[13px] leading-relaxed"
+              className="min-h-[100px] text-[14px] leading-relaxed"
             />
             <div className="flex items-center justify-between">
               {isDefaultSystem(config.system ?? "") ? (
-                <span className="text-xs text-ds-text-tertiary">{t("config.systemDefault")}</span>
+                <span className="text-[14px] text-ds-text-tertiary">{t("config.systemDefault")}</span>
               ) : (
                 <span />
               )}
@@ -434,7 +482,7 @@ const ConfigSidebarComponent = ({ config, forceVisible }: { config: SidebarConfi
                 <button
                   type="button"
                   onClick={() => config.setSystem!(getDefaultSystem())}
-                  className="text-xs font-medium text-[var(--geist-link-color)] transition-colors hover:text-blue-700"
+                  className="text-[14px] font-medium text-[var(--geist-link-color)] transition-colors hover:text-blue-700"
                 >
                   {t("config.systemReset")}
                 </button>

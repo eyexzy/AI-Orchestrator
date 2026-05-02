@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import { MoreHorizontal, Pencil, Star, Trash2 } from "lucide-react";
 import { ActionMenu } from "@/components/ui/action-menu";
 import { Description } from "@/components/ui/description";
@@ -69,6 +70,7 @@ export function ProjectCard({
   onEdit,
   onDelete,
 }: ProjectCardProps) {
+  const router = useRouter();
   const { t, language } = useTranslation();
   const menuAnchorRef = useRef<HTMLButtonElement>(null);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -77,6 +79,9 @@ export function ProjectCard({
     language === "uk" ? "uk-UA" : "en-US",
     t("projects.updatedLabel"),
   );
+  const prefetchProjectRoute = () => {
+    router.prefetch(`/projects/${project.id}`);
+  };
 
   return (
     <>
@@ -93,6 +98,8 @@ export function ProjectCard({
                   onOpen();
                 }
               }}
+              onMouseEnter={prefetchProjectRoute}
+              onFocus={prefetchProjectRoute}
               className="min-w-0 flex-1 cursor-pointer outline-none focus:outline-none focus-visible:outline-none"
             >
               <div className="flex min-w-0 items-start gap-2">
@@ -132,6 +139,8 @@ export function ProjectCard({
                 onOpen();
               }
             }}
+            onMouseEnter={prefetchProjectRoute}
+            onFocus={prefetchProjectRoute}
             className="min-w-0 cursor-pointer overflow-hidden pt-2 outline-none focus:outline-none focus-visible:outline-none"
           >
             {project.description ? (
@@ -151,6 +160,8 @@ export function ProjectCard({
                 onOpen();
               }
             }}
+            onMouseEnter={prefetchProjectRoute}
+            onFocus={prefetchProjectRoute}
             className="cursor-pointer self-end truncate text-[13px] leading-4 text-ds-text-tertiary outline-none focus:outline-none focus-visible:outline-none"
           >
             {updatedLabel}

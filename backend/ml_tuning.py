@@ -1,5 +1,5 @@
 """
-Hyperparameter tuning utilities for ML models used in AI-Orchestrator.
+Hyperparameter tuning utilities for ML models used in Nexa.
 
 Supports GridSearchCV for:
 - RandomForestClassifier: n_estimators, max_depth

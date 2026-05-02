@@ -2,8 +2,7 @@
 
 import { useState, useRef, useEffect, useCallback } from "react";
 import {
-  Pencil, Copy, Check, X, Send,
-  ChevronDown, ChevronUp, GitBranchPlus,
+  Pencil, Copy, Check, X, Send, GitFork,
 } from "lucide-react";
 import { useChatStore } from "@/lib/store/chatStore";
 import type { MessageAttachment } from "@/lib/store/chatStore";
@@ -14,10 +13,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { AttachmentChip } from "@/components/ui/attachment-chip";
 import { FilePreviewModal } from "@/components/ui/file-preview-modal";
 import type { AttachmentChipData } from "@/components/ui/attachment-chip";
-import { cn } from "@/lib/utils";
 import { ActionBtn } from "./MessageUI";
 
-const COLLAPSE_HEIGHT = 300;
 const EDIT_TEXTAREA_MAX_HEIGHT = 240;
 
 function toChipData(att: MessageAttachment): AttachmentChipData {
@@ -46,15 +43,7 @@ export function UserMessageBubble({
   const [draft, setDraft] = useState(content);
   const [copied, setCopied] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const contentRef = useRef<HTMLDivElement>(null);
-  const [isOverflow, setIsOverflow] = useState(false);
-  const [expanded, setExpanded] = useState(false);
   const [previewChip, setPreviewChip] = useState<AttachmentChipData | null>(null);
-
-  useEffect(() => {
-    const el = contentRef.current;
-    if (el) setIsOverflow(el.scrollHeight > COLLAPSE_HEIGHT);
-  }, [content]);
 
   useEffect(() => {
     if (editing && textareaRef.current) {
@@ -128,8 +117,6 @@ export function UserMessageBubble({
     );
   }
 
-  const collapsed = isOverflow && !expanded;
-
   return (
     <>
       <FilePreviewModal chip={previewChip} onClose={() => setPreviewChip(null)} />
@@ -154,26 +141,9 @@ export function UserMessageBubble({
           <div
             className="relative max-w-[85%] sm:max-w-[600px] rounded-2xl bg-gray-200 dark:bg-gray-alpha-200 px-5 py-3 text-[15px] leading-relaxed text-foreground"
           >
-            <div
-              ref={contentRef}
-              className={cn("whitespace-pre-wrap [word-break:break-word]", collapsed && "line-clamp-[12] overflow-hidden")}
-              style={collapsed ? { display: "-webkit-box", WebkitBoxOrient: "vertical" } : {}}
-            >
+            <div className="whitespace-pre-wrap [word-break:break-word]">
               {content}
             </div>
-
-            {isOverflow && (
-              <div className="mt-4 flex justify-center w-full">
-                <Button
-                  variant="secondary" size="sm" shape="rounded"
-                  onClick={() => setExpanded(!expanded)}
-                  leftIcon={expanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
-                  className="bg-background-100 border-gray-alpha-400 text-ds-text font-medium"
-                >
-                  {expanded ? t("msg.showLess") : t("msg.showMore")}
-                </Button>
-              </div>
-            )}
           </div>
         )}
 
@@ -184,7 +154,7 @@ export function UserMessageBubble({
           </ActionBtn>
           {!isOptimistic && (
             <ActionBtn onClick={() => { void forkChatFromMessage(id); }} label={t("msg.forkFromHere")}>
-              <GitBranchPlus size={14} strokeWidth={2} />
+              <GitFork size={14} strokeWidth={2} />
             </ActionBtn>
           )}
           <ActionBtn onClick={() => { setDraft(content); setEditing(true); }} label={t("msg.edit")}>

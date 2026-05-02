@@ -19,7 +19,15 @@ import { useUserLevelStore } from "@/lib/store/userLevelStore";
 export function FeedbackModal({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
   const { t } = useTranslation();
   const level = useUserLevelStore((s) => s.level);
+  const autoLevel = useUserLevelStore((s) => s.autoLevel);
+  const suggestedLevel = useUserLevelStore((s) => s.suggestedLevel);
+  const manualOverride = useUserLevelStore((s) => s.manualOverride);
   const sessionId = useUserLevelStore((s) => s.sessionId);
+  const chatId = useUserLevelStore((s) => s.chatId);
+  const metrics = useUserLevelStore((s) => s.metrics);
+  const confidence = useUserLevelStore((s) => s.confidence);
+  const normalizedScore = useUserLevelStore((s) => s.normalizedScore);
+  const hasAnalyzed = useUserLevelStore((s) => s.hasAnalyzed);
 
   const [mood, setMood] = useState<"sad" | "neutral" | "smile" | null>(null);
   const [text, setText] = useState("");
@@ -50,16 +58,42 @@ export function FeedbackModal({ open, onOpenChange }: { open: boolean; onOpenCha
 
       // 2) Adaptation feedback — explicit label for the adaptation engine
       if (levelAgree) {
+        const manualOverrideActive = manualOverride !== null;
         promises.push(
           fetch("/api/adaptation-feedback", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               session_id: sessionId,
+              chat_id: chatId,
               ui_level_at_time: level,
+              suggested_level_at_time: suggestedLevel,
               question_type: "periodic_level_check",
               answer_value: levelAgree,
-              feature_snapshot: {},
+              feature_snapshot: {
+                ui_level: level,
+                auto_level_at_time: autoLevel,
+                effective_ui_level_at_time: level,
+                suggested_level_at_time: suggestedLevel,
+                manual_override_active: manualOverrideActive,
+                manual_level_override: manualOverride,
+                normalized_score: normalizedScore,
+                confidence,
+                has_analyzed: hasAnalyzed,
+                session_message_count: metrics.sessionMessageCount,
+                avg_prompt_length: metrics.avgPromptLength,
+                chars_per_second: metrics.charsPerSecond,
+                changed_temperature: metrics.changedTemperature,
+                changed_model: metrics.changedModel,
+                used_system_prompt: metrics.usedSystemPrompt,
+                used_variables: metrics.usedVariables,
+                advanced_features_count: metrics.advancedFeaturesCount,
+                tooltip_click_count: metrics.tooltipClickCount,
+                suggestion_click_count: metrics.suggestionClickCount,
+                cancel_action_count: metrics.cancelActionCount,
+                level_transition_count: metrics.levelTransitionCount,
+                session_duration_seconds: metrics.sessionDurationSeconds,
+              },
             }),
           }),
         );

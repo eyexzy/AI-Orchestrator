@@ -62,19 +62,19 @@ function FewShotCard({
       <div className="flex flex-col gap-2 leading-relaxed">
         {ex.input ? (
           <div className="flex min-w-0 items-center gap-1.5">
-            <p className="shrink-0 text-[12px] font-medium leading-none text-ds-text">
+            <p className="shrink-0 text-[14px] font-medium leading-5 text-ds-text">
               {t("config.fewShotInputLabel")}:
             </p>
-            <span className="min-w-0 truncate text-[12px] text-ds-text-secondary">
+            <span className="min-w-0 truncate text-[14px] leading-5 text-ds-text-secondary">
               {ex.input}
             </span>
           </div>
         ) : null}
         <div className="flex min-w-0 items-center gap-1.5">
-          <p className="shrink-0 text-[12px] font-medium leading-none text-ds-text">
+          <p className="shrink-0 text-[14px] font-medium leading-5 text-ds-text">
             {t("config.fewShotOutputLabel")}:
           </p>
-          <span className="min-w-0 truncate text-[12px] text-ds-text-secondary">
+          <span className="min-w-0 truncate text-[14px] leading-5 text-ds-text-secondary">
             {ex.output || <span className="italic opacity-50">{t("fewShotEditor.empty")}</span>}
           </span>
         </div>
@@ -191,26 +191,26 @@ export function FewShotEditor({
 
           <div className="px-6 py-4 space-y-5 max-h-[60vh] overflow-y-auto">
             <div className="space-y-2">
-                <p className="text-[13px] font-medium text-ds-text">
+                <p className="text-[14px] font-medium text-ds-text">
                   {t("config.fewShotInputLabel")}
                 </p>
               <Textarea
                 value={draftInput}
                 onChange={(e) => setDraftInput(e.target.value)}
                 placeholder={t("config.fewShotInputPlaceholder")}
-                className="min-h-[100px] font-mono text-[13px] leading-relaxed"
+                className="min-h-[100px] text-[14px] leading-relaxed"
               />
             </div>
 
             <div className="space-y-2">
-                <p className="text-[13px] font-medium text-ds-text">
+                <p className="text-[14px] font-medium text-ds-text">
                   {t("config.fewShotOutputLabel")}
                 </p>
               <Textarea
                 value={draftOutput}
                 onChange={(e) => setDraftOutput(e.target.value)}
                 placeholder={t("config.fewShotOutputPlaceholder")}
-                className="min-h-[160px] font-mono text-[13px] leading-relaxed"
+                className="min-h-[160px] text-[14px] leading-relaxed"
               />
             </div>
           </div>

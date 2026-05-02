@@ -6,12 +6,13 @@ import {
   Pencil,
   Trash2,
   Folder,
-  GitBranch,
+  GitFork,
   Star,
   CircleDashed,
 } from "lucide-react";
 import { ActionMenu } from "@/components/ui/action-menu";
 import { ProjectIcon } from "@/components/projects/ProjectIcon";
+import { PROJECT_COLOR_ICON_CLASSES } from "@/components/projects/projectTheme";
 import { useTranslation } from "@/lib/store/i18nStore";
 import { formatRelativeTime } from "@/lib/formatRelativeTime";
 import type { ChatSession } from "@/lib/store/chatStore";
@@ -82,12 +83,17 @@ export const ChatListItem = memo(function ChatListItem({
         {variant === "minimal" ? (
           <div className="flex min-w-0 flex-col gap-1">
             <div className="flex min-w-0 items-center gap-2">
+              {isFork && (
+                <GitFork
+                  size={18}
+                  strokeWidth={2}
+                  className={`shrink-0 ${PROJECT_COLOR_ICON_CLASSES.green}`}
+                  aria-label={t("projects.forkedChat")}
+                />
+              )}
               <span className="truncate text-[15px] font-medium leading-6 text-ds-text">
                 {chat.title}
               </span>
-              {isFork && (
-                <GitBranch size={15} strokeWidth={2} className="shrink-0 text-ds-text-tertiary" />
-              )}
             </div>
             <span className="text-[13px] tabular-nums text-ds-text-tertiary">{relativeTime}</span>
           </div>
@@ -95,12 +101,17 @@ export const ChatListItem = memo(function ChatListItem({
           <>
             {/* Name */}
             <div className="flex min-w-0 items-center gap-2">
+              {isFork && (
+                <GitFork
+                  size={18}
+                  strokeWidth={2}
+                  className={`shrink-0 ${PROJECT_COLOR_ICON_CLASSES.green}`}
+                  aria-label={t("projects.forkedChat")}
+                />
+              )}
               <span className="truncate text-[15px] font-medium leading-6 text-ds-text">
                 {chat.title}
               </span>
-              {isFork && (
-                <GitBranch size={13} strokeWidth={2} className="shrink-0 text-ds-text-tertiary" />
-              )}
             </div>
 
             {/* Project */}

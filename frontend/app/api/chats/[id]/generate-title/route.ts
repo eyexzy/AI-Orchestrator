@@ -1,6 +1,38 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getUserBackendAuthHeaders, requestBackend } from "@/lib/backendProxy";
 
+function cleanupTitle(value: string): string {
+  return value
+    .replace(/^["'`]+|["'`]+$/g, "")
+    .replace(/\.+$/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 80);
+}
+
+function fallbackTitleFromPrompt(prompt: string): string {
+  const cleaned = prompt
+    .replace(/[`*_>#\[\]{}()]/g, " ")
+    .replace(/[.!?,:;]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  const words = cleaned.split(" ").filter(Boolean).slice(0, 5);
+  const title = words.join(" ").slice(0, 80).trim();
+  return title || "New Chat";
+}
+
+async function persistTitle(
+  chatId: string,
+  headers: HeadersInit,
+  title: string,
+): Promise<void> {
+  await requestBackend(`/chats/${chatId}`, {
+    method: "PATCH",
+    headers,
+    body: JSON.stringify({ title }),
+  });
+}
+
 export async function POST(
   req: NextRequest,
   props: { params: Promise<{ id: string }> },
@@ -39,6 +71,7 @@ export async function POST(
     "- Output ONLY the title, nothing else";
 
   const truncated = userPrompt.slice(0, 500);
+  const fallbackTitle = fallbackTitleFromPrompt(userPrompt);
 
   try {
     const response = await requestBackend("/generate", {
@@ -56,27 +89,24 @@ export async function POST(
     });
 
     if (!response.ok) {
-      return NextResponse.json({ error: "LLM error" }, { status: 502 });
+      await persistTitle(params.id, authHeadersResult.headers, fallbackTitle);
+      return NextResponse.json({ title: fallbackTitle, fallback: true });
     }
 
     const data = await response.json() as Record<string, unknown>;
     const raw = (typeof data?.text === "string" ? data.text : "") as string;
 
-    const title = raw.replace(/^["']|["']$/g, "").replace(/\.+$/, "").trim().slice(0, 80);
+    const title = cleanupTitle(raw) || fallbackTitle;
 
-    if (!title) {
-      return NextResponse.json({ error: "Empty title generated" }, { status: 502 });
-    }
-
-    // Persist title to backend
-    await requestBackend(`/chats/${params.id}`, {
-      method: "PATCH",
-      headers: authHeadersResult.headers,
-      body: JSON.stringify({ title }),
-    });
+    await persistTitle(params.id, authHeadersResult.headers, title);
 
     return NextResponse.json({ title });
   } catch {
-    return NextResponse.json({ error: "Failed to generate title" }, { status: 500 });
+    try {
+      await persistTitle(params.id, authHeadersResult.headers, fallbackTitle);
+      return NextResponse.json({ title: fallbackTitle, fallback: true });
+    } catch {
+      return NextResponse.json({ title: fallbackTitle, fallback: true }, { status: 202 });
+    }
   }
 }

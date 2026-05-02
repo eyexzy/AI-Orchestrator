@@ -3,10 +3,8 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useSession, signOut } from "next-auth/react";
-import Image from "next/image";
 import {
   AlertTriangle,
-  Check,
   Layers,
   LogOut,
   BarChart2,
@@ -17,7 +15,6 @@ import {
 import { Button } from "@/components/ui/button";
 import { Choicebox } from "@/components/ui/choicebox";
 import { ErrorState } from "@/components/ui/error-state";
-import { Input } from "@/components/ui/input";
 import { actionToast } from "@/components/ui/action-toast";
 import { Select } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -83,12 +80,12 @@ function parseCurrentLevel(value: unknown): 1 | 2 | 3 | null {
 }
 
 function isSettingsTab(value: unknown): value is SettingsTab {
-  return value === "general" || value === "adaptation" || value === "account";
+  return value === "general" || value === "adaptation" || value === "usage" || value === "account";
 }
 
 function SectionLabel({ children }: { children: React.ReactNode }) {
   return (
-    <p className="mb-2.5 px-1 text-[12.5px] font-medium text-ds-text-tertiary">
+    <p className="mb-3 px-1 text-[15px] font-semibold leading-5 text-ds-text-secondary">
       {children}
     </p>
   );
@@ -134,7 +131,7 @@ function Row({
         <div className="min-w-0 flex-1">
           <p
             className={cn(
-              "text-[14px] font-medium",
+              "text-[15px] font-medium leading-5",
               tone === "danger" ? "text-ds-text" : "text-ds-text",
             )}
           >
@@ -143,7 +140,7 @@ function Row({
           {description && (
             <p
               className={cn(
-                "mt-1 text-[13px] leading-relaxed",
+                "mt-1 text-[14px] leading-6",
                 tone === "danger" ? "text-ds-text" : "text-ds-text-tertiary",
               )}
             >
@@ -181,8 +178,8 @@ export default function SettingsPage() {
   const language = useI18nStore((s) => s.language);
   const setLanguage = useI18nStore((s) => s.setLanguage);
   const setFeedbackOpen = useUiShellStore((s) => s.setFeedbackOpen);
-  const setLevel = useUserLevelStore((s) => s.setLevel);
   const currentLevel = useUserLevelStore((s) => s.level);
+  const autoLevel = useUserLevelStore((s) => s.autoLevel);
   const resetMetrics = useUserLevelStore((s) => s.resetMetrics);
   const hiddenTemplates = useUserLevelStore((s) => s.hiddenTemplates);
   const persistedUserEmail = useUserLevelStore((s) => s.userEmail);
@@ -198,16 +195,11 @@ export default function SettingsPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
 
-  const [displayNameDraft, setDisplayNameDraft] = useState("");
-  const [isSavingName, setIsSavingName] = useState(false);
-  const [nameSavedAt, setNameSavedAt] = useState<number | null>(null);
-
   const [override, setOverride] = useState<"auto" | 1 | 2 | 3>("auto");
   const [isSavingOverride, setIsSavingOverride] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [isResettingOnboarding, setIsResettingOnboarding] = useState(false);
   const [isRestoringTemplates, setIsRestoringTemplates] = useState(false);
-
   const [stats, setStats] = useState<AccountStats | null>(null);
 
   type UsagePeriod = { used: number; limit: number; remaining: number; reset_at: string };
@@ -241,7 +233,6 @@ export default function SettingsPage() {
   const [historyPageSize, setHistoryPageSize] = useState(10);
   const [historyDays, setHistoryDays] = useState(30);
   const [historyLoading, setHistoryLoading] = useState(false);
-
   const [deleteChatsOpen, setDeleteChatsOpen] = useState(false);
   const [deleteAccountOpen, setDeleteAccountOpen] = useState(false);
   const [isDeletingChats, setIsDeletingChats] = useState(false);
@@ -256,8 +247,18 @@ export default function SettingsPage() {
     if (cachedPreferences) {
       hasCachedPreferencesRef.current = true;
       setPreferences(cachedPreferences);
-      setDisplayNameDraft(cachedPreferences.display_name ?? "");
       setOverride(parseManualLevelOverride(cachedPreferences.manual_level_override));
+      const effectiveLevel = parseCurrentLevel(cachedPreferences.current_level);
+      const cachedAutoLevel = parseCurrentLevel(cachedPreferences.auto_level) ?? effectiveLevel;
+      useUserLevelStore.setState((state) => ({
+        level: effectiveLevel ?? state.level,
+        autoLevel: cachedAutoLevel ?? state.autoLevel,
+        manualOverride: parseCurrentLevel(cachedPreferences.manual_level_override),
+        highestAutoLevelReached:
+          cachedAutoLevel && cachedAutoLevel > state.highestAutoLevelReached
+            ? cachedAutoLevel
+            : state.highestAutoLevelReached,
+      }));
       setIsLoading(false);
     }
 
@@ -276,8 +277,18 @@ export default function SettingsPage() {
       const data = await fetchProfilePreferences(storageUserEmail);
       hasCachedPreferencesRef.current = true;
       setPreferences(data);
-      setDisplayNameDraft(data.display_name ?? "");
       setOverride(parseManualLevelOverride(data.manual_level_override));
+      const effectiveLevel = parseCurrentLevel(data.current_level);
+      const fetchedAutoLevel = parseCurrentLevel(data.auto_level) ?? effectiveLevel;
+      useUserLevelStore.setState((state) => ({
+        level: effectiveLevel ?? state.level,
+        autoLevel: fetchedAutoLevel ?? state.autoLevel,
+        manualOverride: parseCurrentLevel(data.manual_level_override),
+        highestAutoLevelReached:
+          fetchedAutoLevel && fetchedAutoLevel > state.highestAutoLevelReached
+            ? fetchedAutoLevel
+            : state.highestAutoLevelReached,
+      }));
     } catch (error) {
       if (!hasCachedPreferences) {
         setLoadError(getErrorMessage(error, t("settings.loadError")));
@@ -328,10 +339,12 @@ export default function SettingsPage() {
   const downloadHistory = useCallback(() => {
     if (!history?.items.length) return;
     const rows = [
-      ["Date", "Model", "Cost (USD)", "Event"],
+      ["Date", "Model", "Kind", "Tokens", "Cost (USD)", "Event"],
       ...history.items.map((item) => [
         new Date(item.created_at).toLocaleString(),
         item.model,
+        item.kind,
+        item.tokens > 0 ? String(item.tokens) : "0",
         item.cost_usd > 0 ? item.cost_usd.toFixed(6) : "0",
         `${typeof window !== "undefined" ? window.location.origin : ""}/chat?id=${item.chat_id}`,
       ]),
@@ -363,31 +376,7 @@ export default function SettingsPage() {
     if (activeTab === "usage") void loadHistory(historyPage, historyPageSize, historyDays);
   }, [historyPage, historyPageSize, historyDays, activeTab, loadHistory]);
 
-  const user = session?.user;
-  const email = user?.email ?? null;
-  const name = user?.name ?? null;
-  const avatarUrl = user?.image ?? null;
-  const initials = useMemo(() => {
-    const source = preferences?.display_name?.trim() || name || email || "?";
-    const chunks = source.trim().split(/\s+/).slice(0, 2);
-    return chunks.map((chunk) => chunk.charAt(0).toUpperCase()).join("") || "?";
-  }, [preferences?.display_name, name, email]);
-
-  const handleDisplayNameSave = async () => {
-    setIsSavingName(true);
-    try {
-      const data = await patchProfilePreferences({ display_name: displayNameDraft }, storageUserEmail);
-      setPreferences(data);
-      setDisplayNameDraft(data.display_name ?? "");
-      setNameSavedAt(Date.now());
-      useUserLevelStore.setState({ displayName: data.display_name ?? null });
-      actionToast.saved(t("settings.savedToast"));
-    } catch (error) {
-      actionToast.error(getErrorMessage(error, t("settings.saveError")));
-    } finally {
-      setIsSavingName(false);
-    }
-  };
+  const email = session?.user?.email ?? null;
 
   const handleLanguageChange = async (lang: Language) => {
     const previous = language;
@@ -411,9 +400,14 @@ export default function SettingsPage() {
   const handleOverrideChange = async (value: "auto" | 1 | 2 | 3) => {
     const previousOverride = override;
     const previousLevel = currentLevel;
+    const previousAutoLevel = autoLevel;
+    const previousManualOverride = useUserLevelStore.getState().manualOverride;
     setOverride(value);
     setSaveError(null);
-    if (value !== "auto") setLevel(value);
+    useUserLevelStore.setState({
+      level: value === "auto" ? autoLevel : value,
+      manualOverride: value === "auto" ? null : value,
+    });
 
     setIsSavingOverride(true);
     try {
@@ -424,12 +418,23 @@ export default function SettingsPage() {
       const persistedOverride = parseManualLevelOverride(data.manual_level_override);
       setOverride(persistedOverride);
       const persistedLevel = parseCurrentLevel(data.current_level);
-      if (persistedLevel !== null) setLevel(persistedLevel);
-      else if (persistedOverride !== "auto") setLevel(persistedOverride);
+      const persistedAutoLevel = parseCurrentLevel(data.auto_level) ?? persistedLevel;
+      useUserLevelStore.setState((state) => ({
+        level: persistedLevel ?? (persistedOverride === "auto" ? state.autoLevel : persistedOverride),
+        autoLevel: persistedAutoLevel ?? state.autoLevel,
+        manualOverride: persistedOverride === "auto" ? null : persistedOverride,
+        highestAutoLevelReached:
+          persistedAutoLevel && persistedAutoLevel > state.highestAutoLevelReached
+            ? persistedAutoLevel
+            : state.highestAutoLevelReached,
+      }));
     } catch (error) {
       setOverride(previousOverride);
-      if (previousOverride !== "auto") setLevel(previousOverride);
-      else setLevel(previousLevel);
+      useUserLevelStore.setState({
+        level: previousLevel,
+        autoLevel: previousAutoLevel,
+        manualOverride: previousManualOverride,
+      });
       setSaveError(getErrorMessage(error, t("settings.saveError")));
     } finally {
       setIsSavingOverride(false);
@@ -537,11 +542,6 @@ export default function SettingsPage() {
     signOut({ callbackUrl: "/login" });
   };
 
-  const trimmedDisplayName = displayNameDraft.trim();
-  const originalDisplayName = (preferences?.display_name ?? "").trim();
-  const isDirtyDisplayName = trimmedDisplayName !== originalDisplayName;
-  const savedRecently = Boolean(nameSavedAt && Date.now() - nameSavedAt < 2500);
-
   const LEVEL_OPTIONS = [
     { value: "auto" as const, label: t("settings.levelAuto"), description: t("settings.levelAutoDescription") },
     { value: 1 as const, label: t("settings.levelL1"), description: t("settings.levelL1Description") },
@@ -575,10 +575,10 @@ export default function SettingsPage() {
                           type="button"
                           onClick={() => setActiveTab(key)}
                           className={cn(
-                            "group flex shrink-0 items-center gap-2.5 rounded-lg px-3 py-2 text-left text-[13.5px] font-medium transition-colors",
+                            "group flex h-10 shrink-0 items-center gap-2 rounded-lg px-3 text-left text-[15px] font-medium transition-colors overflow-hidden",
                             isActive
                               ? "bg-gray-alpha-200 text-ds-text"
-                              : "text-ds-text-secondary hover:bg-gray-alpha-200 hover:text-ds-text",
+                              : "text-ds-text hover:bg-gray-alpha-200 hover:text-ds-text",
                           )}
                         >
                           <Icon
@@ -588,7 +588,7 @@ export default function SettingsPage() {
                               "transition-colors",
                               isActive
                                 ? "text-ds-text"
-                                : "text-ds-text-tertiary group-hover:text-ds-text",
+                                : "text-ds-text group-hover:text-ds-text",
                             )}
                           />
                           <span className="flex-1 whitespace-nowrap">{t(labelKey)}</span>
@@ -610,87 +610,6 @@ export default function SettingsPage() {
 
                 {activeTab === "general" && (
                   <section className="animate-fade-in space-y-8">
-                    <div>
-                      <SectionLabel>{t("settings.sectionProfile")}</SectionLabel>
-                      <Card>
-                        <div className="flex items-center gap-4 px-5 py-4">
-                        <div className="relative h-12 w-12 shrink-0 overflow-hidden rounded-full border border-gray-alpha-200 bg-gray-alpha-100">
-                          {avatarUrl ? (
-                              <Image
-                                src={avatarUrl}
-                                alt={name ?? email ?? ""}
-                                fill
-                                sizes="48px"
-                                className="object-cover"
-                              />
-                            ) : (
-                              <div className="flex h-full w-full items-center justify-center text-[14px] font-semibold text-ds-text-secondary">
-                                {initials}
-                              </div>
-                            )}
-                        </div>
-                        <div className="min-w-0 flex-1">
-                          {isLoading ? (
-                            <div className="space-y-2">
-                              <Skeleton height={16} width="32%" />
-                              <Skeleton height={14} width="44%" />
-                            </div>
-                          ) : (
-                            <>
-                              <p className="truncate text-[14px] font-semibold text-ds-text">
-                                {preferences?.display_name?.trim() || name || email}
-                              </p>
-                              <p className="mt-0.5 truncate text-[13px] text-ds-text-tertiary">
-                                {email ?? "-"}
-                              </p>
-                            </>
-                          )}
-                        </div>
-                      </div>
-
-                        <RowDivider />
-
-                        <Row
-                          title={t("settings.displayName")}
-                          description={t("settings.displayNameDescription")}
-                        >
-                          {isLoading ? (
-                            <Skeleton height={36} width="100%" />
-                          ) : (
-                            <div className="flex gap-2">
-                              <div className="flex-1">
-                                <Input
-                                  variant="default"
-                                  size="md"
-                                  value={displayNameDraft}
-                                  onChange={(event) =>
-                                    setDisplayNameDraft(event.target.value)
-                                  }
-                                  placeholder={t("settings.displayNamePlaceholder")}
-                                  maxLength={120}
-                                />
-                              </div>
-                              <Button
-                                type="button"
-                                variant="default"
-                                size="md"
-                                isLoading={isSavingName}
-                                disabled={!isDirtyDisplayName || isSavingName}
-                                onClick={() => void handleDisplayNameSave()}
-                                leftIcon={
-                                  savedRecently ? (
-                                    <Check size={14} strokeWidth={2} />
-                                  ) : undefined
-                                }
-                              >
-                                {savedRecently ? t("settings.saved") : t("settings.save")}
-                              </Button>
-                            </div>
-                          )}
-                        </Row>
-                      </Card>
-                    </div>
-
                     <div>
                       <SectionLabel>{t("settings.sectionInterface")}</SectionLabel>
                       <Card>
@@ -727,7 +646,7 @@ export default function SettingsPage() {
                                   { value: "en", label: t("menu.langEnglish") },
                                   { value: "uk", label: t("menu.langUkrainian") },
                                 ]}
-                                className="px-2.5 text-[13px]"
+                                className="px-2.5 text-[14px]"
                               />
                             )
                           }
@@ -929,8 +848,8 @@ export default function SettingsPage() {
                         <div className="px-5 py-4 space-y-3">
                           <div className="flex items-center justify-between">
                             <div>
-                              <p className="text-[13px] font-medium text-ds-text">{t("settings.usageDailyRequests")}</p>
-                              <p className="text-[12px] text-ds-text-tertiary mt-0.5">
+                              <p className="text-[15px] font-medium text-ds-text">{t("settings.usageDailyRequests")}</p>
+                              <p className="mt-0.5 text-[14px] text-ds-text-tertiary">
                                 {t("settings.usageResetsAt")}{" "}
                                 {usage ? fmtResetAt(usage.daily.reset_at) : "—"}
                               </p>
@@ -939,13 +858,13 @@ export default function SettingsPage() {
                               <Skeleton className="h-5 w-20" />
                             ) : usage ? (() => {
                               const pct = usage.daily.used / usage.daily.limit;
-                              const colorClass = pct >= 0.85 ? "text-red-700" : pct >= 0.6 ? "text-amber-700" : "text-ds-text-secondary";
+                              const colorClass = "text-ds-text-secondary";
                               return (
-                                <span className={cn("text-[13px] font-mono", colorClass)}>
+                                <span className={cn("text-[14px] font-medium", colorClass)}>
                                   {Math.round(pct * 100)}% used
                                 </span>
                               );
-                            })() : <span className="text-[13px] text-ds-text-tertiary">—</span>}
+                            })() : <span className="text-[14px] text-ds-text-tertiary">—</span>}
                           </div>
                           {usageLoading ? (
                             <Skeleton className="h-[10px] w-full rounded-[6px]" />
@@ -964,8 +883,8 @@ export default function SettingsPage() {
                         <div className="px-5 py-4 space-y-3">
                           <div className="flex items-center justify-between">
                             <div>
-                              <p className="text-[13px] font-medium text-ds-text">{t("settings.usageWeeklyRequests")}</p>
-                              <p className="text-[12px] text-ds-text-tertiary mt-0.5">
+                              <p className="text-[15px] font-medium text-ds-text">{t("settings.usageWeeklyRequests")}</p>
+                              <p className="mt-0.5 text-[14px] text-ds-text-tertiary">
                                 {t("settings.usageResetsAt")}{" "}
                                 {usage ? fmtResetAt(usage.weekly.reset_at) : "—"}
                               </p>
@@ -974,13 +893,13 @@ export default function SettingsPage() {
                               <Skeleton className="h-5 w-20" />
                             ) : usage ? (() => {
                               const pct = usage.weekly.used / usage.weekly.limit;
-                              const colorClass = pct >= 0.85 ? "text-red-700" : pct >= 0.6 ? "text-amber-700" : "text-ds-text-secondary";
+                              const colorClass = "text-ds-text-secondary";
                               return (
-                                <span className={cn("text-[13px] font-mono", colorClass)}>
+                                <span className={cn("text-[14px] font-medium", colorClass)}>
                                   {Math.round(pct * 100)}% used
                                 </span>
                               );
-                            })() : <span className="text-[13px] text-ds-text-tertiary">—</span>}
+                            })() : <span className="text-[14px] text-ds-text-tertiary">—</span>}
                           </div>
                           {usageLoading ? (
                             <Skeleton className="h-[10px] w-full rounded-[6px]" />
@@ -1061,6 +980,15 @@ export default function SettingsPage() {
                             ),
                           },
                           {
+                            key: "tokens",
+                            header: t("settings.usageColTokens"),
+                            cell: (item) => (
+                              <span className="tabular-nums">
+                                {item.tokens > 0 ? item.tokens.toLocaleString() : "—"}
+                              </span>
+                            ),
+                          },
+                          {
                             key: "event",
                             header: t("settings.usageColEvent"),
                             cell: (item) => (
@@ -1082,7 +1010,6 @@ export default function SettingsPage() {
                           {
                             key: "cost",
                             header: t("settings.usageColCost"),
-                            align: "right",
                             cell: (item) => (
                               <span className="tabular-nums">
                                 {item.cost_usd > 0 ? `$${item.cost_usd.toFixed(4)}` : "—"}

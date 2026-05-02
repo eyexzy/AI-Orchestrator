@@ -36,6 +36,9 @@ type GenerationSummary = {
   stream_chunks?: number;
   stream_chars?: number;
   estimated_tokens?: number;
+  prompt_tokens?: number;
+  completion_tokens?: number;
+  total_tokens?: number;
   model_label?: string;
   model_id?: string;
   provider?: string;
@@ -44,6 +47,10 @@ type GenerationSummary = {
   can_continue?: boolean;
   continued_passes?: number;
   finish_reason?: string;
+  cost_usd?: number;
+  temperature?: number;
+  top_p?: number;
+  max_tokens?: number;
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -96,6 +103,9 @@ function parseSummary(metadata?: Record<string, unknown>): GenerationSummary {
   const summary = isRecord(metadata?.generation_summary)
     ? metadata.generation_summary
     : {};
+  const requestOptions = isRecord(metadata?.request_options)
+    ? metadata.request_options
+    : {};
 
   return {
     duration_ms: asNumber(summary.duration_ms) ?? asNumber(metadata?.generation_ms) ?? asNumber(metadata?.latency_ms),
@@ -105,7 +115,10 @@ function parseSummary(metadata?: Record<string, unknown>): GenerationSummary {
     project_context_used: asBoolean(summary.project_context_used),
     stream_chunks: asNumber(summary.stream_chunks),
     stream_chars: asNumber(summary.stream_chars),
-    estimated_tokens: asNumber(summary.estimated_tokens) ?? asNumber(metadata?.tokens),
+    estimated_tokens: asNumber(summary.estimated_tokens),
+    prompt_tokens: asNumber(summary.prompt_tokens),
+    completion_tokens: asNumber(summary.completion_tokens),
+    total_tokens: asNumber(summary.total_tokens) ?? asNumber(metadata?.tokens),
     model_label: asString(summary.model_label) ?? asString(metadata?.model),
     model_id: asString(summary.model_id) ?? asString(metadata?.model_id),
     provider: asString(summary.provider) ?? asString(metadata?.provider),
@@ -114,6 +127,10 @@ function parseSummary(metadata?: Record<string, unknown>): GenerationSummary {
     can_continue: asBoolean(summary.can_continue) ?? asBoolean(metadata?.generation_can_continue),
     continued_passes: asNumber(summary.continued_passes),
     finish_reason: asString(summary.finish_reason),
+    cost_usd: asNumber(summary.cost_usd),
+    temperature: asNumber(requestOptions.temperature),
+    top_p: asNumber(requestOptions.top_p),
+    max_tokens: asNumber(requestOptions.max_tokens),
   };
 }
 
@@ -168,6 +185,11 @@ function formatItems(count: number | undefined, language: Language) {
   return language === "uk" ? `${value} елементів` : `${value} items`;
 }
 
+function formatCost(costUsd: number | undefined) {
+  if (!costUsd || costUsd <= 0) return "-";
+  return `$${costUsd.toFixed(4)}`;
+}
+
 function stepLabel(
   step: GenerationTraceStep,
   language: Language,
@@ -180,7 +202,7 @@ function stepLabel(
   }
 
   if (step.kind === "context") {
-    return `${t("chat.status.context")} · ${formatItems(step.count, language)}`;
+    return `${t("chat.status.context")} - ${formatItems(step.count, language)}`;
   }
 
   return t("chat.status.generating");
@@ -229,44 +251,20 @@ function renderStepDetails(
 
 function summaryRows(
   summary: GenerationSummary,
-  language: Language,
   t: (key: string) => string,
 ) {
-  const itemsReviewed = (summary.history_count ?? 0) + (summary.project_chat_count ?? 0);
   const rows: Array<{ label: string; value: string }> = [];
 
-  if (summary.first_token_ms) {
-    rows.push({
-      label: t("chat.status.firstTokenLabel"),
-      value: formatDuration(summary.first_token_ms, language),
-    });
-  }
+  const exactTokens =
+    summary.total_tokens ??
+    (typeof summary.prompt_tokens === "number" && typeof summary.completion_tokens === "number"
+      ? summary.prompt_tokens + summary.completion_tokens
+      : undefined);
 
-  if (itemsReviewed > 0) {
+  if ((exactTokens ?? 0) > 0) {
     rows.push({
-      label: t("chat.status.itemsReviewedLabel"),
-      value: formatItems(itemsReviewed, language),
-    });
-  }
-
-  if ((summary.stream_chunks ?? 0) > 0) {
-    rows.push({
-      label: t("chat.status.streamChunksLabel"),
-      value: String(summary.stream_chunks),
-    });
-  }
-
-  if ((summary.stream_chars ?? 0) > 0) {
-    rows.push({
-      label: t("chat.status.charactersLabel"),
-      value: String(summary.stream_chars),
-    });
-  }
-
-  if ((summary.estimated_tokens ?? 0) > 0) {
-    rows.push({
-      label: t("chat.status.estimatedTokensLabel"),
-      value: String(summary.estimated_tokens),
+      label: t("settings.usageColTokens"),
+      value: String(exactTokens),
     });
   }
 
@@ -277,24 +275,29 @@ function summaryRows(
     });
   }
 
-  if ((summary.continued_passes ?? 0) > 0) {
+  rows.push({
+    label: t("settings.usageColCost"),
+    value: formatCost(summary.cost_usd),
+  });
+
+  if (typeof summary.temperature === "number") {
     rows.push({
-      label: t("chat.status.continuedPassesLabel"),
-      value: String(summary.continued_passes),
+      label: t("config.temperature"),
+      value: summary.temperature.toFixed(2),
     });
   }
 
-  if (summary.provider) {
+  if (typeof summary.max_tokens === "number") {
     rows.push({
-      label: t("chat.status.providerLabel"),
-      value: summary.provider,
+      label: t("chat.status.outputLimitLabel"),
+      value: String(summary.max_tokens),
     });
   }
 
-  if (summary.truncated) {
+  if (typeof summary.top_p === "number") {
     rows.push({
-      label: t("chat.status.completionStatusLabel"),
-      value: t("chat.status.completionIncomplete"),
+      label: "Top-P",
+      value: summary.top_p.toFixed(2),
     });
   }
 
@@ -398,7 +401,7 @@ export function AssistantGenerationBottom({
     return null;
   }
 
-  const rows = summaryRows(summary, language, t);
+  const rows = summaryRows(summary, t);
   const labelPrefix = summary.stopped
     ? t("chat.status.stoppedAfter")
     : t("chat.status.workedFor");

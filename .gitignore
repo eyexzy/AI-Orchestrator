@@ -46,3 +46,5 @@ settings.local.json
 
 collect_code.py
 backend/testsuite/perf/results/
+backend/diploma_charts.py
+backend/charts/

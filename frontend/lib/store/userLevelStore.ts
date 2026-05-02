@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { USER_LEVEL_SNAPSHOT_STORAGE_KEY } from "@/lib/config";
+import { flushEvents } from "@/lib/eventTracker";
 import { makeScopedStorageKey, readPersistedState, writePersistedState } from "@/lib/persistedState";
 
 function generateSessionId(): string {
@@ -43,6 +44,13 @@ function normalizeUserLevel(value: unknown): UserLevel | null {
   return value === 1 || value === 2 || value === 3 ? value : null;
 }
 
+function highestLevel(...levels: Array<unknown>): UserLevel {
+  const normalized = levels
+    .map(normalizeUserLevel)
+    .filter((level): level is UserLevel => level !== null);
+  return normalized.length > 0 ? (Math.max(...normalized) as UserLevel) : 1;
+}
+
 export function toBehavioralMetricsPayload(
   metrics: BehavioralMetrics,
   overrides: Partial<Record<string, number | boolean>> = {},
@@ -77,7 +85,13 @@ interface UserLevelState {
   /** Active chat thread UUID — updated when the user selects / creates a chat. */
   chatId: string | null;
   userEmail: string;
+  /** Effective UI level. Existing UI reads this value. */
   level: UserLevel;
+  /** Real adaptive level after hysteresis. Manual override never writes here. */
+  autoLevel: UserLevel;
+  suggestedLevel: UserLevel | null;
+  manualOverride: UserLevel | null;
+  highestAutoLevelReached: UserLevel;
   lastLevelChangeTs: number;
   confidence: number;
   reasoning: string[];
@@ -101,6 +115,7 @@ interface UserLevelState {
   levelReady: boolean;
   /** Pending level transition to show in the transition modal (null = nothing to show). */
   pendingLevelTransition: LevelTransition | null;
+  pendingDowngradeSuggestion: LevelTransition | null;
   setSessionId: (id: string) => void;
   setChatId: (id: string | null) => void;
   setUserEmail: (email: string) => void;
@@ -116,11 +131,16 @@ interface UserLevelState {
   hideTemplate: (id: string) => Promise<void>;
   initProfile: () => Promise<void>;
   dismissLevelTransition: () => void;
+  dismissDowngradeSuggestion: () => void;
 }
 
 interface PersistedUserLevelSnapshot {
   userEmail: string;
   level: UserLevel;
+  autoLevel?: UserLevel;
+  suggestedLevel?: UserLevel | null;
+  manualOverride?: UserLevel | null;
+  highestAutoLevelReached?: UserLevel;
   lastLevelChangeTs: number;
   confidence: number;
   reasoning: string[];
@@ -188,6 +208,10 @@ function buildPersistedUserLevelSnapshot(state: UserLevelState): PersistedUserLe
   return {
     userEmail: state.userEmail,
     level: state.level,
+    autoLevel: state.autoLevel,
+    suggestedLevel: state.suggestedLevel,
+    manualOverride: state.manualOverride,
+    highestAutoLevelReached: state.highestAutoLevelReached,
     lastLevelChangeTs: state.lastLevelChangeTs,
     confidence: state.confidence,
     reasoning: state.reasoning,
@@ -220,6 +244,10 @@ export const useUserLevelStore = create<UserLevelState>((set, get) => ({
   chatId: null,
   userEmail: _initSnapshot?.userEmail ?? "anonymous",
   level: _initSnapshot?.level ?? 1,
+  autoLevel: _initSnapshot?.autoLevel ?? _initSnapshot?.level ?? 1,
+  suggestedLevel: _initSnapshot?.suggestedLevel ?? null,
+  manualOverride: _initSnapshot?.manualOverride ?? null,
+  highestAutoLevelReached: _initSnapshot?.highestAutoLevelReached ?? _initSnapshot?.autoLevel ?? _initSnapshot?.level ?? 1,
   lastLevelChangeTs: _initSnapshot?.lastLevelChangeTs ?? 0,
   confidence: _initSnapshot?.confidence ?? 0,
   reasoning: _initSnapshot?.reasoning ?? [],
@@ -241,6 +269,7 @@ export const useUserLevelStore = create<UserLevelState>((set, get) => ({
   profileLoaded: false,
   levelReady: _initSnapshot !== null,
   pendingLevelTransition: null,
+  pendingDowngradeSuggestion: null,
 
   setSessionId: (id) => set({ sessionId: id }),
 
@@ -253,6 +282,10 @@ export const useUserLevelStore = create<UserLevelState>((set, get) => ({
       ...(persisted
         ? {
             level: persisted.level,
+            autoLevel: persisted.autoLevel ?? persisted.level,
+            suggestedLevel: persisted.suggestedLevel ?? null,
+            manualOverride: persisted.manualOverride ?? null,
+            highestAutoLevelReached: persisted.highestAutoLevelReached ?? persisted.autoLevel ?? persisted.level,
             lastLevelChangeTs: persisted.lastLevelChangeTs,
             confidence: persisted.confidence,
             reasoning: persisted.reasoning,
@@ -277,6 +310,7 @@ export const useUserLevelStore = create<UserLevelState>((set, get) => ({
   setLevel: (level) => set({ level }),
   setGroundTruth: (level) => set({ groundTruth: level }),
   dismissLevelTransition: () => set({ pendingLevelTransition: null }),
+  dismissDowngradeSuggestion: () => set({ pendingDowngradeSuggestion: null }),
 
   trackAdvancedFeature: (feature: string) =>
     set((s) => {
@@ -340,7 +374,13 @@ export const useUserLevelStore = create<UserLevelState>((set, get) => ({
       isAnalyzing: true,
     }));
 
+    if (!get().trackingEnabled) {
+      set({ isAnalyzing: false });
+      return;
+    }
+
     try {
+      await flushEvents();
       const metricsPayload = toBehavioralMetricsPayload(metrics, {
         chars_per_second: currentCps,
         session_message_count: newCount,
@@ -361,18 +401,33 @@ export const useUserLevelStore = create<UserLevelState>((set, get) => ({
 
       if (res.ok) {
         const data = await res.json();
-        const prevLevel = get().level;
+        const prevAutoLevel = get().autoLevel;
 
         set((s) => {
-          const finalLevel = Number(data.final_level) as UserLevel;
-          const levelChanged = finalLevel !== s.level;
-          const transition: LevelTransition | null = levelChanged
-            ? { fromLevel: s.level, toLevel: finalLevel, direction: finalLevel > s.level ? "up" : "down" }
-            : null;
+          const autoLevel = normalizeUserLevel(data.auto_level) ?? normalizeUserLevel(data.final_level) ?? s.autoLevel;
+          const effectiveLevel =
+            normalizeUserLevel(data.effective_ui_level) ??
+            normalizeUserLevel(data.final_level) ??
+            autoLevel;
+          const suggestedLevel = normalizeUserLevel(data.suggested_level);
+          const manualOverride =
+            data.manual_override_active === true
+              ? normalizeUserLevel(data.manual_level_override)
+              : null;
+          const autoLevelChanged = autoLevel !== s.autoLevel;
+          const transition: LevelTransition | null =
+            autoLevelChanged && manualOverride === null
+              ? { fromLevel: s.autoLevel, toLevel: autoLevel, direction: autoLevel > s.autoLevel ? "up" : "down" }
+              : null;
+          const isSuggestedDowngrade = transition?.direction === "down";
 
           return {
-            level: finalLevel,
-            lastLevelChangeTs: levelChanged ? Date.now() : s.lastLevelChangeTs,
+            level: isSuggestedDowngrade ? s.level : effectiveLevel,
+            autoLevel,
+            suggestedLevel,
+            manualOverride,
+            highestAutoLevelReached: highestLevel(s.highestAutoLevelReached, autoLevel),
+            lastLevelChangeTs: autoLevelChanged ? Date.now() : s.lastLevelChangeTs,
             confidence: data.confidence,
             reasoning: data.reasoning,
             score: data.score,
@@ -381,10 +436,11 @@ export const useUserLevelStore = create<UserLevelState>((set, get) => ({
             thresholds: data.thresholds ?? { L2: 0.25, L3: 0.55 },
             isAnalyzing: false,
             hasAnalyzed: true,
-            pendingLevelTransition: transition,
+            pendingLevelTransition: transition?.direction === "up" ? transition : null,
+            pendingDowngradeSuggestion: isSuggestedDowngrade ? transition : null,
             metrics: {
               ...s.metrics,
-              levelTransitionCount: levelChanged
+              levelTransitionCount: autoLevelChanged
                 ? s.metrics.levelTransitionCount + 1
                 : s.metrics.levelTransitionCount,
             },
@@ -393,24 +449,30 @@ export const useUserLevelStore = create<UserLevelState>((set, get) => ({
 
         // Micro-feedback triggers
         const updatedState = get();
-        const levelChanged = updatedState.level !== prevLevel;
+        const autoLevelChanged = updatedState.autoLevel !== prevAutoLevel;
         try {
-          const { useMicroFeedbackStore } = await import("./microFeedbackStore");
-          const trigger = useMicroFeedbackStore.getState().tryTrigger;
+          if (updatedState.notifyMicroFeedback) {
+            const { useMicroFeedbackStore } = await import("./microFeedbackStore");
+            const trigger = useMicroFeedbackStore.getState().tryTrigger;
 
-          if (levelChanged) {
-            // Trigger 1: level just changed
-            trigger("level_change_agree");
-          } else if (data.confidence < 0.4 && updatedState.metrics.sessionMessageCount >= 3) {
-            // Trigger 2: low confidence after a few messages
-            trigger("low_confidence_self_assess");
-          } else if (updatedState.metrics.sessionMessageCount > 0 &&
-                     updatedState.metrics.sessionMessageCount % 10 === 0) {
-            // Trigger 5: periodic check every 10 messages
-            trigger("periodic_check");
-          } else if (updatedState.metrics.tooltipClickCount >= 3) {
-            // Trigger 3: user opened many help tooltips
-            trigger("help_series_check");
+            if (
+              autoLevelChanged &&
+              updatedState.manualOverride === null &&
+              updatedState.pendingDowngradeSuggestion === null
+            ) {
+              // Trigger 1: level just changed
+              trigger("level_change_agree");
+            } else if (data.confidence < 0.4 && updatedState.metrics.sessionMessageCount >= 3) {
+              // Trigger 2: low confidence after a few messages
+              trigger("low_confidence_self_assess");
+            } else if (updatedState.metrics.sessionMessageCount > 0 &&
+                       updatedState.metrics.sessionMessageCount % 10 === 0) {
+              // Trigger 5: periodic check every 10 messages
+              trigger("periodic_check");
+            } else if (updatedState.metrics.tooltipClickCount >= 3) {
+              // Trigger 3: user opened many help tooltips
+              trigger("help_series_check");
+            }
           }
         } catch {
           // micro-feedback is non-critical
@@ -467,9 +529,15 @@ export const useUserLevelStore = create<UserLevelState>((set, get) => ({
         nextState.hiddenTemplates = data.hidden_templates;
       }
       const currentLevel = normalizeUserLevel(data.current_level);
+      const autoLevel = normalizeUserLevel(data.auto_level) ?? currentLevel;
       if (currentLevel !== null) {
         nextState.level = currentLevel;
       }
+      if (autoLevel !== null) {
+        nextState.autoLevel = autoLevel;
+        nextState.highestAutoLevelReached = highestLevel(get().highestAutoLevelReached, autoLevel);
+      }
+      nextState.manualOverride = normalizeUserLevel(data.manual_level_override);
       if (typeof data.onboarding_completed === "boolean") {
         nextState.onboardingCompleted = data.onboarding_completed;
       }
@@ -511,6 +579,10 @@ export function hydrateUserLevelStoreFromPersistence(): void {
     ...state,
     userEmail: persisted.userEmail,
     level: persisted.level,
+    autoLevel: persisted.autoLevel ?? persisted.level,
+    suggestedLevel: persisted.suggestedLevel ?? null,
+    manualOverride: persisted.manualOverride ?? null,
+    highestAutoLevelReached: persisted.highestAutoLevelReached ?? persisted.autoLevel ?? persisted.level,
     lastLevelChangeTs: persisted.lastLevelChangeTs,
     confidence: persisted.confidence,
     reasoning: persisted.reasoning,

@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, Field
 from sqlalchemy import func, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -21,25 +22,94 @@ from dependencies import (
     get_optional_current_user,
     limiter,
 )
-from schemas.api import GenerateRequest, MultiGenerateRequest, RefineRequest
-from services.files import build_attachment_context, MAX_PROJECT_SOURCES_CHARS
+from schemas.api import GenerateRequest, HistoryMessage, MultiGenerateRequest, RefineRequest
+from services.context_budget import (
+    estimate_tokens,
+    fit_blocks_by_token_budget,
+    select_recent_messages_by_token_budget,
+)
+from services.files import build_attachment_context
 from services.llm import (
     _merge_continuation_text,
     estimate_cost_usd,
+    fallback_prompt_suggestions,
     get_client_for_model,
     real_generate,
     real_generate_stream,
     refine_prompt_with_llm,
+    generate_prompt_suggestions_with_llm,
 )
 
 logger = logging.getLogger("ai-orchestrator")
 
 router = APIRouter()
 
+
+class PromptSuggestionsRequest(BaseModel):
+    user_email: str | None = None
+    level: int | None = Field(default=None, ge=1, le=3)
+    language: str | None = None
+    history: list[HistoryMessage] = Field(default_factory=list)
+
+
+PROMPT_SUGGESTION_DB_MESSAGE_LIMIT = 24
+
+
+async def _build_prompt_suggestion_history(
+    db: AsyncSession,
+    body: PromptSuggestionsRequest,
+) -> list[HistoryMessage]:
+    merged: list[HistoryMessage] = []
+    seen: set[tuple[str, str]] = set()
+
+    for item in body.history:
+        content = item.content.strip()
+        if not content:
+            continue
+        key = (item.role, content)
+        if key in seen:
+            continue
+        seen.add(key)
+        merged.append(HistoryMessage(role=item.role, content=content[:4000]))
+
+    user_email = (body.user_email or "").strip().lower()
+    if not user_email or user_email == "anonymous":
+        return merged
+
+    result = await db.execute(
+        select(ChatMessage.role, ChatMessage.content)
+        .join(ChatSession, ChatMessage.session_id == ChatSession.id)
+        .where(
+            ChatSession.user_email == user_email,
+            ChatMessage.content != "",
+        )
+        .order_by(ChatMessage.created_at.desc())
+        .limit(PROMPT_SUGGESTION_DB_MESSAGE_LIMIT)
+    )
+    rows = list(reversed(result.all()))
+    for role, content in rows:
+        text = (content or "").strip()
+        if not text:
+            continue
+        key = (role, text)
+        if key in seen:
+            continue
+        seen.add(key)
+        merged.append(HistoryMessage(role=role, content=text[:4000]))
+
+    return merged[-PROMPT_SUGGESTION_DB_MESSAGE_LIMIT:]
+
 # Token-based limits (configurable via env)
 DAILY_TOKEN_LIMIT  = int(os.getenv("DAILY_TOKEN_LIMIT",  "100000"))   # 100K tokens/day
 WEEKLY_TOKEN_LIMIT = int(os.getenv("WEEKLY_TOKEN_LIMIT", "500000"))   # 500K tokens/week
 ADMIN_EMAILS = {e.strip().lower() for e in os.getenv("ADMIN_EMAILS", "").split(",") if e.strip()}
+PROJECT_FILE_CONTEXT_TOKEN_BUDGET = max(0, int(os.getenv("LLM_PROJECT_FILE_CONTEXT_TOKEN_BUDGET", "12000")))
+PROJECT_CHAT_CONTEXT_TOKEN_BUDGET = max(0, int(os.getenv("LLM_PROJECT_CHAT_CONTEXT_TOKEN_BUDGET", "3000")))
+PROJECT_CHAT_CONTEXT_MAX_CHATS = max(0, int(os.getenv("LLM_PROJECT_CHAT_CONTEXT_MAX_CHATS", "5")))
+PROJECT_CHAT_CONTEXT_MESSAGES_PER_CHAT = max(0, int(os.getenv("LLM_PROJECT_CHAT_CONTEXT_MESSAGES_PER_CHAT", "6")))
+FORK_CONTEXT_TOKEN_BUDGET = max(0, int(os.getenv("LLM_FORK_CONTEXT_TOKEN_BUDGET", "1800")))
+FORK_CONTEXT_MAX_ANCESTORS = max(1, int(os.getenv("LLM_FORK_CONTEXT_MAX_ANCESTORS", "3")))
+FORK_CONTEXT_MESSAGES_PER_ANCESTOR = max(1, int(os.getenv("LLM_FORK_CONTEXT_MESSAGES_PER_ANCESTOR", "8")))
 
 
 def _today_utc() -> str:
@@ -177,7 +247,7 @@ async def get_usage_history(
         cost_usd = 0.0
         gs = meta.get("generation_summary") or {}
         if isinstance(gs, dict):
-            tokens = gs.get("estimated_tokens") or tokens
+            tokens = gs.get("total_tokens") or gs.get("completion_tokens") or gs.get("estimated_tokens") or tokens
             model_label = gs.get("model_label") or model_label
             cost_usd = float(gs.get("cost_usd") or 0.0)
         if cost_usd == 0.0:
@@ -235,24 +305,23 @@ def _build_chat_title(prompt: str) -> str:
     return title or "New Chat"
 
 
-async def _build_project_context(
+async def _build_project_context_budgeted(
     db: AsyncSession,
     session: ChatSession,
 ) -> tuple[str | None, int]:
-    """Build project context (instructions + cross-chat summaries) for a project chat."""
+    """Build project context with token budgets and without mutating stored file text."""
     if not session.project_id:
         return None, 0
 
-    result = await db.execute(
+    project_result = await db.execute(
         select(Project).where(Project.id == session.project_id)
     )
-    project = result.scalars().first()
+    project = project_result.scalars().first()
     if not project:
         return None, 0
 
     parts: list[str] = []
 
-    # 1. Project identity — name and description so LLM knows the domain
     identity_lines: list[str] = []
     if project.name and project.name.strip():
         identity_lines.append(f"Project name: {project.name.strip()}")
@@ -261,75 +330,146 @@ async def _build_project_context(
     if identity_lines:
         parts.append("[Project]\n" + "\n".join(identity_lines))
 
-    # 2. Project instructions (system_hint) — backend is the single source of truth.
-    #    The frontend passes system_hint as system_message too, so we skip it here
-    #    to avoid duplication. The frontend's system_message (which already contains
-    #    system_hint for L2, or system_hint+user_system for L3) is appended after
-    #    this block by the caller.
-    # NOTE: We intentionally do NOT add system_hint here — it arrives via body.system_message.
-
-    # 3. Project knowledge sources (uploaded files / text documents)
     sources_result = await db.execute(
         select(ProjectSource, UploadedFile)
         .join(UploadedFile, ProjectSource.file_id == UploadedFile.id)
         .where(ProjectSource.project_id == project.id)
         .order_by(ProjectSource.created_at.asc())
     )
-    sources = sources_result.all()
-    if sources:
-        source_parts: list[str] = []
-        total_chars = 0
-        for src, f in sources:
-            label = src.title or f.filename
-            text = (f.extracted_text or "").strip()
-            if not text:
-                continue
-            # Per-file: never exceed what was stored (already truncated at upload)
-            remaining = MAX_PROJECT_SOURCES_CHARS - total_chars
-            if remaining <= 0:
-                source_parts.append(f"--- {label} ---\n[omitted — project context budget reached]")
-                continue
-            if len(text) > remaining:
-                text = text[:remaining] + "\n... [truncated — project context budget reached]"
-            source_parts.append(f"--- {label} ---\n{text}")
-            total_chars += len(text)
-        if source_parts:
-            parts.append("[Project Knowledge Sources]\n\n" + "\n\n".join(source_parts))
-
-    # 4. Cross-chat context: recent messages from sibling chats in the same project
-    sibling_chats_result = await db.execute(
-        select(ChatSession.id, ChatSession.title)
-        .where(
-            ChatSession.project_id == project.id,
-            ChatSession.id != session.id,
-        )
-        .order_by(ChatSession.updated_at.desc())
-        .limit(5)
+    source_blocks = [
+        (src.title or f.filename, (f.extracted_text or "").strip())
+        for src, f in sources_result.all()
+        if (f.extracted_text or "").strip()
+    ]
+    source_parts, _used_tokens, omitted_sources = fit_blocks_by_token_budget(
+        source_blocks,
+        max_tokens=PROJECT_FILE_CONTEXT_TOKEN_BUDGET,
+        omitted_label="project file",
     )
-    sibling_chats = sibling_chats_result.all()
+    if source_parts:
+        source_context = "[Project Knowledge Sources]\n\n" + "\n\n".join(source_parts)
+        if omitted_sources:
+            source_context += (
+                f"\n\n[{omitted_sources} additional project source(s) omitted from this request "
+                "to fit the context budget.]"
+            )
+        parts.append(source_context)
 
     chat_summaries: list[str] = []
-    if sibling_chats:
-        for chat_id, chat_title in sibling_chats:
+    chat_context_tokens = 0
+    if PROJECT_CHAT_CONTEXT_MAX_CHATS > 0 and PROJECT_CHAT_CONTEXT_TOKEN_BUDGET > 0:
+        sibling_chats_result = await db.execute(
+            select(ChatSession.id, ChatSession.title)
+            .where(
+                ChatSession.project_id == project.id,
+                ChatSession.id != session.id,
+            )
+            .order_by(ChatSession.updated_at.desc())
+            .limit(PROJECT_CHAT_CONTEXT_MAX_CHATS)
+        )
+
+        for chat_id, chat_title in sibling_chats_result.all():
+            remaining_tokens = PROJECT_CHAT_CONTEXT_TOKEN_BUDGET - chat_context_tokens
+            if remaining_tokens <= 0:
+                break
             msgs_result = await db.execute(
                 select(ChatMessage.role, ChatMessage.content)
                 .where(ChatMessage.session_id == chat_id)
                 .order_by(ChatMessage.created_at.desc())
-                .limit(6)
+                .limit(max(PROJECT_CHAT_CONTEXT_MESSAGES_PER_CHAT * 3, PROJECT_CHAT_CONTEXT_MESSAGES_PER_CHAT))
             )
-            msgs = msgs_result.all()
-            if msgs:
-                msgs_text = "\n".join(
-                    f"  {role}: {content[:500]}" for role, content in reversed(msgs)
-                )
-                chat_summaries.append(f"- \"{chat_title}\":\n{msgs_text}")
+            recent = select_recent_messages_by_token_budget(
+                [{"role": role, "content": content} for role, content in reversed(msgs_result.all())],
+                max_tokens=remaining_tokens,
+                max_messages=PROJECT_CHAT_CONTEXT_MESSAGES_PER_CHAT,
+            )
+            if not recent:
+                continue
 
-        if chat_summaries:
-            parts.append(
-                "[Other chats in this project]\n" + "\n".join(chat_summaries)
-            )
+            msgs_text = "\n".join(f"  {item.role}: {item.content}" for item in recent)
+            block = f"- \"{chat_title}\":\n{msgs_text}"
+            block_tokens = estimate_tokens(block) + 2
+            if block_tokens > remaining_tokens:
+                continue
+            chat_summaries.append(block)
+            chat_context_tokens += block_tokens
+
+    if chat_summaries:
+        parts.append("[Other chats in this project]\n" + "\n".join(chat_summaries))
 
     return ("\n\n".join(parts) if parts else None, len(chat_summaries))
+
+
+async def _build_fork_context_budgeted(
+    db: AsyncSession,
+    session: ChatSession,
+) -> str | None:
+    if not session.parent_chat_id or not session.forked_from_message_id or FORK_CONTEXT_TOKEN_BUDGET <= 0:
+        return None
+
+    parts: list[str] = []
+    current_session = session
+    used_tokens = 0
+
+    for depth in range(FORK_CONTEXT_MAX_ANCESTORS):
+        parent_id = current_session.parent_chat_id
+        fork_message_id = current_session.forked_from_message_id
+        if not parent_id or not fork_message_id:
+            break
+
+        parent_result = await db.execute(
+            select(ChatSession).where(ChatSession.id == parent_id)
+        )
+        parent_session = parent_result.scalars().first()
+        if not parent_session:
+            break
+
+        remaining_tokens = FORK_CONTEXT_TOKEN_BUDGET - used_tokens
+        if remaining_tokens <= 0:
+            break
+
+        msgs_result = await db.execute(
+            select(ChatMessage.role, ChatMessage.content)
+            .where(
+                ChatMessage.session_id == parent_session.id,
+                ChatMessage.id <= fork_message_id,
+            )
+            .order_by(ChatMessage.created_at.desc(), ChatMessage.id.desc())
+            .limit(max(FORK_CONTEXT_MESSAGES_PER_ANCESTOR * 3, FORK_CONTEXT_MESSAGES_PER_ANCESTOR))
+        )
+        recent_messages = select_recent_messages_by_token_budget(
+            [{"role": role, "content": content} for role, content in reversed(msgs_result.all())],
+            max_tokens=max(64, remaining_tokens - 16),
+            max_messages=FORK_CONTEXT_MESSAGES_PER_ANCESTOR,
+        )
+
+        lineage_label = (
+            f'Fork source {depth + 1}: "{parent_session.title}"'
+            if parent_session.title
+            else f"Fork source {depth + 1}"
+        )
+        if recent_messages:
+            transcript = "\n".join(f"  {item.role}: {item.content}" for item in recent_messages)
+            block = f"{lineage_label}\n{transcript}"
+        else:
+            block = f"{lineage_label}\n  [No retained messages available from the fork point.]"
+
+        block_tokens = estimate_tokens(block) + 4
+        if block_tokens > remaining_tokens:
+            break
+
+        parts.append(block)
+        used_tokens += block_tokens
+        current_session = parent_session
+
+    if not parts:
+        return None
+
+    return (
+        "[Fork lineage context]\n"
+        "This chat was branched from an earlier conversation. Keep continuity with that branch history.\n\n"
+        + "\n\n".join(parts)
+    )
 
 
 def _sse_payload(data: dict) -> str:
@@ -527,6 +667,22 @@ async def _generate_once(body: GenerateRequest):
             extra={"provider": model_info["provider"], "model": body.model},
         )
         raise HTTPException(status_code=504, detail="LLM provider timed out")
+    except RuntimeError as exc:
+        if str(exc) == "llm_capacity_timeout":
+            logger.warning(
+                "[generate] capacity_timeout",
+                extra={"provider": model_info["provider"], "model": body.model},
+            )
+            raise HTTPException(status_code=503, detail="LLM capacity temporarily exhausted") from exc
+        logger.error(
+            "[generate] provider_failure",
+            extra={
+                "provider": model_info["provider"],
+                "model": body.model,
+                "error": f"{type(exc).__name__}: {exc}",
+            },
+        )
+        raise HTTPException(status_code=502, detail="LLM provider unavailable") from exc
     except Exception as exc:
         logger.error(
             "[generate] provider_failure",
@@ -596,8 +752,15 @@ async def generate(
         # Inject attachment context (extracted file text) before project context
         await _inject_attachment_context(db, body, user_email)
 
+        fork_context = await _build_fork_context_budgeted(db, session)
+        if fork_context:
+            if body.system_message and body.system_message.strip():
+                body.system_message = f"{fork_context}\n\n{body.system_message}"
+            else:
+                body.system_message = fork_context
+
         # Inject project instructions + cross-chat context
-        project_context, project_chat_count = await _build_project_context(db, session)
+        project_context, project_chat_count = await _build_project_context_budgeted(db, session)
         if project_context:
             project_context_used = True
             if body.system_message and body.system_message.strip():
@@ -621,6 +784,11 @@ async def generate(
             stream_finish_reason: str | None = None
             stream_truncated = False
             continued_passes = 0
+            exact_prompt_tokens: int | None = None
+            exact_completion_tokens: int | None = None
+            exact_total_tokens: int | None = None
+            exact_cost_usd: float | None = None
+            provider_generation_id: str | None = None
             generation_trace = _build_generation_trace(
                 duration_ms=None,
                 first_token_ms=None,
@@ -675,6 +843,22 @@ async def generate(
                                 continued_passes = data["continued_passes"]
                             if isinstance(data.get("truncated"), bool):
                                 stream_truncated = data["truncated"]
+                            if isinstance(data.get("provider_generation_id"), str):
+                                provider_generation_id = data["provider_generation_id"]
+                            if isinstance(data.get("usage"), dict):
+                                usage_data = data["usage"]
+                                if isinstance(usage_data.get("prompt_tokens"), int):
+                                    exact_prompt_tokens = usage_data["prompt_tokens"]
+                                if isinstance(usage_data.get("completion_tokens"), int):
+                                    exact_completion_tokens = usage_data["completion_tokens"]
+                                if isinstance(usage_data.get("total_tokens"), int):
+                                    exact_total_tokens = usage_data["total_tokens"]
+                                if isinstance(usage_data.get("cost_usd"), (int, float)):
+                                    exact_cost_usd = float(usage_data["cost_usd"])
+                                if exact_total_tokens is None and (
+                                    exact_prompt_tokens is not None or exact_completion_tokens is not None
+                                ):
+                                    exact_total_tokens = (exact_prompt_tokens or 0) + (exact_completion_tokens or 0)
                             continue
 
                         delta = data.get("text")
@@ -728,6 +912,8 @@ async def generate(
                     error_code = "429"
                 elif "503" in exc_msg or "502" in exc_msg:
                     error_code = "503"
+                elif "llm_capacity_timeout" in exc_msg:
+                    error_code = "503"
                 yield _sse_payload({
                     "error": "provider_error",
                     "error_code": error_code,
@@ -739,7 +925,11 @@ async def generate(
 
                 duration_ms = max(0, int(time.time() * 1000) - started_at_ms)
                 prompt_est = max(1, stream_chars // 8)
-                cost_usd = estimate_cost_usd(model_info.get("api_name", body.model), prompt_est, estimated_tokens)
+                cost_usd = exact_cost_usd if exact_cost_usd is not None else estimate_cost_usd(
+                    model_info.get("api_name", body.model),
+                    prompt_est,
+                    estimated_tokens,
+                )
                 generation_summary.update({
                     "duration_ms": duration_ms,
                     "completed_at_ms": started_at_ms + duration_ms,
@@ -752,6 +942,10 @@ async def generate(
                     "truncated": stream_truncated,
                     "can_continue": stream_truncated,
                     "cost_usd": cost_usd,
+                    "prompt_tokens": exact_prompt_tokens,
+                    "completion_tokens": exact_completion_tokens,
+                    "total_tokens": exact_total_tokens,
+                    "provider_generation_id": provider_generation_id,
                 })
                 generation_trace = _build_generation_trace(
                     duration_ms=duration_ms,
@@ -774,10 +968,11 @@ async def generate(
                 })
 
                 # Increment token usage after successful generation
-                if user_email and estimated_tokens > 0:
+                accounted_tokens = exact_total_tokens if isinstance(exact_total_tokens, int) and exact_total_tokens > 0 else estimated_tokens
+                if user_email and accounted_tokens > 0:
                     try:
                         async with AsyncSessionLocal() as db_tok:
-                            await increment_daily_usage(db_tok, user_email, estimated_tokens)
+                            await increment_daily_usage(db_tok, user_email, accounted_tokens)
                     except Exception:
                         pass
 
@@ -791,10 +986,11 @@ async def generate(
                                 {
                                     "model": model_info["label"],
                                     "model_id": body.model,
-                                    "tokens": estimated_tokens,
+                                    "tokens": accounted_tokens,
                                     "latency_ms": duration_ms,
                                     "generation_ms": duration_ms,
                                     "provider": model_info["provider"],
+                                    "provider_generation_id": provider_generation_id,
                                     "request_options": {
                                         "model_id": body.model,
                                         "temperature": body.temperature,
@@ -827,13 +1023,22 @@ async def generate(
         "stream_chunks": 0,
         "stream_chars": len(result.text),
         "estimated_tokens": result.usage.completion_tokens,
+        "prompt_tokens": result.usage.prompt_tokens,
+        "completion_tokens": result.usage.completion_tokens,
+        "total_tokens": result.usage.total_tokens,
         "model_label": model_info["label"],
         "model_id": body.model,
         "provider": result.provider,
+        "provider_generation_id": result.raw.get("provider_generation_id") if isinstance(result.raw, dict) else None,
         "finish_reason": result.raw.get("finish_reason") if isinstance(result.raw, dict) else None,
         "continued_passes": result.raw.get("continued_passes") if isinstance(result.raw, dict) else 0,
         "truncated": bool(result.raw.get("truncated")) if isinstance(result.raw, dict) else False,
         "can_continue": bool(result.raw.get("truncated")) if isinstance(result.raw, dict) else False,
+        "cost_usd": (
+            result.raw.get("usage", {}).get("cost_usd")
+            if isinstance(result.raw, dict) and isinstance(result.raw.get("usage"), dict)
+            else 0.0
+        ),
     }
     generation_trace = _build_generation_trace(
         duration_ms=result.usage.latency_ms,
@@ -855,6 +1060,7 @@ async def generate(
             "latency_ms": result.usage.latency_ms,
             "generation_ms": result.usage.latency_ms,
             "provider": result.provider,
+            "provider_generation_id": result.raw.get("provider_generation_id") if isinstance(result.raw, dict) else None,
             "request_options": {
                 "model_id": body.model,
                 "temperature": body.temperature,
@@ -908,8 +1114,15 @@ async def generate_multi(
     )
     await _save_user_message(db, body.session_id, body.prompt)
 
+    fork_context = await _build_fork_context_budgeted(db, session)
+    if fork_context:
+        if body.system_message and body.system_message.strip():
+            body.system_message = f"{fork_context}\n\n{body.system_message}"
+        else:
+            body.system_message = fork_context
+
     # Inject project instructions + cross-chat context
-    project_context, project_chat_count = await _build_project_context(db, session)
+    project_context, project_chat_count = await _build_project_context_budgeted(db, session)
     if project_context:
         if body.system_message and body.system_message.strip():
             body.system_message = f"{project_context}\n\n{body.system_message}"
@@ -1016,13 +1229,41 @@ async def refine(request: Request, body: RefineRequest) -> dict:
             language=body.language,
             level=body.level,
             clarification_answers=body.clarification_answers,
+            history=body.history,
+            history_limit=body.history_limit,
         )
     except Exception as exc:
         logger.error(f"[refine] Failed: {type(exc).__name__}: {exc}")
-        if isinstance(exc, asyncio.TimeoutError):
-            raise HTTPException(status_code=504, detail="tutor_review_timeout") from exc
         if isinstance(exc, (ValueError, json.JSONDecodeError)):
             raise HTTPException(status_code=502, detail="invalid_tutor_review") from exc
         if isinstance(exc, RuntimeError) and str(exc) == "no_client":
             raise HTTPException(status_code=503, detail="tutor_review_unavailable") from exc
+        if isinstance(exc, RuntimeError) and str(exc) == "llm_capacity_timeout":
+            raise HTTPException(status_code=503, detail="tutor_review_busy") from exc
         raise HTTPException(status_code=502, detail="tutor_review_unavailable") from exc
+
+
+@limiter.limit(RATE_LIMIT_REFINE)
+@router.post("/prompt-suggestions")
+async def prompt_suggestions(
+    request: Request,
+    body: PromptSuggestionsRequest,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    history = await _build_prompt_suggestion_history(db, body)
+    try:
+        suggestions = await generate_prompt_suggestions_with_llm(
+            language=body.language,
+            level=body.level,
+            history=history,
+        )
+        return {"suggestions": suggestions}
+    except Exception as exc:
+        logger.warning(f"[prompt-suggestions] Failed: {type(exc).__name__}: {exc}")
+        if not history:
+            return {"suggestions": fallback_prompt_suggestions(body.language)}
+        if isinstance(exc, RuntimeError) and str(exc) == "no_client":
+            raise HTTPException(status_code=503, detail="prompt_suggestions_unavailable") from exc
+        if isinstance(exc, RuntimeError) and str(exc) == "llm_capacity_timeout":
+            raise HTTPException(status_code=503, detail="prompt_suggestions_busy") from exc
+        raise HTTPException(status_code=502, detail="prompt_suggestions_unavailable") from exc

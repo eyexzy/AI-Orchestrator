@@ -35,8 +35,8 @@ const badgeVariants = cva(
         turborepo: "bg-gradient-to-br from-[#FF1E56] to-[#0096FF] text-white",
       },
       size: {
-        sm: "h-5 px-1.5 text-[11px] leading-none gap-0.5",
-        md: "h-6 px-2.5 text-[12px] leading-none gap-1",
+        sm: "h-5 px-1.5 text-[13px] leading-none gap-0.5",
+        md: "h-6 px-2.5 text-[13px] leading-none gap-1",
         lg: "h-8 px-3 text-[14px] leading-none gap-1.5",
       },
     },
@@ -56,4 +56,4 @@ function Badge({ className, variant, size, children, ...props }: BadgeProps) {
   );
 }
 
-export { Badge, badgeVariants };
+export { Badge, badgeVariants };

@@ -13,6 +13,7 @@ import { AssignChatProjectModal } from "@/components/modals/AssignChatProjectMod
 import { RenameChatModal } from "@/components/modals/RenameChatModal";
 import { ProjectIcon } from "@/components/projects/ProjectIcon";
 import { useTranslation } from "@/lib/store/i18nStore";
+import { Skeleton } from "@/components/ui/skeleton";
 
 function ActiveChatTitle() {
   const router = useRouter();
@@ -65,7 +66,7 @@ function ActiveChatTitle() {
             <button
               type="button"
               onClick={() => router.push(`/projects/${activeChat.project_id}`)}
-              className="group flex h-10 items-center gap-1.5 bg-transparent border-none px-3 text-[15px] font-medium text-ds-text-secondary transition-colors hover:text-ds-text"
+              className="group flex h-10 items-center gap-1.5 bg-transparent border-none px-3 text-[15px] font-medium text-ds-text-secondary hover:text-ds-text"
             >
               <ProjectIcon
                 iconName={projectMeta?.icon_name}
@@ -166,7 +167,17 @@ function ActiveChatTitle() {
 export default function ChatPage() {
   const activeChatId = useChatStore((s) => s.activeChatId);
   const hasMessages = useChatStore((s) => s.messages.length > 0);
-  const chatHeader = activeChatId && hasMessages ? <ChatHeaderContent /> : undefined;
+  const isLoadingMessages = useChatStore((s) => s.isLoadingMessages);
+  const activeChatIsFork = useChatStore((s) =>
+    Boolean(s.chats.find((chat) => chat.id === s.activeChatId)?.parent_chat_id),
+  );
+  const chatHeader = activeChatId
+    ? isLoadingMessages
+      ? <ChatHeaderSkeleton />
+      : (hasMessages || activeChatIsFork)
+        ? <ChatHeaderContent />
+        : undefined
+    : undefined;
 
   return (
     <main className="flex flex-1 overflow-hidden px-0 pt-0 pb-0">
@@ -177,4 +188,28 @@ export default function ChatPage() {
 
 function ChatHeaderContent() {
   return <ActiveChatTitle />;
+}
+
+function ChatHeaderSkeleton() {
+  const activeChat = useChatStore((s) => s.chats.find((chat) => chat.id === s.activeChatId) ?? null);
+  const hasProject = Boolean(activeChat?.project_id && activeChat?.project_name);
+
+  return (
+    <div className="flex h-10 items-center gap-0">
+      {hasProject && (
+        <>
+          <div className="flex h-10 items-center gap-1.5 px-3">
+            <Skeleton width={16} height={16} className="rounded-md" />
+            <Skeleton width={92} height={16} className="rounded-sm" />
+          </div>
+          <span aria-hidden className="select-none px-1 text-ds-text-tertiary">/</span>
+        </>
+      )}
+
+      <div className="flex items-center gap-2 px-2">
+        <Skeleton width={hasProject ? 220 : 280} height={16} className="rounded-sm" />
+        <Skeleton width={20} height={20} className="rounded-md" />
+      </div>
+    </div>
+  );
 }

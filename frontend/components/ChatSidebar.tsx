@@ -13,6 +13,7 @@ import {
   LayoutGrid,
   MessageSquare,
   MessagesSquare,
+  GitFork,
   Plus,
   MoreHorizontal,
   Pencil,
@@ -32,7 +33,9 @@ import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ErrorState } from "@/components/ui/error-state";
 import { ProjectIcon } from "@/components/projects/ProjectIcon";
+import { PROJECT_COLOR_ICON_CLASSES } from "@/components/projects/projectTheme";
 import { Separator } from "@/components/ui/separator";
+import { Tooltip } from "@/components/ui/tooltip";
 
 const ChatSearchModal = dynamic(
   () => import("@/components/ChatSearchModal").then((m) => ({ default: m.ChatSearchModal })),
@@ -132,7 +135,7 @@ const SectionHeading = memo(function SectionHeading({
       type="button"
       onClick={onToggle}
       aria-expanded={expanded}
-      className="flex w-full items-center justify-between gap-3 rounded-md border-none bg-transparent px-3 py-1 text-xs font-semibold uppercase tracking-widest font-mono text-ds-text-tertiary transition-colors hover:text-ds-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ds-focus-color)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--geist-background)]"
+      className="flex w-full items-center justify-between gap-3 rounded-md border-none bg-transparent px-3 py-1.5 text-[15px] font-semibold text-ds-text-secondary transition-colors hover:text-ds-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ds-focus-color)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--geist-background)]"
     >
       <span className="flex min-w-0 items-center gap-2 whitespace-nowrap">
         {icon}
@@ -194,6 +197,7 @@ const ChatItem = memo(function ChatItem({
   const { t } = useTranslation();
   const dotsRef = useRef<HTMLButtonElement>(null);
   const [menuOpen, setMenuOpen] = useState(false);
+  const isFork = Boolean(chat.parent_chat_id);
 
   return (
     <>
@@ -213,8 +217,18 @@ const ChatItem = memo(function ChatItem({
             : "bg-transparent text-ds-text hover:bg-gray-alpha-200 hover:text-ds-text"
         } items-center min-h-10`}
       >
-        <div className={`min-w-0 flex-1 ${sidebarOpen ? "opacity-100" : "opacity-0 hidden w-0"}`}>
-          <span className="block truncate text-[15px] font-medium leading-5">
+        <div className={`flex min-w-0 flex-1 items-center gap-2 ${sidebarOpen ? "opacity-100" : "opacity-0 hidden w-0"}`}>
+          {isFork && (
+            <span title={t("projects.forkedChat")} className="flex shrink-0">
+              <GitFork
+                size={18}
+                strokeWidth={2}
+                className={PROJECT_COLOR_ICON_CLASSES.green}
+                aria-label={t("projects.forkedChat")}
+              />
+            </span>
+          )}
+          <span className="block min-w-0 truncate text-[15px] font-medium leading-5">
             {chat.title}
           </span>
         </div>
@@ -296,6 +310,7 @@ const ProjectItem = memo(function ProjectItem({
   isActive,
   sidebarOpen,
   onSelect,
+  onPrefetch,
   onOpenEdit,
   onDelete,
 }: {
@@ -303,6 +318,7 @@ const ProjectItem = memo(function ProjectItem({
   isActive: boolean;
   sidebarOpen: boolean;
   onSelect: () => void;
+  onPrefetch: () => void;
   onOpenEdit: () => void;
   onDelete: () => void;
 }) {
@@ -322,6 +338,8 @@ const ProjectItem = memo(function ProjectItem({
             onSelect();
           }
         }}
+        onMouseEnter={onPrefetch}
+        onFocus={onPrefetch}
         className={`group relative flex w-full items-center gap-2 rounded-lg border-none px-3 py-2 text-left transition-all duration-100 cursor-pointer ${
           isActive
             ? "bg-gray-alpha-200 text-ds-text font-medium"
@@ -467,6 +485,7 @@ export function ChatSidebar() {
   const isOnProjects = pathname.startsWith("/projects");
   const isChatSidebarRoute = isOnChat || isOnProjects;
   const canUseProjects = level >= 2;
+  const showL1Tooltips = level === 1;
   const visibleChats = useMemo(() => dedupeChatSessions(chats), [chats]);
 
   useEffect(() => {
@@ -586,16 +605,36 @@ export function ChatSidebar() {
         </button>
 
         <div className={`absolute top-3.5 ${sidebarOpen ? "right-3" : "left-1/2 -translate-x-1/2"}`}>
-          <Button
-            variant="tertiary"
-            size="sm"
-            iconOnly
-            onClick={toggleSidebar}
-            aria-label={sidebarOpen ? t("sidebar.collapse") : t("sidebar.openSidebar")}
-            className="h-7 w-7 rounded-md p-0 shadow-none text-ds-text hover:bg-gray-alpha-300 hover:text-ds-text"
-          >
-            <Sidebar size={18} strokeWidth={2} className="shrink-0 text-ds-text" />
-          </Button>
+          {showL1Tooltips ? (
+            <Tooltip
+              content={t("tooltip.l1CollapseSidebar")}
+              trackingId="l1_sidebar_toggle"
+              side="bottom"
+              align={sidebarOpen ? "end" : "center"}
+            >
+              <Button
+                variant="tertiary"
+                size="sm"
+                iconOnly
+                onClick={toggleSidebar}
+                aria-label={sidebarOpen ? t("sidebar.collapse") : t("sidebar.openSidebar")}
+                className="h-7 w-7 rounded-md p-0 shadow-none text-ds-text hover:bg-gray-alpha-300 hover:text-ds-text"
+              >
+                <Sidebar size={18} strokeWidth={2} className="shrink-0 text-ds-text" />
+              </Button>
+            </Tooltip>
+          ) : (
+            <Button
+              variant="tertiary"
+              size="sm"
+              iconOnly
+              onClick={toggleSidebar}
+              aria-label={sidebarOpen ? t("sidebar.collapse") : t("sidebar.openSidebar")}
+              className="h-7 w-7 rounded-md p-0 shadow-none text-ds-text hover:bg-gray-alpha-300 hover:text-ds-text"
+            >
+              <Sidebar size={18} strokeWidth={2} className="shrink-0 text-ds-text" />
+            </Button>
+          )}
         </div>
       </div>
 
@@ -710,6 +749,7 @@ export function ChatSidebar() {
                           project={project}
                           isActive={pathname === `/projects/${project.id}`}
                           sidebarOpen={sidebarOpen}
+                          onPrefetch={() => router.prefetch(`/projects/${project.id}`)}
                           onSelect={() => router.push(`/projects/${project.id}`)}
                           onOpenEdit={() => handleOpenProjectEditModal(project)}
                           onDelete={() => void handleDeleteProject(project.id)}
@@ -816,12 +856,28 @@ export function ChatSidebar() {
           sidebarOpen ? "items-stretch" : "items-center justify-center"
         }`}
       >
-        <UserMenuDropdown
-          triggerVariant="sidebar"
-          hideNameInMenu
-          openDirection="up"
-          sidebarOpen={sidebarOpen}
-        />
+        {showL1Tooltips ? (
+          <Tooltip
+            content={t("tooltip.l1Profile")}
+            trackingId="l1_sidebar_profile"
+            align={sidebarOpen ? "start" : "center"}
+            className={sidebarOpen ? "relative w-full cursor-help" : "relative flex h-10 w-10 items-center justify-center cursor-help"}
+          >
+            <UserMenuDropdown
+              triggerVariant="sidebar"
+              hideNameInMenu
+              openDirection="up"
+              sidebarOpen={sidebarOpen}
+            />
+          </Tooltip>
+        ) : (
+          <UserMenuDropdown
+            triggerVariant="sidebar"
+            hideNameInMenu
+            openDirection="up"
+            sidebarOpen={sidebarOpen}
+          />
+        )}
       </div>
 
       <ChatSearchModal open={isSearchOpen} onOpenChange={setIsSearchOpen} />

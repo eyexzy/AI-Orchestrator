@@ -56,6 +56,13 @@ ALLOWED_EVENT_TYPES: set[str] = {
     # Advanced modes
     "compare_enabled",
     "self_consistency_enabled",
+    "regenerate",
+    "continue_generation",
+    "response_feedback_like",
+    "response_feedback_dislike",
+    "project_context_used",
+    "attachment_added",
+    "project_source_used",
     # Negative signals
     "cancel_action",
     "backtracking_detected",

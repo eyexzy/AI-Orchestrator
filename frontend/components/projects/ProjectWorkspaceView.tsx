@@ -12,12 +12,14 @@ import {
   Trash2,
 } from "lucide-react";
 import { MainInput } from "@/components/chat/MainInput";
-import type { SidebarConfig } from "@/components/chat/ConfigSidebar";
+import { ConfigSidebar, type SidebarConfig } from "@/components/chat/ConfigSidebar";
 import { ActionMenu } from "@/components/ui/action-menu";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
+import { ErrorState } from "@/components/ui/error-state";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
+import { Skeleton } from "@/components/ui/skeleton";
 import { useUserLevelStore } from "@/lib/store/userLevelStore";
 import { useChatStore, type ChatSession } from "@/lib/store/chatStore";
 import { useProjectStore, type Project } from "@/lib/store/projectStore";
@@ -27,16 +29,6 @@ import { ChatListItem } from "@/components/ChatListItem";
 import { ProjectIconPicker } from "@/components/projects/ProjectIconPicker";
 import { ProjectSources } from "@/components/projects/ProjectSources";
 import { Tooltip } from "@/components/ui/tooltip";
-import { PROJECT_WORKSPACE_UI_STATE_STORAGE_KEY } from "@/lib/config";
-import { makeScopedStorageKey } from "@/lib/persistedState";
-import { usePersistentUiState } from "@/lib/usePersistentUiState";
-
-const ConfigSidebar = dynamic(
-  () => import("@/components/chat/ConfigSidebar").then((m) => ({ default: m.ConfigSidebar })),
-  {
-    ssr: false,
-  },
-);
 
 const RenameChatModal = dynamic(
   () => import("@/components/modals/RenameChatModal").then((m) => ({ default: m.RenameChatModal })),
@@ -51,6 +43,8 @@ const AssignChatProjectModal = dynamic(
 interface ProjectWorkspaceViewProps {
   project: Project;
   chats: ChatSession[];
+  isLoadingChats?: boolean;
+  chatsError?: string | null;
   composerResetKey?: number;
   isLaunchingPrompt: boolean;
   onBack: () => Promise<void> | void;
@@ -83,13 +77,11 @@ function formatDate(value: string | null, locale: string) {
   }
 }
 
-function isProjectWorkspaceTab(value: unknown): value is "chats" | "sources" {
-  return value === "chats" || value === "sources";
-}
-
 export function ProjectWorkspaceView({
   project,
   chats,
+  isLoadingChats = false,
+  chatsError = null,
   composerResetKey = 0,
   isLaunchingPrompt,
   onBack,
@@ -125,11 +117,7 @@ export function ProjectWorkspaceView({
   const [renameTarget, setRenameTarget] = useState<ChatSession | null>(null);
   const [assignModalOpen, setAssignModalOpen] = useState(false);
   const [assignTarget, setAssignTarget] = useState<ChatSession | null>(null);
-  const [activeTab, setActiveTab] = usePersistentUiState<"chats" | "sources">(
-    makeScopedStorageKey(`${PROJECT_WORKSPACE_UI_STATE_STORAGE_KEY}:${project.id}`, userEmail),
-    "chats",
-    { validate: isProjectWorkspaceTab },
-  );
+  const [activeTab, setActiveTab] = useState<"chats" | "sources">("chats");
 
   return (
     <div className="flex h-full min-h-0 gap-0">
@@ -246,6 +234,8 @@ export function ProjectWorkspaceView({
                 }}
                 onAppendToSystem={onAppendToSystem}
                 onVariableNamesChange={onVariableNamesChange}
+                bottomChipsFloating={false}
+                bottomChipsLayout="scroll"
               />
             </div>
 
@@ -257,7 +247,15 @@ export function ProjectWorkspaceView({
                   <TabsTrigger value="sources">{t("projects.tabSources")}</TabsTrigger>
                 </TabsList>
                 <TabsContent value="chats" className="mt-4 min-h-0 flex-1 flex flex-col">
-                  {chats.length === 0 ? (
+                  {chatsError ? (
+                    <ErrorState
+                      centered
+                      title={t("projects.loadErrorTitle")}
+                      description={chatsError}
+                    />
+                  ) : isLoadingChats ? (
+                    <ProjectChatsSkeleton />
+                  ) : chats.length === 0 ? (
                     <EmptyState.Root
                       title={t("projects.noChatsYet")}
                       description={t("projects.noChatsHint")}
@@ -325,6 +323,25 @@ export function ProjectWorkspaceView({
           await assignChatToProject(assignTarget.id, projectId);
         }}
       />
+    </div>
+  );
+}
+
+function ProjectChatsSkeleton() {
+  return (
+    <div className="space-y-0.5">
+      {Array.from({ length: 5 }).map((_, index) => (
+        <div
+          key={index}
+          className="grid grid-cols-[minmax(0,1fr)_36px] items-center gap-4 rounded-xl px-4 py-3"
+        >
+          <div className="space-y-2">
+            <Skeleton height={18} width={`${48 + (index % 3) * 14}%`} />
+            <Skeleton height={14} width={index % 2 === 0 ? 104 : 124} />
+          </div>
+          <Skeleton width={28} height={28} className="rounded-md" />
+        </div>
+      ))}
     </div>
   );
 }

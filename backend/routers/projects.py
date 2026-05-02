@@ -1,14 +1,17 @@
+import asyncio
 import uuid
-from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, UploadFile
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import ChatSession, Project, ProjectSource, UploadedFile
-from dependencies import get_current_user, get_db
+from dependencies import get_current_user, get_db, limiter
 from schemas.api import ProjectCreate, ProjectResponse, ProjectUpdate, ProjectSourceResponse, AddTextSourceRequest
-from services.files import process_upload, save_file_bytes, read_file_bytes, delete_file
+from services.files import FileValidationError, MAX_FILE_SIZE_BYTES, process_upload, save_file_bytes, read_file_bytes, delete_file
 
 router = APIRouter()
+RATE_LIMIT_PROJECT_SOURCE_UPLOAD = "5/minute"
+RATE_LIMIT_PROJECT_TEXT_SOURCE = "10/minute"
 
 def _project_to_response(project: Project, *, chat_count: int = 0, source_count: int = 0) -> dict:
     return ProjectResponse(
@@ -217,16 +220,30 @@ async def list_project_sources(
 
 
 @router.post("/projects/{project_id}/sources/upload")
+@limiter.limit(RATE_LIMIT_PROJECT_SOURCE_UPLOAD)
 async def upload_project_source(
+    request: Request,
     project_id: str,
     file: UploadFile,
     db: AsyncSession = Depends(get_db),
     user_email: str = Depends(get_current_user),
 ):
     await _get_owned_project(db, project_id, user_email)
+    content_length = request.headers.get("content-length", "").strip()
+    if content_length.isdigit() and int(content_length) > MAX_FILE_SIZE_BYTES:
+        raise HTTPException(status_code=413, detail="Upload exceeds the allowed size limit")
+
     data = await file.read()
     mime = file.content_type or "application/octet-stream"
-    storage_path, extracted_text = process_upload(data, file.filename or "file", mime)
+    try:
+        storage_path, extracted_text = await asyncio.to_thread(
+            process_upload,
+            data,
+            file.filename or "file",
+            mime,
+        )
+    except FileValidationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     uploaded = UploadedFile(
         user_email=user_email,
@@ -251,7 +268,9 @@ async def upload_project_source(
 
 
 @router.post("/projects/{project_id}/sources/text")
+@limiter.limit(RATE_LIMIT_PROJECT_TEXT_SOURCE)
 async def add_text_source(
+    request: Request,
     project_id: str,
     req: AddTextSourceRequest,
     db: AsyncSession = Depends(get_db),
@@ -260,7 +279,7 @@ async def add_text_source(
     await _get_owned_project(db, project_id, user_email)
     filename = f"{req.title}.txt"
     content_bytes = req.content.encode("utf-8")
-    storage_path = save_file_bytes(content_bytes, filename)
+    storage_path = await asyncio.to_thread(save_file_bytes, content_bytes, filename)
 
     uploaded = UploadedFile(
         user_email=user_email,
@@ -268,7 +287,7 @@ async def add_text_source(
         mime_type="text/plain",
         size_bytes=len(content_bytes),
         storage_path=storage_path,
-        extracted_text=req.content[:50000],
+        extracted_text=req.content,
     )
     db.add(uploaded)
     await db.flush()
